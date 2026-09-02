@@ -73,6 +73,19 @@ def _all_service_time_reading_columns():
     ]
 
 
+def _format_datetime_value(value):
+    """Return Excel-friendly date/time text like 01-09-2026 08:35."""
+    if value in (None, ''):
+        return ''
+    value = str(value).strip()
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M'):
+        try:
+            return datetime.strptime(value, fmt).strftime('%d-%m-%Y %H:%M')
+        except ValueError:
+            continue
+    return value
+
+
 def _month_filter_sql(month, alias='r'):
     """Return SQL+params for a YYYY-MM filter on the stored ISO text date."""
     if not month:
@@ -246,7 +259,7 @@ def report_rows(service_type_id=None, month=None, status='Approved'):
                 row[f"cf_{row_key}"] = ''
                 for v in values:
                     if v['service_record_id'] == row['id'] and v['field_label'] == d['field_label']:
-                        row[f"cf_{row_key}"] = v['field_value']
+                        row[f"cf_{row_key}"] = _format_datetime_value(v['field_value']) if d['field_label'] in {'Start Time', 'End Time'} else v['field_value']
                         break
 
     before_required = [
