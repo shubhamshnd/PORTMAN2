@@ -64,25 +64,38 @@ def _custom_fields(cur, service_type_id):
 
 
 def _all_service_time_reading_columns():
-    """Columns that must always appear in the flat 'All service types' export."""
+    """Labels that must always appear in the flat 'All service types' export,
+    sourced from EAV values — not separate fixed columns."""
     return [
-        ('Start Time', 'start_time'),
-        ('End Time', 'end_time'),
-        ('Start Reading', 'start_reading'),
-        ('End Reading', 'end_reading'),
+        'Start Time',
+        'End Time',
+        'Start Reading',
+        'End Reading',
     ]
 
 
 def _format_datetime_value(value):
-    """Return Excel-friendly date/time text like 01-09-2026 08:35."""
+    """Return Excel-friendly date/time text like 01-08-2026 10:56."""
     if value in (None, ''):
         return ''
     value = str(value).strip()
-    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M'):
+    for fmt in (
+        '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M',
+        '%Y-%m-%dT%H:%M:%S',
+        '%Y-%m-%dT%H:%M',
+        '%Y-%m-%d %H:%M:%S.%f',
+        '%Y-%m-%dT%H:%M:%S.%f',
+    ):
         try:
             return datetime.strptime(value, fmt).strftime('%d-%m-%Y %H:%M')
         except ValueError:
             continue
+    # Fallback: regex-based parse for any ISO-like datetime
+    import re
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})', value)
+    if m:
+        return f'{m.group(3)}-{m.group(2)}-{m.group(1)} {m.group(4)}:{m.group(5)}'
     return value
 
 
@@ -188,18 +201,20 @@ def report_rows(service_type_id=None, month=None, status='Approved'):
         if service_type_id:
             cols = BASE_COLS + [(d['field_label'], f"cf_{d['id']}") for d in _custom_fields(cur, service_type_id)]
         else:
-            required = _all_service_time_reading_columns()
             cols = [
-                ('Record No', 'record_number'),
-                ('Month', 'month'),
+                ('Record No',    'record_number'),
+                ('Month',        'month'),
                 ('Service Code', 'service_code'),
-                ('Service', 'service_name'),
+                ('Service',      'service_name'),
                 ('Bill To Type', 'source_type'),
-                ('Bill To', 'source_display'),
+                ('Bill To',      'source_display'),
                 ('Ref Document', 'ref_source_display'),
-                ('Date', 'record_date'),
+                ('Date',         'record_date'),
+                ('Start Time',    '_req_start_time'),
+                ('End Time',      '_req_end_time'),
+                ('Start Reading', '_req_start_reading'),
+                ('End Reading',   '_req_end_reading'),
             ]
-            cols.extend((label, key) for label, key in required)
             cols.extend(BASE_COLS[8:])
             cols.append(('Details', 'details'))
         conn.close()
@@ -229,54 +244,74 @@ def report_rows(service_type_id=None, month=None, status='Approved'):
         return cols, rows
 
     conn.close()
+
+    # Build lookup: {record_id: {field_label: field_value}}  (label-based, avoids key-type issues)
+    by_label = {}
+    for v in values:
+        by_label.setdefault(v['service_record_id'], {})[v['field_label']] = v['field_value']
+
+    # Details cell (all non-empty EAV pairs)
     details = {}
-    flat_defs = []
-    seen_defs = set()
     for v in values:
         if str(v['field_value'] or '').strip() == '':
             continue
         details.setdefault(v['service_record_id'], []).append(
             f"{v['field_label']}: {v['field_value']}")
-        if v['field_id'] not in seen_defs:
-            seen_defs.add(v['field_id'])
-            flat_defs.append({'field_id': v['field_id'], 'field_label': v['field_label']})
 
-    required = _all_service_time_reading_columns()
-    for label, key in required:
-        if not any(d['field_label'] == label for d in flat_defs):
-            flat_defs.append({'field_id': key, 'field_label': label})
+    # ── Required columns (ALWAYS present, fixed synthetic keys) ─────────────
+    # These 4 columns must appear even when no records carry those EAV labels.
+    REQUIRED = [
+        ('Start Time',    '_req_start_time',    True),   # (header, row-key, is_datetime)
+        ('End Time',      '_req_end_time',       True),
+        ('Start Reading', '_req_start_reading',  False),
+        ('End Reading',   '_req_end_reading',    False),
+    ]
+    required_label_set = {label for label, _, _ in REQUIRED}
+
+    for row in rows:
+        row['details'] = ' | '.join(details.get(row['id'], []))
+        rec = by_label.get(row['id'], {})
+        for label, key, is_dt in REQUIRED:
+            raw = rec.get(label, '')
+            row[key] = _format_datetime_value(raw) if is_dt else raw
+
+    # ── Extra EAV columns (service-specific, not in REQUIRED) ───────────────
+    seen_labels = set(required_label_set)
+    seen_ids    = set()
+    extra_defs  = []
+    for v in values:
+        lbl = v['field_label']
+        fid = int(v['field_id'])
+        if lbl in seen_labels or fid in seen_ids:
+            continue
+        seen_labels.add(lbl)
+        seen_ids.add(fid)
+        extra_defs.append({'field_id': fid, 'field_label': lbl})
 
     by_record = {}
     for v in values:
-        by_record.setdefault(v['service_record_id'], {})[v['field_id']] = v['field_value']
-    for row in rows:
-        row['details'] = ' | '.join(details.get(row['id'], []))
-        for d in flat_defs:
-            row_key = d['field_id']
-            if isinstance(row_key, int):
-                row[f"cf_{row_key}"] = by_record.get(row['id'], {}).get(row_key, '')
-            else:
-                row[f"cf_{row_key}"] = ''
-                for v in values:
-                    if v['service_record_id'] == row['id'] and v['field_label'] == d['field_label']:
-                        row[f"cf_{row_key}"] = _format_datetime_value(v['field_value']) if d['field_label'] in {'Start Time', 'End Time'} else v['field_value']
-                        break
+        by_record.setdefault(v['service_record_id'], {})[int(v['field_id'])] = v['field_value']
 
+    for row in rows:
+        for d in extra_defs:
+            row[f"cf_{d['field_id']}"] = by_record.get(row['id'], {}).get(d['field_id'], '')
+
+    # ── Assemble column spec ─────────────────────────────────────────────────
     before_required = [
-        ('Record No', 'record_number'),
-        ('Month', 'month'),
+        ('Record No',    'record_number'),
+        ('Month',        'month'),
         ('Service Code', 'service_code'),
-        ('Service', 'service_name'),
+        ('Service',      'service_name'),
         ('Bill To Type', 'source_type'),
-        ('Bill To', 'source_display'),
+        ('Bill To',      'source_display'),
         ('Ref Document', 'ref_source_display'),
-        ('Date', 'record_date'),
+        ('Date',         'record_date'),
     ]
-    after_required = BASE_COLS[8:]
-    cols = before_required + [
-        (d['field_label'], f"cf_{d['field_id']}")
-        for d in flat_defs if d['field_label'] in {label for label, _ in required}
-    ] + after_required + [('Details', 'details')]
+    required_cols = [(label, key) for label, key, _ in REQUIRED]
+    extra_cols    = [(d['field_label'], f"cf_{d['field_id']}") for d in extra_defs]
+    after_cols    = BASE_COLS[8:]
+
+    cols = before_required + required_cols + extra_cols + after_cols + [('Details', 'details')]
     return cols, rows
 
 
