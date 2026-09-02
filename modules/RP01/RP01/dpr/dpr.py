@@ -109,39 +109,76 @@ def _fmt_eta(dt_val):
     return str(dt_val)
 
 
-def _categorize_cargo(cargo_name, cargo_cat=None, cargo_sub=None, cargo_sub2=None):
-    """Map cargo to Section B categories: Edible Oil, Phosphoric, Lube Oil, Chemicals, POL."""
-    c_name = str(cargo_name or '').upper().strip()
-    c_cat = str(cargo_cat or '').upper().strip()
-    c_sub = str(cargo_sub or '').upper().strip()
-    c_sub2 = str(cargo_sub2 or '').upper().strip()
+def _load_vessel_cargo_map(cur):
+    """Load cargo master mapping dynamically from database category columns across all 3 tables."""
+    master_map = {}
 
-    full = f"{c_name} {c_cat} {c_sub} {c_sub2}"
+    def resolve_category(primary_cat, fallback_name=""):
+        p = str(primary_cat or '').strip()
+        if p:
+            # Standardize capitalization slightly to match expected columns
+            if p.upper() == 'EDIBLE OIL': return 'Edible Oil'
+            if p.upper() == 'OTHER LIQUID': return 'Other liquid'
+            if p.upper() == 'CHEMICAL': return 'Chemical'
+            if p.upper() == 'POL': return 'POL'
+            return p
+        return 'Other liquid'
 
-    # 1. PHOSPHORIC (PH ACID, PHOSPHORIC)
-    if 'PH ACID' in full or 'PH.ACID' in full or 'PHOSPHORIC' in full:
-        return 'Phosphoric'
+    try:
+        # 1. vessel_cargo (master table) -> use cargo_sub_category_2
+        cur.execute("""
+            SELECT LOWER(TRIM(cargo_name)) AS norm_name, cargo_sub_category_2
+            FROM vessel_cargo
+            WHERE cargo_name IS NOT NULL AND TRIM(cargo_name) != ''
+        """)
+        for r in cur.fetchall():
+            master_map[r['norm_name']] = resolve_category(r.get('cargo_sub_category_2'), r['norm_name'])
 
-    # 2. LUBE OIL (LUBE, BASE OIL, YUBASE, ARAMCO ALTRA, ARAMCO PRIMA, LUBO, SHELL, HVI)
-    if 'LUBE' in full or 'BASE OIL' in full or 'BASEOIL' in full or 'YUBASE' in full or 'ARAMCO ALTRA' in full or 'ARAMCO PRIMA' in full or 'LUBO' in full:
-        return 'Lube Oil'
+        # 2. mis_vessel_master -> use new_cat
+        cur.execute("""
+            SELECT LOWER(TRIM(cargo)) AS norm_name, new_cat
+            FROM mis_vessel_master
+            WHERE cargo IS NOT NULL AND TRIM(cargo) != ''
+        """)
+        for r in cur.fetchall():
+            cn = r['norm_name']
+            if cn not in master_map:
+                master_map[cn] = resolve_category(r.get('new_cat'), cn)
 
-    # 3. POL (FURNACE OIL, DIESEL, MOTOR SPIRIT, CARBAN BLACK, CARBON BLACK, CBFS, FO, POL)
-    if ('FURNACE OIL' in full or 'DIESEL' in full or 'MOTOR SPIRIT' in full or 
-        'CARBAN BLACK' in full or 'CARBON BLACK' in full or 'CBFS' in full or 
-        'POL' in full or c_cat == 'POL' or c_sub == 'POL' or c_sub2 == 'POL' or 
-        'POL-BLACK' in full or 'POL BLACK' in full or c_name == 'FO' or 
-        'FO [' in c_name or 'FO ' in c_name or c_name.startswith('FO')):
-        return 'POL'
+        # 3. mis_history -> use cargo_sub_category_2
+        cur.execute("""
+            SELECT LOWER(TRIM(cargo_name)) AS norm_name, cargo_sub_category_2
+            FROM mis_history
+            WHERE cargo_name IS NOT NULL AND TRIM(cargo_name) != ''
+        """)
+        for r in cur.fetchall():
+            cn = r['norm_name']
+            if cn not in master_map:
+                master_map[cn] = resolve_category(r.get('cargo_sub_category_2'), cn)
 
-    # 4. EDIBLE OIL (SOYABEAN OIL, PALM OIL, SUNFLOWER, PALM OLEIN, EDIBLE OIL, GLYCERINE, CPO, CDSBO, CSFO, SOYA, PALM)
-    if ('SOYABEAN OIL' in full or 'PALM OIL' in full or 'SUNFLOWER' in full or 'PALM OLEIN' in full or 
-        c_name == 'EDIBLE OIL' or c_cat == 'EDIBLE OIL' or 'GLYCERINE' in full or
-        'CPO' in full or 'CDSBO' in full or 'CSFO' in full or 'SOYA' in full or 'PALM' in full):
-        return 'Edible Oil'
+        return master_map
+    except Exception:
+        return master_map
 
-    # 5. CHEMICALS
-    return 'Chemicals'
+
+def _categorize_cargo(cargo_name, cargo_cat=None, cargo_sub=None, cargo_sub2=None, vc_map=None):
+    """Map cargo to Section B categories directly from DB column."""
+    c_norm = str(cargo_name or '').strip().lower()
+
+    if vc_map and c_norm in vc_map:
+        return vc_map[c_norm]
+
+    # For live data (like balance on board), user requested to rely on cargo_sub_category_2, 
+    # then fallback to cat if needed, but primarily use the column value dynamically.
+    cat_val = str(cargo_sub2 or cargo_cat or cargo_sub or '').strip()
+    if cat_val:
+        if cat_val.upper() == 'EDIBLE OIL': return 'Edible Oil'
+        if cat_val.upper() == 'OTHER LIQUID': return 'Other liquid'
+        if cat_val.upper() == 'CHEMICAL': return 'Chemical'
+        if cat_val.upper() == 'POL': return 'POL'
+        return cat_val
+        
+    return 'Other liquid'
 
 
 def _get_section_a(cur, window_start, window_end):
@@ -352,7 +389,8 @@ def _get_section_b(cur, selected_date, window_start, window_end):
     6. Cum handled FY 2024-25
     7. Cum Loading/unloading till date
     """
-    categories = ['Edible Oil', 'Phosphoric', 'Lube Oil', 'Chemicals', 'POL']
+    vc_map = _load_vessel_cargo_map(cur)
+    categories = ['Edible Oil', 'Other liquid', 'Chemical', 'POL']
     fy_label, _ = _get_fy_info(selected_date)
     month_start, _ = _get_month_window(selected_date, window_end)
     month_name = selected_date.strftime('%b %Y')
@@ -367,16 +405,28 @@ def _get_section_b(cur, selected_date, window_start, window_end):
         'cum_till_date': {c: 0.0 for c in categories},
     }
 
-    # 1. Balance on Board (calculated per parcel operation first)
+    # 1. Balance on Board — ONLY vessels currently on berth (LB-03/LB-04, alongside but not cast off)
     cur.execute("""
         SELECT
             po.id AS parcel_op_id,
-            po.cargo_name,
-            COALESCE(po.quantity, 0) AS op_qty
+            COALESCE(po.cargo_name, vh.cargo_type, '') AS cargo_name,
+            COALESCE(po.quantity, 0) AS op_qty,
+            vc.cargo_category,
+            vc.cargo_sub_category,
+            vc.cargo_sub_category_2
         FROM ldud_parcel_ops po
         JOIN ldud_header lh ON lh.id = po.ldud_id
+        JOIN vcn_header vh ON vh.id = lh.vcn_id
+        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(COALESCE(po.cargo_name, ''))) = LOWER(TRIM(vc.cargo_name))
         WHERE COALESCE(lh.is_deleted, FALSE) = FALSE
-    """)
+          AND (vh.berth_name LIKE '%%LB%%' OR vh.berth_name LIKE '%%03%%' OR vh.berth_name LIKE '%%04%%')
+          AND NULLIF(lh.alongside_datetime, '') IS NOT NULL
+          AND NULLIF(lh.alongside_datetime, '')::timestamp <= %s
+          AND (
+              NULLIF(lh.cast_off_datetime, '') IS NULL
+              OR NULLIF(lh.cast_off_datetime, '')::timestamp > %s
+          )
+    """, (window_end, window_end))
     active_rows = cur.fetchall()
     for r in active_rows:
         pid = r.get('parcel_op_id')
@@ -406,7 +456,7 @@ def _get_section_b(cur, selected_date, window_start, window_end):
                 pass
 
         rem = max(p_qty - real_qty, 0.0)
-        cat = _categorize_cargo(c_name)
+        cat = _categorize_cargo(c_name, r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'), vc_map=vc_map)
         grid['balance_on_board'][cat] += rem
 
     # 2. Cargo discharged during Day (window_start <= log_timestamp < window_end)
@@ -438,7 +488,7 @@ def _get_section_b(cur, selected_date, window_start, window_end):
     for r in cur.fetchall():
         c_name = r.get('cargo_name')
         q = float(r.get('qty') or 0)
-        cat = _categorize_cargo(c_name)
+        cat = _categorize_cargo(c_name, vc_map=vc_map)
         grid['day_discharged'][cat] += q
 
     # 3. Cargo discharge in this Month (month_start <= log_timestamp < window_end)
@@ -470,42 +520,66 @@ def _get_section_b(cur, selected_date, window_start, window_end):
     for r in cur.fetchall():
         c_name = r.get('cargo_name')
         q = float(r.get('qty') or 0)
-        cat = _categorize_cargo(c_name)
+        cat = _categorize_cargo(c_name, vc_map=vc_map)
         grid['month_discharged'][cat] += q
 
-    # 4. Cum handled FY 2026-27 (from mis_vessel_master)
+    # 4. Cum handled FY 2026-27 (from mis_vessel_master LEFT JOIN vessel_cargo)
     cur.execute("""
-        SELECT new_cat, category1, category, cargo, SUM(COALESCE(quantity, 0)) AS qty
-        FROM mis_vessel_master
-        WHERE fin_year = '2026-27'
-        GROUP BY new_cat, category1, category, cargo
+        SELECT
+            mvm.cargo,
+            mvm.new_cat,
+            mvm.category1,
+            mvm.category,
+            vc.cargo_category AS vc_cat,
+            vc.cargo_sub_category_2 AS vc_sub2,
+            SUM(COALESCE(mvm.quantity, 0)) AS qty
+        FROM mis_vessel_master mvm
+        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(mvm.cargo)) = LOWER(TRIM(vc.cargo_name))
+        WHERE mvm.fin_year = '2026-27'
+        GROUP BY mvm.cargo, mvm.new_cat, mvm.category1, mvm.category, vc.cargo_category, vc.cargo_sub_category_2
     """)
     for r in cur.fetchall():
-        cat = _categorize_cargo(r.get('cargo'), r.get('new_cat'), r.get('category1'), r.get('category'))
+        cat = _categorize_cargo(r.get('cargo'), r.get('new_cat'), r.get('category1'), r.get('category'), vc_map=vc_map)
         q = float(r.get('qty') or 0)
         grid['cum_fy_curr'][cat] += q
 
-    # 5. Cum handled FY 2025-26 (from mis_history)
+    # 5. Cum handled FY 2025-26 (from mis_history LEFT JOIN vessel_cargo)
     cur.execute("""
-        SELECT cargo_category, cargo_sub_category, cargo_sub_category_2, cargo_name, SUM(COALESCE(quantity, 0)) AS qty
-        FROM mis_history
-        WHERE fin_year = '2025-26'
-        GROUP BY cargo_category, cargo_sub_category, cargo_sub_category_2, cargo_name
+        SELECT
+            mh.cargo_name,
+            mh.cargo_category,
+            mh.cargo_sub_category,
+            mh.cargo_sub_category_2,
+            vc.cargo_category AS vc_cat,
+            vc.cargo_sub_category_2 AS vc_sub2,
+            SUM(COALESCE(mh.quantity, 0)) AS qty
+        FROM mis_history mh
+        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(mh.cargo_name)) = LOWER(TRIM(vc.cargo_name))
+        WHERE mh.fin_year = '2025-26'
+        GROUP BY mh.cargo_name, mh.cargo_category, mh.cargo_sub_category, mh.cargo_sub_category_2, vc.cargo_category, vc.cargo_sub_category_2
     """)
     for r in cur.fetchall():
-        cat = _categorize_cargo(r.get('cargo_name'), r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'))
+        cat = _categorize_cargo(r.get('cargo_name'), r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'), vc_map=vc_map)
         q = float(r.get('qty') or 0)
         grid['cum_fy_2025_26'][cat] += q
 
-    # 6. Cum handled FY 2024-25 (from mis_history)
+    # 6. Cum handled FY 2024-25 (from mis_history LEFT JOIN vessel_cargo)
     cur.execute("""
-        SELECT cargo_category, cargo_sub_category, cargo_sub_category_2, cargo_name, SUM(COALESCE(quantity, 0)) AS qty
-        FROM mis_history
-        WHERE fin_year = '2024-25'
-        GROUP BY cargo_category, cargo_sub_category, cargo_sub_category_2, cargo_name
+        SELECT
+            mh.cargo_name,
+            mh.cargo_category,
+            mh.cargo_sub_category,
+            mh.cargo_sub_category_2,
+            vc.cargo_category AS vc_cat,
+            vc.cargo_sub_category_2 AS vc_sub2,
+            SUM(COALESCE(mh.quantity, 0)) AS qty
+        FROM mis_history mh
+        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(mh.cargo_name)) = LOWER(TRIM(vc.cargo_name))
+        WHERE mh.fin_year = '2024-25'
+        GROUP BY mh.cargo_name, mh.cargo_category, mh.cargo_sub_category, mh.cargo_sub_category_2, vc.cargo_category, vc.cargo_sub_category_2
     """)
     for r in cur.fetchall():
-        cat = _categorize_cargo(r.get('cargo_name'), r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'))
+        cat = _categorize_cargo(r.get('cargo_name'), r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'), vc_map=vc_map)
         q = float(r.get('qty') or 0)
         grid['cum_fy_2024_25'][cat] += q
 
@@ -969,7 +1043,7 @@ def dpr_export():
     ws[f"A{r}"].alignment = align_left
 
     r += 1
-    b_headers = ["Particulars", "Edible Oil", "Phosphoric", "Lube Oil", "Chemicals", "POL", "Total"]
+    b_headers = ["Particulars", "Edible Oil", "Other liquid", "Chemical", "POL", "Total"]
     for i, h in enumerate(b_headers):
         col_let = get_column_letter(1 + i)
         cell = ws[f"{col_let}{r}"]
@@ -985,7 +1059,7 @@ def dpr_export():
         ws[f"A{r}"].font = font_bold if "till date" in row_data['particulars'].lower() else font_normal
         ws[f"A{r}"].border = border
 
-        cats = ["Edible Oil", "Phosphoric", "Lube Oil", "Chemicals", "POL", "total"]
+        cats = ["Edible Oil", "Other liquid", "Chemical", "POL", "total"]
         for idx, cat in enumerate(cats):
             col_let = get_column_letter(2 + idx)
             cell = ws[f"{col_let}{r}"]

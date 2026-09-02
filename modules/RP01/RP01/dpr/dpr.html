@@ -391,11 +391,10 @@
                 <thead>
                     <tr>
                         <th style="width:35%;">Particulars</th>
-                        <th style="width:11%;text-align:right;">Edible Oil</th>
-                        <th style="width:11%;text-align:right;">Phosphoric</th>
-                        <th style="width:11%;text-align:right;">Lube Oil</th>
-                        <th style="width:11%;text-align:right;">Chemicals</th>
-                        <th style="width:11%;text-align:right;">POL</th>
+                        <th style="width:13%;text-align:right;">Edible Oil</th>
+                        <th style="width:13%;text-align:right;">Other liquid</th>
+                        <th style="width:13%;text-align:right;">Chemical</th>
+                        <th style="width:13%;text-align:right;">POL</th>
                         <th style="width:10%;text-align:right;">Total</th>
                     </tr>
                 </thead>
@@ -578,9 +577,8 @@
                 <tr class="${trClass}">
                     <td style="font-weight:${isTotalRow ? '700' : '600'};">${row.particulars}</td>
                     <td class="num">${fmtNum(row['Edible Oil'])}</td>
-                    <td class="num">${fmtNum(row['Phosphoric'])}</td>
-                    <td class="num">${fmtNum(row['Lube Oil'])}</td>
-                    <td class="num">${fmtNum(row['Chemicals'])}</td>
+                    <td class="num">${fmtNum(row['Other liquid'])}</td>
+                    <td class="num">${fmtNum(row['Chemical'])}</td>
                     <td class="num">${fmtNum(row['POL'])}</td>
                     <td class="num" style="font-weight:700;background:${isTotalRow ? '#fce0cd' : 'transparent'};">${fmtNum(row['total'])}</td>
                 </tr>
