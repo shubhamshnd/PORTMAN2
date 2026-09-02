@@ -62,6 +62,12 @@
 <div class="srv-box">
     <div class="srv-pick">
         <div>
+            <label for="srvMonth">Month</label>
+            <select id="srvMonth">
+                <option value="">All months</option>
+            </select>
+        </div>
+        <div>
             <label for="srvServiceType">Service type</label>
             <select id="srvServiceType">
                 <option value="">All service types (Details column)</option>
@@ -70,7 +76,7 @@
         <a class="srv-btn" id="srvExportBtn" href="/api/module/RP01/service-records/export">Download Excel</a>
     </div>
     <p id="srvEmptyNote" style="display:none;color:#b45309;margin-top:12px;">
-        No approved service records yet — the sheet would contain only headers.
+        No matching service records yet — the sheet would contain only headers.
     </p>
 </div>
 
@@ -79,8 +85,22 @@ function chip(val, lbl) {
     return `<div class="srv-chip"><div class="val">${val}</div><div class="lbl">${lbl}</div></div>`;
 }
 
+function updateExportLink() {
+    const base = '/api/module/RP01/service-records/export';
+    const month = document.getElementById('srvMonth').value;
+    const typeId = document.getElementById('srvServiceType').value;
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    if (typeId) params.set('service_type_id', typeId);
+    document.getElementById('srvExportBtn').href = params.toString() ? `${base}?${params.toString()}` : base;
+}
+
 async function loadSrvSummary() {
-    const resp = await fetch('/api/module/RP01/service-records/summary');
+    const month = document.getElementById('srvMonth').value || new Date().toISOString().slice(0, 7);
+    const params = new URLSearchParams();
+    params.set('month', month);
+    params.set('status', 'Approved');
+    const resp = await fetch(`/api/module/RP01/service-records/summary?${params.toString()}`);
     const s = await resp.json();
 
     document.getElementById('srvSummary').innerHTML =
@@ -89,22 +109,38 @@ async function loadSrvSummary() {
         chip(s.unbilled, 'Not Yet Billed') +
         chip(s.service_types.length, 'Service Types');
 
+    const monthSel = document.getElementById('srvMonth');
+    const currentMonth = monthSel.value || new Date().toISOString().slice(0, 7);
+    const months = s.months || [];
+    monthSel.innerHTML = '<option value="">All months</option>' + months.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+    const monthValues = months.map(m => m.value);
+    if (monthValues.includes(currentMonth)) {
+        monthSel.value = currentMonth;
+    } else if (monthValues.length) {
+        monthSel.value = monthValues[monthValues.length - 1];
+    } else {
+        monthSel.value = '';
+    }
+
     const sel = document.getElementById('srvServiceType');
+    const currentType = sel.value;
+    sel.innerHTML = '<option value="">All service types (Details column)</option>';
     s.service_types.forEach(t => {
         const opt = document.createElement('option');
         opt.value = t.id;
         opt.textContent = `${t.service_name} (${t.records})`;
         sel.appendChild(opt);
     });
+    if (currentType && Array.from(sel.options).some(o => o.value === currentType)) {
+        sel.value = currentType;
+    }
 
     document.getElementById('srvEmptyNote').style.display = s.approved ? 'none' : '';
+    updateExportLink();
 }
 
-document.getElementById('srvServiceType').addEventListener('change', function () {
-    const base = '/api/module/RP01/service-records/export';
-    document.getElementById('srvExportBtn').href =
-        this.value ? `${base}?service_type_id=${this.value}` : base;
-});
+document.getElementById('srvMonth').addEventListener('change', loadSrvSummary);
+document.getElementById('srvServiceType').addEventListener('change', updateExportLink);
 
 loadSrvSummary();
 </script>

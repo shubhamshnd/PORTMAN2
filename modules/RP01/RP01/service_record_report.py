@@ -13,6 +13,7 @@ fixed columns. Two shapes, one route:
 """
 from flask import render_template, session, jsonify, request
 from functools import wraps
+from datetime import datetime
 
 from . import bp
 from database import get_db, get_cursor, get_user_permissions
@@ -20,10 +21,13 @@ import excel_export
 
 MODULE_CODE = 'RP01'
 
-# Fixed header columns, shared by both shapes. Custom fields are appended after
-# these. 'dt:' would split into date+time; record_date is date-only, so plain.
+# Fixed header columns, shared by both shapes. The all-types export adds the
+# standard time/reading columns immediately after Date to match the required
+# Excel sequence, while service-type-specific exports keep their custom fields
+# appended after the base row.
 BASE_COLS = [
     ('Record No',    'record_number'),
+    ('Month',        'month'),
     ('Service Code', 'service_code'),
     ('Service',      'service_name'),
     ('Bill To Type', 'source_type'),
@@ -59,16 +63,85 @@ def _custom_fields(cur, service_type_id):
     return [dict(r) for r in cur.fetchall()]
 
 
-def report_rows(service_type_id=None):
-    """(cols, rows) for the requested shape. One pass over approved records,
+def _all_service_time_reading_columns():
+    """Columns that must always appear in the flat 'All service types' export."""
+    return [
+        ('Start Time', 'start_time'),
+        ('End Time', 'end_time'),
+        ('Start Reading', 'start_reading'),
+        ('End Reading', 'end_reading'),
+    ]
+
+
+def _month_filter_sql(month, alias='r'):
+    """Return SQL+params for a YYYY-MM filter on the stored ISO text date."""
+    if not month:
+        return "", []
+    month = str(month).strip()
+    try:
+        dt = datetime.strptime(month, '%Y-%m')
+    except ValueError:
+        return "", []
+    start = f"{dt.year:04d}-{dt.month:02d}-01"
+    if dt.month == 12:
+        end = f"{dt.year + 1:04d}-01-01"
+    else:
+        end = f"{dt.year:04d}-{dt.month + 1:02d}-01"
+    col = f"{alias}.record_date" if alias else "record_date"
+    return f" AND {col} >= %s AND {col} < %s", [start, end]
+
+
+def _status_filter_sql(status, alias='r'):
+    """Status filter for report/totals: Approved, Pending or Both."""
+    status = (status or 'Approved').strip()
+    col = f"{alias}.doc_status" if alias else "doc_status"
+    if status == 'Pending':
+        return f" AND {col} = 'Pending'", []
+    if status == 'Both':
+        return f" AND {col} IN ('Approved', 'Pending')", []
+    return f" AND {col} = 'Approved'", []
+
+
+def _fy_months_to_current():
+    """Return FY months from April through the current month only."""
+    today = datetime.today()
+    if today.month >= 4:
+        start_year = today.year
+        start_month = 4
+    else:
+        start_year = today.year - 1
+        start_month = 4
+    months = []
+    year = start_year
+    month = start_month
+    while True:
+        months.append((year, month))
+        if year == today.year and month == today.month:
+            break
+        if month == 12:
+            year += 1
+            month = 1
+        else:
+            month += 1
+    return months
+
+
+def report_rows(service_type_id=None, month=None, status='Approved'):
+    """(cols, rows) for the requested shape. One pass over matching records,
     one pass over their values — not a query per record."""
     conn = get_db()
     cur = get_cursor(conn)
 
-    where, params = "WHERE r.doc_status = 'Approved'", []
+    where, params = "WHERE 1=1", []
+    status_where, _ = _status_filter_sql(status)
+    where += status_where
     if service_type_id:
         where += ' AND r.service_type_id = %s'
         params.append(service_type_id)
+
+    month_where, month_params = _month_filter_sql(month)
+    where += month_where
+    params.extend(month_params)
 
     cur.execute(f'''
         SELECT r.id, r.record_number, r.source_type, r.source_display,
@@ -86,14 +159,36 @@ def report_rows(service_type_id=None):
     rows = [dict(r) for r in cur.fetchall()]
 
     for row in rows:
+        record_date = row.get('record_date')
+        if record_date:
+            try:
+                row['month'] = datetime.strptime(str(record_date), '%Y-%m-%d').strftime('%b-%y')
+            except ValueError:
+                row['month'] = str(record_date)[:7]
+        else:
+            row['month'] = ''
         row['billed'] = bool(row.pop('is_billed', 0))
 
     if not rows:
         # Still return the shape the caller asked for — a sheet with no rows must
         # carry the same headers as one with rows, or the two can't be appended.
-        cols = (BASE_COLS + [(d['field_label'], f"cf_{d['id']}")
-                             for d in _custom_fields(cur, service_type_id)]
-                if service_type_id else BASE_COLS + [('Details', 'details')])
+        if service_type_id:
+            cols = BASE_COLS + [(d['field_label'], f"cf_{d['id']}") for d in _custom_fields(cur, service_type_id)]
+        else:
+            required = _all_service_time_reading_columns()
+            cols = [
+                ('Record No', 'record_number'),
+                ('Month', 'month'),
+                ('Service Code', 'service_code'),
+                ('Service', 'service_name'),
+                ('Bill To Type', 'source_type'),
+                ('Bill To', 'source_display'),
+                ('Ref Document', 'ref_source_display'),
+                ('Date', 'record_date'),
+            ]
+            cols.extend((label, key) for label, key in required)
+            cols.extend(BASE_COLS[8:])
+            cols.append(('Details', 'details'))
         conn.close()
         return cols, rows
 
@@ -122,14 +217,54 @@ def report_rows(service_type_id=None):
 
     conn.close()
     details = {}
+    flat_defs = []
+    seen_defs = set()
     for v in values:
         if str(v['field_value'] or '').strip() == '':
             continue
         details.setdefault(v['service_record_id'], []).append(
             f"{v['field_label']}: {v['field_value']}")
+        if v['field_id'] not in seen_defs:
+            seen_defs.add(v['field_id'])
+            flat_defs.append({'field_id': v['field_id'], 'field_label': v['field_label']})
+
+    required = _all_service_time_reading_columns()
+    for label, key in required:
+        if not any(d['field_label'] == label for d in flat_defs):
+            flat_defs.append({'field_id': key, 'field_label': label})
+
+    by_record = {}
+    for v in values:
+        by_record.setdefault(v['service_record_id'], {})[v['field_id']] = v['field_value']
     for row in rows:
         row['details'] = ' | '.join(details.get(row['id'], []))
-    return BASE_COLS + [('Details', 'details')], rows
+        for d in flat_defs:
+            row_key = d['field_id']
+            if isinstance(row_key, int):
+                row[f"cf_{row_key}"] = by_record.get(row['id'], {}).get(row_key, '')
+            else:
+                row[f"cf_{row_key}"] = ''
+                for v in values:
+                    if v['service_record_id'] == row['id'] and v['field_label'] == d['field_label']:
+                        row[f"cf_{row_key}"] = v['field_value']
+                        break
+
+    before_required = [
+        ('Record No', 'record_number'),
+        ('Month', 'month'),
+        ('Service Code', 'service_code'),
+        ('Service', 'service_name'),
+        ('Bill To Type', 'source_type'),
+        ('Bill To', 'source_display'),
+        ('Ref Document', 'ref_source_display'),
+        ('Date', 'record_date'),
+    ]
+    after_required = BASE_COLS[8:]
+    cols = before_required + [
+        (d['field_label'], f"cf_{d['field_id']}")
+        for d in flat_defs if d['field_label'] in {label for label, _ in required}
+    ] + after_required + [('Details', 'details')]
+    return cols, rows
 
 
 @bp.route('/module/RP01/service-records/')
@@ -146,23 +281,44 @@ def srv_report_page():
 @login_required
 def srv_report_summary():
     """Counts plus the service types worth offering — only those that actually
-    have approved records, so the dropdown can't lead to an empty sheet."""
+    match the selected status and month filters."""
+    month = request.args.get('month') or ''
+    status = (request.args.get('status') or 'Approved').strip()
     conn = get_db()
     cur = get_cursor(conn)
-    cur.execute("SELECT COUNT(*) AS c FROM service_records WHERE doc_status = 'Approved'")
+
+    status_where, _ = _status_filter_sql(status, 's')
+    month_where, month_params = _month_filter_sql(month, 's')
+    approved_where = "WHERE 1=1" + status_where
+    billed_where = "WHERE 1=1" + status_where + " AND COALESCE(s.is_billed,0) = 1"
+    type_where = "WHERE 1=1" + status_where
+    if month_where:
+        approved_where += month_where
+        billed_where += month_where
+        type_where += month_where
+
+    cur.execute(f"SELECT COUNT(*) AS c FROM service_records s {approved_where}", month_params)
     approved = cur.fetchone()['c']
-    cur.execute("SELECT COUNT(*) AS c FROM service_records WHERE doc_status = 'Approved' AND COALESCE(is_billed,0) = 1")
+    cur.execute(f"SELECT COUNT(*) AS c FROM service_records s {billed_where}", month_params)
     billed = cur.fetchone()['c']
     cur.execute('''SELECT st.id, st.service_code, st.service_name, COUNT(*) AS records
-                   FROM service_records r
-                   JOIN finance_service_types st ON st.id = r.service_type_id
-                   WHERE r.doc_status = 'Approved'
+                   FROM service_records s
+                   JOIN finance_service_types st ON st.id = s.service_type_id
+                   {type_where}
                    GROUP BY st.id, st.service_code, st.service_name
-                   ORDER BY st.service_name''')
+                   ORDER BY st.service_name'''.format(type_where=type_where), month_params)
     types = [dict(r) for r in cur.fetchall()]
+
+    month_status_where = _status_filter_sql(status, 's')[0]
+    months = []
+    for year, month_no in _fy_months_to_current():
+        value = f"{year:04d}-{month_no:02d}"
+        label = datetime.strptime(value + '-01', '%Y-%m-%d').strftime('%b')
+        months.append({'value': value, 'label': label})
     conn.close()
     return jsonify({'approved': approved, 'billed': billed,
-                    'unbilled': approved - billed, 'service_types': types})
+                    'unbilled': approved - billed, 'service_types': types,
+                    'months': months})
 
 
 @bp.route('/api/module/RP01/service-records/export')
@@ -170,6 +326,12 @@ def srv_report_summary():
 def srv_report_export():
     raw = request.args.get('service_type_id') or ''
     service_type_id = int(raw) if raw.isdigit() else None
-    cols, rows = report_rows(service_type_id)
+    month = request.args.get('month') or ''
+    status = (request.args.get('status') or 'Approved').strip()
+    cols, rows = report_rows(service_type_id, month=month, status=status)
     stem = f'Service_Records_{service_type_id}' if service_type_id else 'Service_Records'
+    if month:
+        stem = f'{stem}_{month.replace("-", "")}'
+    if status and status != 'Approved':
+        stem = f'{stem}_{status.lower()}'
     return excel_export.sheet_response(cols, rows, 'Service Records', stem)
