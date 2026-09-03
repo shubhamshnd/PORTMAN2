@@ -20,7 +20,7 @@
         border-radius: 10px;
         border: 1px solid var(--border-color, #e2e8f0);
         margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
     }
 
     .dpr-date-picker-group {
@@ -58,6 +58,7 @@
         background: #2563eb;
         color: #ffffff;
     }
+
     .btn-action-primary:hover {
         background: #1d4ed8;
     }
@@ -67,6 +68,7 @@
         color: var(--text-primary, #334155);
         border-color: var(--border-color, #cbd5e1);
     }
+
     .btn-action-secondary:hover {
         background: #e2e8f0;
     }
@@ -75,6 +77,7 @@
         background: #107c41;
         color: #ffffff;
     }
+
     .btn-action-excel:hover {
         background: #0b6a36;
     }
@@ -135,6 +138,7 @@
         align-items: center;
         justify-content: center;
     }
+
     .dpr-brand-logo span {
         color: #0056b3;
     }
@@ -155,7 +159,8 @@
         font-size: 12px;
     }
 
-    .dpr-table th, .dpr-table td {
+    .dpr-table th,
+    .dpr-table td {
         border: 1px solid #b7b7b7;
         padding: 6px 10px;
         text-align: left;
@@ -191,11 +196,13 @@
         table-layout: fixed;
         width: 100%;
     }
+
     .sec-a-table th,
     .sec-a-table td {
         width: 20% !important;
         box-sizing: border-box;
     }
+
     .sec-a-table td.label-col {
         background: #F2F2F2;
         font-weight: 700;
@@ -206,14 +213,16 @@
         display: inline-block;
         width: 20px;
         height: 20px;
-        border: 3px solid rgba(0,0,0,0.1);
+        border: 3px solid rgba(0, 0, 0, 0.1);
         border-radius: 50%;
         border-top-color: #2563eb;
         animation: spin 0.8s linear infinite;
     }
 
     @keyframes spin {
-        to { transform: rotate(360deg); }
+        to {
+            transform: rotate(360deg);
+        }
     }
 
     /* ---------- Module header ---------- */
@@ -225,12 +234,14 @@
         padding-bottom: 16px;
         border-bottom: 1px solid var(--border-color, #e2e8f0);
     }
+
     .module-header h2 {
         margin: 0;
         font-size: 22px;
         font-weight: 700;
         color: var(--text-primary, #1e293b);
     }
+
     .module-header .rp-badge {
         background: #4a90d9;
         color: #fff;
@@ -240,6 +251,7 @@
         font-weight: 700;
         letter-spacing: 0.5px;
     }
+
     .module-header .rp-back {
         margin-left: auto;
         font-size: 13px;
@@ -247,6 +259,7 @@
         color: #4a90d9;
         text-decoration: none;
     }
+
     .module-header .rp-back:hover {
         text-decoration: underline;
     }
@@ -263,6 +276,7 @@
         padding: 14px 16px;
         margin-bottom: 8px;
     }
+
     .jjltpl-toolbar label {
         font-size: 12px;
         font-weight: 600;
@@ -271,6 +285,7 @@
         letter-spacing: 0.4px;
         margin-right: 2px;
     }
+
     .jjltpl-toolbar input[type="date"] {
         font-size: 13px;
         font-weight: 500;
@@ -281,6 +296,7 @@
         padding: 6px 10px;
         outline: none;
     }
+
     .jjltpl-load-btn {
         font-size: 13px;
         font-weight: 600;
@@ -292,6 +308,7 @@
         background: #3b82f6;
         transition: background 0.2s ease;
     }
+
     .jjltpl-load-btn:hover {
         background: #2563eb;
     }
@@ -308,6 +325,7 @@
         margin-left: auto;
         transition: background 0.2s ease;
     }
+
     .jjltpl-export-btn:hover {
         background: #15803d;
     }
@@ -317,6 +335,74 @@
         color: var(--text-secondary, #64748b);
         margin-bottom: 16px;
         padding-left: 2px;
+    }
+
+    /* ---------- Report Tabs (DPR / BVsA / Income / Budget / Reason) ---------- */
+    .dpr-tabs-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+
+    .dpr-tab-btn {
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 8px 16px;
+        border: 1px solid var(--border-color, #cbd5e1);
+        cursor: pointer;
+        background: var(--bg-secondary, #ffffff);
+        color: var(--text-primary, #334155);
+        transition: all 0.15s ease;
+    }
+
+    .dpr-tab-btn:hover {
+        background: #eef2ff;
+        border-color: #93a5fd;
+    }
+
+    .dpr-tab-btn.active {
+        background: #1F4E78;
+        color: #ffffff;
+        border-color: #1F4E78;
+    }
+
+    .dpr-static-note {
+        font-size: 12px;
+        color: #92400e;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-bottom: 12px;
+    }
+
+    .dpr-static-wrap {
+        overflow-x: auto;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        padding: 4px;
+    }
+
+    table.dpr-static-table {
+        border-collapse: collapse;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    table.dpr-static-table td {
+        border: 1px solid #e2e8f0;
+        padding: 4px 8px;
+        color: #1e293b;
+    }
+
+    table.dpr-static-table td.static-empty {
+        border: none;
+        background: transparent;
     }
 </style>
 
@@ -339,10 +425,30 @@
 
     <!-- Status / Window Range text -->
     <div id="reportStatus">
-        Showing data from <span id="lblWindowStart">--</span> to <span id="lblWindowEnd">--</span> (07:00 &rarr; 07:00 operational day)
+        Showing data from <span id="lblWindowStart">--</span> to <span id="lblWindowEnd">--</span> (07:00 &rarr; 07:00
+        operational day)
     </div>
 
+    <!-- Report Tabs -->
+    <div class="dpr-tabs-bar" id="dprTabsBar">
+        <button class="dpr-tab-btn active" data-tab="dpr" onclick="switchDprTab('dpr')">DPR</button>
+        <button class="dpr-tab-btn" data-tab="bvsa" onclick="switchDprTab('bvsa')">BVsA FY 2027</button>
+        <!-- <button class="dpr-tab-btn" data-tab="income" onclick="switchDprTab('income')">Income FY 2027</button>
+        <button class="dpr-tab-btn" data-tab="budget" onclick="switchDprTab('budget')">Budget</button>
+        <button class="dpr-tab-btn" data-tab="reason" onclick="switchDprTab('reason')">Reason for handling at
+            BPCL</button> -->
+    </div>
 
+    <!-- Static tab content (BVsA / Income / Budget / Reason) -->
+    <div id="dprStaticTabContent" style="display:none;">
+        <div class="dpr-static-note">This page is under development</div>
+        <div id="staticTabLoading" style="text-align:center;padding:30px;">
+            <div class="spinner"></div>
+        </div>
+        <div class="dpr-static-wrap" id="staticTabWrap" style="display:none;">
+            <table class="dpr-static-table" id="staticTabTable"></table>
+        </div>
+    </div>
 
     <!-- Main Report Content Paper -->
     <div class="dpr-paper" id="dprPaper">
@@ -358,7 +464,8 @@
                 <span id="lblReportDate" style="color:#0056b3;">-</span>
             </div>
             <div class="dpr-brand-logo">
-                <img src="{{ url_for('static', filename='img/logo31.png') }}" alt="JSW Infrastructure Logo" style="max-height: 36px; width: auto; object-fit: contain;">
+                <img src="{{ url_for('static', filename='img/logo31.png') }}" alt="JSW Infrastructure Logo"
+                    style="max-height: 36px; width: auto; object-fit: contain;">
             </div>
             <div class="dpr-meta-box">
                 <span>Reporting Date:</span>
@@ -368,7 +475,8 @@
 
         <div id="loadingState" style="text-align:center;padding:40px;">
             <div class="spinner"></div>
-            <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading Daily Performance Report...</div>
+            <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading Daily Performance
+                Report...</div>
         </div>
 
         <div id="reportContent" style="display:none;">
@@ -530,7 +638,7 @@
         // Render Section A
         const secABody = document.getElementById('tblSecA');
         const secA = data.section_a || [];
-        
+
         let htmlA = `
             <tr>
                 <td class="label-col" style="width:20%;">Berth</td>
@@ -654,6 +762,131 @@
     function exportExcel() {
         const dateVal = document.getElementById('dprDate').value;
         window.location.href = `/api/module/RP01/dpr/export?date=${dateVal}`;
+    }
+
+    // ---------------------------------------------------------------
+    // Static tabs: BVsA FY 2027 / Income FY 2027 / Budget /
+    // Reason for handling at BPCL
+    // These are read-only snapshots — they never touch the DPR
+    // date filter, dprPaper markup, or loadData()/renderReport() above.
+    // ---------------------------------------------------------------
+    const staticTabCache = {};
+
+    function switchDprTab(tabKey) {
+        document.querySelectorAll('#dprTabsBar .dpr-tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabKey);
+        });
+
+        const dprPaper = document.getElementById('dprPaper');
+        const staticContent = document.getElementById('dprStaticTabContent');
+        const reportStatus = document.getElementById('reportStatus');
+
+        if (tabKey === 'dpr') {
+            staticContent.style.display = 'none';
+            dprPaper.style.display = 'block';
+            reportStatus.style.display = 'block';
+            return;
+        }
+
+        dprPaper.style.display = 'none';
+        reportStatus.style.display = 'none';
+        staticContent.style.display = 'block';
+        renderStaticTab(tabKey);
+    }
+
+    async function renderStaticTab(tabKey) {
+        const loading = document.getElementById('staticTabLoading');
+        const wrap = document.getElementById('staticTabWrap');
+        const table = document.getElementById('staticTabTable');
+
+        wrap.style.display = 'none';
+        loading.style.display = 'block';
+
+        try {
+            let sheet = staticTabCache[tabKey];
+            if (!sheet) {
+                const resp = await fetch(`/api/module/RP01/dpr/static/${tabKey}`);
+                sheet = await resp.json();
+                if (sheet.error) {
+                    table.innerHTML = `<tr><td class="static-empty">${sheet.error}</td></tr>`;
+                    loading.style.display = 'none';
+                    wrap.style.display = 'block';
+                    return;
+                }
+                staticTabCache[tabKey] = sheet;
+            }
+            table.innerHTML = buildStaticTableHtml(sheet);
+        } catch (err) {
+            console.error(err);
+            table.innerHTML = `<tr><td class="static-empty">This page is under development</td></tr>`;
+        }
+
+        loading.style.display = 'none';
+        wrap.style.display = 'block';
+    }
+
+    function buildStaticTableHtml(sheet) {
+        // Build a lookup: cell -> {disp, bold, fill, align}
+        const cellMap = {};
+        (sheet.cells || []).forEach(c => {
+            cellMap[`${c.r}_${c.c}`] = c;
+        });
+
+        // Parse merges ("B2:D2") into a span map + a "covered" skip set
+        const spanMap = {};   // "r_c" -> {rowspan, colspan}
+        const covered = new Set();
+        (sheet.merges || []).forEach(rng => {
+            const [start, end] = rng.split(':');
+            const parse = (ref) => {
+                const m = ref.match(/([A-Z]+)(\d+)/);
+                let col = 0;
+                for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+                return { row: parseInt(m[2], 10), col };
+            };
+            const s = parse(start), e = parse(end || start);
+            spanMap[`${s.row}_${s.col}`] = { rowspan: e.row - s.row + 1, colspan: e.col - s.col + 1 };
+            for (let r = s.row; r <= e.row; r++) {
+                for (let c = s.col; c <= e.col; c++) {
+                    if (r === s.row && c === s.col) continue;
+                    covered.add(`${r}_${c}`);
+                }
+            }
+        });
+
+        let html = '';
+        for (let r = sheet.min_row; r <= sheet.max_row; r++) {
+            html += '<tr>';
+            for (let c = sheet.min_col; c <= sheet.max_col; c++) {
+                const key = `${r}_${c}`;
+                if (covered.has(key)) continue;
+
+                const cell = cellMap[key];
+                const span = spanMap[key];
+                const attrs = [];
+                if (span) {
+                    if (span.rowspan > 1) attrs.push(`rowspan="${span.rowspan}"`);
+                    if (span.colspan > 1) attrs.push(`colspan="${span.colspan}"`);
+                }
+
+                if (!cell) {
+                    html += `<td class="static-empty" ${attrs.join(' ')}></td>`;
+                    continue;
+                }
+
+                const style = [];
+                if (cell.bold) style.push('font-weight:700');
+                if (cell.fill) style.push(`background:#${cell.fill}`);
+                if (cell.align) style.push(`text-align:${cell.align}`);
+                else if (cell.t === 'number' || cell.t === 'percent') style.push('text-align:right');
+
+                const text = (cell.disp || '').toString()
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                html += `<td ${attrs.join(' ')} style="${style.join(';')}">${text}</td>`;
+            }
+            html += '</tr>';
+        }
+        return html;
     }
 </script>
 {% endblock %}

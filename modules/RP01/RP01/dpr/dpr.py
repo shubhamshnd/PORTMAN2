@@ -606,6 +606,7 @@ def _get_section_b(cur, selected_date, window_start, window_end):
         WHERE NULLIF(TRIM(lh.cast_off_datetime::text), '') IS NOT NULL
           AND COALESCE(log.is_deleted, FALSE) = FALSE
           AND COALESCE(log.is_shortclose, FALSE) = FALSE
+          AND LOWER(COALESCE(log.remarks, '')) NOT LIKE '%%short%%'
           AND COALESCE(lh.is_deleted, FALSE) = FALSE
         GROUP BY
             lh.id,
