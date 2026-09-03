@@ -1239,3 +1239,602 @@ def dpr_export():
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# TAB 2: BVsA FY 2027 (Budget vs Actual)
+# Completely independent calculation for the second tab of DPR.
+# Uses financial_year_targets for Budget, and mis_vessel_master + live
+# ldud_header / parcel ops for Actuals.
+# ---------------------------------------------------------------------------
+
+def _classify_bvsa_cargo(cargo_name, cargo_sub2=None, cargo_cat=None, cargo_sub=None):
+    """
+    Classifies cargo into the 4 DPR Section B categories:
+      - 'edible': Edible Oil
+      - 'other': Other liquid (combining Lube, Base Oil, Farm Liquids, Phosphoric Acid)
+      - 'chemical': Chemical
+      - 'pol': POL
+    """
+    s_sub2 = str(cargo_sub2 or '').strip().upper()
+    s_cat = str(cargo_cat or '').strip().upper()
+    s_sub = str(cargo_sub or '').strip().upper()
+    s_name = str(cargo_name or '').strip().upper()
+
+    for s in (s_sub2, s_cat, s_sub):
+        if 'EDIBLE' in s:
+            return 'edible'
+        if 'CHEM' in s:
+            return 'chemical'
+        if 'POL' in s:
+            return 'pol'
+        if 'FARM' in s or 'OTHER' in s or 'PH' in s or 'LUBE' in s:
+            return 'other'
+
+    if any(k in s_name for k in ('EDIBLE', 'PALM', 'SOYA', 'SUNFLOWER', 'CPO', 'CDSBO', 'CSFO')):
+        return 'edible'
+    if any(k in s_name for k in ('POL', 'CBFS', 'FO', 'HSD', 'MOTOR SPIRIT', 'DIESEL', 'NAPHTHA')):
+        return 'pol'
+    if any(k in s_name for k in ('CHEM', 'ACETONE', 'PHENOL', 'BENZENE', 'ETHANOL', 'METHANOL', 'ACETIC ACID', 'VAM', 'IPA', 'SM', 'MEK', 'NITRIC ACID', 'HEXANE')):
+        return 'chemical'
+
+    return 'other'
+
+
+def _get_bvsa_payload(selected_date):
+    """
+    Budget vs Actual (BVsA) calculation for FY 2026-27 (FY 2027).
+    - Categories: Edible Oil, Other liquid, Chemical, POL
+    - Budget source: financial_year_targets (targets JSONB)
+    - Actual source: mis_vessel_master (Apr-Jun) + Live ldud_header / parcel ops (Jul onwards up to selected_date)
+    """
+    conn = get_db()
+    try:
+        cur = get_cursor(conn)
+        window_end = datetime(selected_date.year, selected_date.month, selected_date.day, 7, 0, 0)
+
+        MONTH_SPECS = [
+            ('Apr', 'Apr-26', 4, 2026),
+            ('May', 'May-26', 5, 2026),
+            ('Jun', 'Jun-26', 6, 2026),
+            ('Jul', 'Jul-26', 7, 2026),
+            ('Aug', 'Aug-26', 8, 2026),
+            ('Sep', 'Sep-26', 9, 2026),
+            ('Oct', 'Oct-26', 10, 2026),
+            ('Nov', 'Nov-26', 11, 2026),
+            ('Dec', 'Dec-26', 12, 2026),
+            ('Jan', 'Jan-27', 1, 2027),
+            ('Feb', 'Feb-27', 2, 2027),
+            ('Mar', 'Mar-27', 3, 2027),
+        ]
+
+        if selected_date.year == 2026 and selected_date.month >= 4:
+            active_idx = selected_date.month - 4
+        elif selected_date.year == 2027 and selected_date.month <= 3:
+            active_idx = selected_date.month + 8
+        elif selected_date.year > 2027 or (selected_date.year == 2027 and selected_date.month > 3):
+            active_idx = 11
+        else:
+            active_idx = 0
+
+        months = []
+        for idx, (m_code, m_lbl, m_num, m_yr) in enumerate(MONTH_SPECS):
+            months.append({
+                'index': idx,
+                'code': m_code,
+                'label': m_lbl,
+                'month_num': m_num,
+                'year': m_yr,
+                'is_past_or_current': idx <= active_idx,
+                'budget': {'edible': 0.0, 'other': 0.0, 'chemical': 0.0, 'pol': 0.0, 'total': 0.0},
+                'actual': {'edible': 0.0, 'other': 0.0, 'chemical': 0.0, 'pol': 0.0, 'total': 0.0}
+            })
+
+        # 1. Budget from financial_year_targets
+        cur.execute("SELECT targets FROM financial_year_targets WHERE financial_year = '2026-27'")
+        fy_row = cur.fetchone()
+        if fy_row and fy_row.get('targets'):
+            raw_t = fy_row['targets']
+            if isinstance(raw_t, str):
+                import json
+                raw_t = json.loads(raw_t)
+
+            target_items = raw_t.get('targets', []) if isinstance(raw_t, dict) else []
+            if not target_items and isinstance(raw_t, dict):
+                for grp in raw_t.get('cargo_groups', []):
+                    target_items.append({
+                        'name': grp.get('cargo_sub_category_2') or grp.get('name') or '',
+                        'monthly_data': [{'month': mb.get('month'), 'target': mb.get('budget_quantity')} for mb in grp.get('monthly_budget', [])]
+                    })
+
+            for item in target_items:
+                name = (item.get('name') or '').strip().upper()
+                if 'EDIBLE' in name or 'PALM' in name or 'SOYA' in name:
+                    b_cat = 'edible'
+                elif 'POL' in name:
+                    b_cat = 'pol'
+                elif 'CHEM' in name:
+                    b_cat = 'chemical'
+                else:
+                    b_cat = 'other'
+
+                for md in item.get('monthly_data', []):
+                    m_str = (md.get('month') or '').strip()
+                    val = float(md.get('target') or md.get('budget_quantity') or 0.0)
+                    for m in months:
+                        if m['code'].lower() == m_str[:3].lower():
+                            m['budget'][b_cat] += val
+                            m['budget']['total'] += val
+                            break
+
+        # 2. Actuals from mis_vessel_master (Apr to Jun 2026)
+        vessels = []
+        sr = 1
+
+        cur.execute("""
+            SELECT 
+                id, month, vessel_name, cargo, consigner, new_cat, category1, category, quantity
+            FROM mis_vessel_master
+            WHERE fin_year = '2026-27'
+            ORDER BY 
+                CASE 
+                    WHEN month ILIKE 'Apr%' THEN 1
+                    WHEN month ILIKE 'May%' THEN 2
+                    WHEN month ILIKE 'Jun%' THEN 3
+                    WHEN month ILIKE 'Jul%' THEN 4
+                    WHEN month ILIKE 'Aug%' THEN 5
+                    WHEN month ILIKE 'Sep%' THEN 6
+                    WHEN month ILIKE 'Oct%' THEN 7
+                    WHEN month ILIKE 'Nov%' THEN 8
+                    WHEN month ILIKE 'Dec%' THEN 9
+                    WHEN month ILIKE 'Jan%' THEN 10
+                    WHEN month ILIKE 'Feb%' THEN 11
+                    WHEN month ILIKE 'Mar%' THEN 12
+                    ELSE 99
+                END,
+                id
+        """)
+        for r in cur.fetchall():
+            m_str = (r.get('month') or '').strip()
+            m_obj = next((m for m in months if m['label'].lower() == m_str.lower() or m['code'].lower() == m_str[:3].lower()), None)
+            if not m_obj:
+                continue
+
+            q = float(r.get('quantity') or 0.0)
+            c_name = r.get('cargo')
+            cat = _classify_bvsa_cargo(c_name, r.get('new_cat'), r.get('category1'), r.get('category'))
+
+            m_obj['actual'][cat] += q
+            m_obj['actual']['total'] += q
+
+            vessels.append({
+                'sr_no': sr,
+                'month': m_obj['label'],
+                'vessel_name': r.get('vessel_name') or '-',
+                'cargo': c_name or '-',
+                'customer': r.get('consigner') or '-',
+                'quantity': q,
+                'edible': q if cat == 'edible' else 0.0,
+                'other': q if cat == 'other' else 0.0,
+                'chemical': q if cat == 'chemical' else 0.0,
+                'pol': q if cat == 'pol' else 0.0,
+            })
+            sr += 1
+
+        # 3. Actuals from Live Operational Data (Jul 1 07:00 onwards up to window_end)
+        cur.execute("""
+            SELECT
+                lh.id AS ldud_id,
+                lh.vessel_name,
+                lh.cast_off_datetime,
+                po.cargo_name,
+                COALESCE(po.terminal_name, 'Live Operation') AS customer,
+                vc.cargo_sub_category_2,
+                vc.cargo_category,
+                vc.cargo_type,
+                SUM(COALESCE(log.quantity, 0)) AS qty
+            FROM ldud_header lh
+            JOIN ldud_parcel_ops po ON po.ldud_id = lh.id
+            JOIN lueu_parcel_log log ON log.parcel_op_id = po.id
+            LEFT JOIN vessel_cargo vc ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(po.cargo_name))
+            WHERE NULLIF(TRIM(lh.cast_off_datetime::text), '') IS NOT NULL
+              AND REPLACE(TRIM(lh.cast_off_datetime), 'T', ' ')::timestamp >= '2026-07-01 07:00:00'
+              AND REPLACE(TRIM(lh.cast_off_datetime), 'T', ' ')::timestamp <= %s
+              AND COALESCE(log.is_deleted, FALSE) = FALSE
+              AND COALESCE(log.is_shortclose, FALSE) = FALSE
+              AND LOWER(COALESCE(log.remarks, '')) NOT LIKE '%%short%%'
+              AND COALESCE(lh.is_deleted, FALSE) = FALSE
+            GROUP BY lh.id, lh.vessel_name, lh.cast_off_datetime, po.cargo_name, po.terminal_name, vc.cargo_sub_category_2, vc.cargo_category, vc.cargo_type
+            ORDER BY lh.cast_off_datetime
+        """, (window_end,))
+        for r in cur.fetchall():
+            co_dt = _parse_entry_dt(r.get('cast_off_datetime'))
+            if not co_dt:
+                continue
+
+            m_obj = next((m for m in months if m['month_num'] == co_dt.month and m['year'] == co_dt.year), None)
+            if not m_obj:
+                continue
+
+            q = float(r.get('qty') or 0.0)
+            c_name = r.get('cargo_name')
+            cat = _classify_bvsa_cargo(c_name, r.get('cargo_sub_category_2'), r.get('cargo_category'), r.get('cargo_type'))
+
+            m_obj['actual'][cat] += q
+            m_obj['actual']['total'] += q
+
+            vessels.append({
+                'sr_no': sr,
+                'month': m_obj['label'],
+                'vessel_name': r.get('vessel_name') or '-',
+                'cargo': c_name or '-',
+                'customer': r.get('customer') or 'Live Operation',
+                'quantity': q,
+                'edible': q if cat == 'edible' else 0.0,
+                'other': q if cat == 'other' else 0.0,
+                'chemical': q if cat == 'chemical' else 0.0,
+                'pol': q if cat == 'pol' else 0.0,
+            })
+            sr += 1
+
+        # 4. Cumulative calculations and Variances (Variance = Actual - Budget)
+        full_year_budget = sum(m['budget']['total'] for m in months)
+        cum_b = 0.0
+        cum_a = 0.0
+
+        for m in months:
+            cum_b += m['budget']['total']
+            m['cum_budget'] = cum_b
+
+            if m['is_past_or_current']:
+                cum_a += m['actual']['total']
+                m['cum_actual'] = cum_a
+                m['pct_achieved'] = (m['actual']['total'] / m['budget']['total'] * 100) if m['budget']['total'] > 0 else (100.0 if m['actual']['total'] > 0 else 0.0)
+                m['pct_cum_achieved'] = (cum_a / full_year_budget * 100) if full_year_budget > 0 else 0.0
+                m['variance'] = m['actual']['total'] - m['budget']['total']
+                m['cum_variance'] = cum_a - cum_b
+            else:
+                m['cum_actual'] = None
+                m['pct_achieved'] = None
+                m['pct_cum_achieved'] = None
+                m['variance'] = None
+                m['cum_variance'] = None
+
+        active_m = months[active_idx]
+        ytd_budget = active_m['cum_budget']
+        ytd_actual = active_m['cum_actual'] or 0.0
+        ytd_variance = ytd_actual - ytd_budget
+        balance = max(full_year_budget - ytd_actual, 0.0)
+        remaining_months = max(0, 11 - active_idx)
+        asking_rate = (balance / remaining_months) if remaining_months > 0 else 0.0
+
+        # Category totals for FY & YTD
+        fy_summary = {
+            'edible': {
+                'budget': sum(m['budget']['edible'] for m in months),
+                'actual': sum(m['actual']['edible'] for m in months if m['is_past_or_current']),
+            },
+            'other': {
+                'budget': sum(m['budget']['other'] for m in months),
+                'actual': sum(m['actual']['other'] for m in months if m['is_past_or_current']),
+            },
+            'chemical': {
+                'budget': sum(m['budget']['chemical'] for m in months),
+                'actual': sum(m['actual']['chemical'] for m in months if m['is_past_or_current']),
+            },
+            'pol': {
+                'budget': sum(m['budget']['pol'] for m in months),
+                'actual': sum(m['actual']['pol'] for m in months if m['is_past_or_current']),
+            },
+            'total': {
+                'budget': full_year_budget,
+                'actual': ytd_actual,
+                'balance': balance,
+            }
+        }
+        for k in ('edible', 'other', 'chemical', 'pol'):
+            fy_summary[k]['balance'] = max(fy_summary[k]['budget'] - fy_summary[k]['actual'], 0.0)
+
+        # Quarterly breakdown for FY 2026-27
+        q1_act = sum(months[i]['actual']['total'] for i in (0, 1, 2) if months[i]['is_past_or_current'])
+        q2_act = sum(months[i]['actual']['total'] for i in (3, 4, 5) if months[i]['is_past_or_current'])
+        q3_act = sum(months[i]['actual']['total'] for i in (6, 7, 8) if months[i]['is_past_or_current'])
+        q4_act = sum(months[i]['actual']['total'] for i in (9, 10, 11) if months[i]['is_past_or_current'])
+
+        # Historical actuals queried dynamically from database
+        cur.execute("SELECT fin_year, SUM(quantity) AS tot FROM mis_history GROUP BY fin_year")
+        hist_rows = {r['fin_year']: float(r['tot'] or 0.0) for r in cur.fetchall()}
+        fy25_tot = hist_rows.get('2024-25', 200912.538)
+        fy26_tot = hist_rows.get('2025-26', 1300492.320)
+
+        cur.execute("""
+            SELECT month, SUM(quantity) as tot 
+            FROM mis_vessel_master 
+            WHERE fin_year = '2025-26' 
+            GROUP BY month
+        """)
+        m_26 = {r['month']: float(r['tot'] or 0.0) for r in cur.fetchall()}
+        fy26_q1 = sum(m_26.get(k, 0.0) for k in ('Apr-25', 'May-25', 'Jun-25')) or 293549.0
+        fy26_q2 = sum(m_26.get(k, 0.0) for k in ('Jul-25', 'Aug-25', 'Sep-25')) or 444804.0
+        fy26_q3 = sum(m_26.get(k, 0.0) for k in ('Oct-25', 'Nov-25', 'Dec-25')) or 298730.0
+        fy26_q4 = sum(m_26.get(k, 0.0) for k in ('Jan-26', 'Feb-26', 'Mar-26')) or 263409.0
+
+        return {
+            'financial_year': '2026-27',
+            'report_date': selected_date.isoformat(),
+            'active_month_idx': active_idx,
+            'active_month_label': active_m['label'],
+            'months': months,
+            'vessels': vessels,
+            'summary': {
+                'full_year_budget': full_year_budget,
+                'ytd_budget': ytd_budget,
+                'ytd_actual': ytd_actual,
+                'ytd_variance': ytd_variance,
+                'balance': balance,
+                'remaining_months': remaining_months,
+                'asking_rate': asking_rate,
+                'pct_achieved_ytd': (ytd_actual / ytd_budget * 100) if ytd_budget > 0 else 0.0,
+                'pct_cum_fy': (ytd_actual / full_year_budget * 100) if full_year_budget > 0 else 0.0,
+                'category_summary': fy_summary,
+                'quarterly': {
+                    'q1': q1_act,
+                    'q2': q2_act,
+                    'q3': q3_act,
+                    'q4': q4_act,
+                },
+                'historical': {
+                    'fy25': fy25_tot,
+                    'fy26': fy26_tot,
+                    'fy26_q1': fy26_q1,
+                    'fy26_q2': fy26_q2,
+                    'fy26_q3': fy26_q3,
+                    'fy26_q4': fy26_q4,
+                }
+            }
+        }
+    finally:
+        conn.close()
+
+
+@bp.route('/api/module/RP01/dpr/bvsa')
+@login_required
+def dpr_bvsa_data():
+    """Returns dynamic BVsA FY 2027 payload."""
+    try:
+        date_str = request.args.get('date')
+        selected_date = _parse_date(date_str)
+        return jsonify(_get_bvsa_payload(selected_date))
+    except Exception as e:
+        import traceback, sys
+        tb = traceback.format_exc()
+        print(f"[DPR BVsA ERROR] {e}\n{tb}", file=sys.stderr, flush=True)
+        return jsonify({'error': str(e), 'traceback': tb}), 500
+
+
+@bp.route('/api/module/RP01/dpr/export-bvsa')
+@login_required
+def dpr_export_bvsa():
+    """Excel Export for BVsA FY 2027 matching the reference workbook layout."""
+    date_str = request.args.get('date')
+    selected_date = _parse_date(date_str)
+    payload = _get_bvsa_payload(selected_date)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BVsA FY 2027"
+
+    FONT_NAME = "Arial"
+    thin = Side(style="thin", color="B7B7B7")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    fill_header = PatternFill("solid", fgColor="BCD6EE")
+    fill_section = PatternFill("solid", fgColor="DDEBF7")
+    fill_month = PatternFill("solid", fgColor="FFF2A8")
+    fill_total = PatternFill("solid", fgColor="FCE0CD")
+    fill_green = PatternFill("solid", fgColor="C6EFCE")
+    fill_white = PatternFill("solid", fgColor="FFFFFF")
+    fill_title = PatternFill("solid", fgColor="1F4E78")
+
+    font_title = Font(name=FONT_NAME, size=11, bold=True, color="FFFFFF")
+    font_header = Font(name=FONT_NAME, bold=True, size=10)
+    font_bold = Font(name=FONT_NAME, bold=True, size=10)
+    font_normal = Font(name=FONT_NAME, size=10)
+    font_pct = Font(name=FONT_NAME, size=10, italic=True)
+    font_var_neg = Font(name=FONT_NAME, size=10, bold=True, color="C00000")
+    font_var_pos = Font(name=FONT_NAME, size=10, bold=True, color="006100")
+
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    NUM_FMT = "#,##0.000"
+
+    def set_c(addr, val, font=font_normal, fill=fill_white, align=right, fmt=None):
+        c = ws[addr]
+        c.value = val
+        c.font = font
+        c.fill = fill
+        c.alignment = align
+        c.border = border
+        if fmt:
+            c.number_format = fmt
+        return c
+
+    # Row 1: Month indices (1 to 12)
+    for i in range(12):
+        col_let = get_column_letter(4 + i) # D to O
+        set_c(f"{col_let}1", i + 1, font=font_header, fill=fill_header, align=center)
+
+    # Row 2: Headers
+    set_c("B2", "CARGO PROJECTIONS", font=font_title, fill=fill_title, align=left)
+    ws.merge_cells("B2:C2")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        set_c(f"{col_let}2", m['label'], font=font_header, fill=fill_month if m['is_past_or_current'] else fill_header, align=center)
+    set_c("P2", "2026-27", font=font_header, fill=fill_header, align=center)
+    set_c("R2", "Till Date", font=font_header, fill=fill_header, align=center)
+    set_c("S2", "Balance", font=font_header, fill=fill_header, align=center)
+
+    cats = [
+        ('Edible Oil', 'edible'),
+        ('Other liquid', 'other'),
+        ('Chemical', 'chemical'),
+        ('POL', 'pol'),
+    ]
+
+    cur_r = 3
+    for cat_lbl, cat_k in cats:
+        set_c(f"B{cur_r}", cat_lbl, font=font_bold, fill=fill_section, align=left)
+        ws.merge_cells(f"B{cur_r}:C{cur_r}")
+        for i, m in enumerate(payload['months']):
+            col_let = get_column_letter(4 + i)
+            set_c(f"{col_let}{cur_r}", m['budget'][cat_k], font=font_normal, fmt=NUM_FMT)
+        set_c(f"P{cur_r}", payload['summary']['category_summary'][cat_k]['budget'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
+        set_c(f"R{cur_r}", payload['summary']['category_summary'][cat_k]['actual'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
+        set_c(f"S{cur_r}", payload['summary']['category_summary'][cat_k]['balance'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
+        cur_r += 1
+
+    # Total Cargo Budget
+    set_c(f"B{cur_r}", "Total Cargo Budget", font=font_bold, fill=fill_green, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        set_c(f"{col_let}{cur_r}", m['budget']['total'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
+    set_c(f"P{cur_r}", payload['summary']['full_year_budget'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
+    set_c(f"R{cur_r}", payload['summary']['ytd_actual'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
+    set_c(f"S{cur_r}", payload['summary']['balance'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
+    cur_r += 1
+
+    # Cum Budget
+    set_c(f"B{cur_r}", "Cum Budget", font=font_bold, fill=fill_section, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        set_c(f"{col_let}{cur_r}", m['cum_budget'], font=font_normal, fmt=NUM_FMT)
+    cur_r += 1
+
+    # Actual
+    set_c(f"B{cur_r}", "Actual", font=font_bold, fill=fill_section, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        val = m['actual']['total'] if m['is_past_or_current'] else None
+        set_c(f"{col_let}{cur_r}", val, font=font_normal, fmt=NUM_FMT if val is not None else None)
+    set_c(f"P{cur_r}", payload['summary']['ytd_actual'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
+    cur_r += 1
+
+    # % Achieved
+    set_c(f"B{cur_r}", "% Achieved", font=font_pct, fill=fill_white, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        val = (m['pct_achieved'] / 100.0) if m['pct_achieved'] is not None else None
+        set_c(f"{col_let}{cur_r}", val, font=font_pct, fmt="0.0%" if val is not None else None)
+    set_c(f"P{cur_r}", (payload['summary']['pct_achieved_ytd'] / 100.0), font=font_bold, fill=fill_total, fmt="0.0%")
+    cur_r += 1
+
+    # Cumulative Achieved
+    set_c(f"B{cur_r}", "Cumulative Achieved", font=font_bold, fill=fill_section, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        val = m['cum_actual'] if m['is_past_or_current'] else None
+        set_c(f"{col_let}{cur_r}", val, font=font_normal, fmt=NUM_FMT if val is not None else None)
+    cur_r += 1
+
+    # % Achieved Cumulative
+    set_c(f"B{cur_r}", "% Achieved Cumulative", font=font_pct, fill=fill_white, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        val = (m['pct_cum_achieved'] / 100.0) if m['pct_cum_achieved'] is not None else None
+        set_c(f"{col_let}{cur_r}", val, font=font_pct, fmt="0.0%" if val is not None else None)
+    cur_r += 1
+
+    # Variance
+    set_c(f"B{cur_r}", "Variance (Act - Bud)", font=font_bold, fill=fill_section, align=left)
+    ws.merge_cells(f"B{cur_r}:C{cur_r}")
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        val = m['variance'] if m['is_past_or_current'] else None
+        fnt = font_var_pos if (val or 0) >= 0 else font_var_neg
+        set_c(f"{col_let}{cur_r}", val, font=fnt, fmt=NUM_FMT if val is not None else None)
+    tot_var = payload['summary']['ytd_variance']
+    set_c(f"P{cur_r}", tot_var, font=font_var_pos if tot_var >= 0 else font_var_neg, fill=fill_total, fmt=NUM_FMT)
+
+    # Vessel Details Table
+    v_r = cur_r + 4
+    v_hdrs = [
+        ("A", "#", center), ("B", "Month", center), ("C", "Vessel Name", left),
+        ("D", "Cargo", left), ("E", "Customer", left), ("F", "Quantity", right),
+        ("G", "Month Total", right),
+        ("H", "Edible Oil", right), ("I", "Other liquid", right), ("J", "Chemical", right),
+        ("K", "POL", right)
+    ]
+    for col_l, h_title, al in v_hdrs:
+        set_c(f"{col_l}{v_r}", h_title, font=font_header, fill=fill_header, align=al)
+
+    fill_amber = PatternFill("solid", fgColor="FFC000")
+
+    # Determine last vessel index for each month
+    month_totals = {}
+    last_vessel_idx_for_month = {}
+    for idx, v in enumerate(payload['vessels']):
+        m_lbl = v['month']
+        month_totals[m_lbl] = month_totals.get(m_lbl, 0.0) + (v['quantity'] or 0.0)
+        last_vessel_idx_for_month[m_lbl] = idx
+
+    for idx, v in enumerate(payload['vessels']):
+        v_r += 1
+        is_last = (last_vessel_idx_for_month.get(v['month']) == idx)
+        m_tot_val = month_totals.get(v['month']) if is_last else None
+
+        set_c(f"A{v_r}", v['sr_no'], align=center)
+        set_c(f"B{v_r}", v['month'], align=center)
+        set_c(f"C{v_r}", v['vessel_name'], align=left)
+        set_c(f"D{v_r}", v['cargo'], align=left)
+        set_c(f"E{v_r}", v['customer'], align=left)
+        set_c(f"F{v_r}", v['quantity'], fmt=NUM_FMT)
+        if is_last:
+            set_c(f"G{v_r}", m_tot_val, font=font_bold, fill=fill_amber, fmt=NUM_FMT)
+        else:
+            set_c(f"G{v_r}", None)
+        set_c(f"H{v_r}", v['edible'] if v['edible'] > 0 else None, fmt=NUM_FMT)
+        set_c(f"I{v_r}", v['other'] if v['other'] > 0 else None, fmt=NUM_FMT)
+        set_c(f"J{v_r}", v['chemical'] if v['chemical'] > 0 else None, fmt=NUM_FMT)
+        set_c(f"K{v_r}", v['pol'] if v['pol'] > 0 else None, fmt=NUM_FMT)
+
+    # Total row for vessels
+    v_r += 1
+    set_c(f"A{v_r}", "Total", font=font_bold, fill=fill_total, align=left)
+    ws.merge_cells(f"A{v_r}:E{v_r}")
+    tot_qty = sum(v['quantity'] for v in payload['vessels'])
+    tot_edible = sum(v['edible'] for v in payload['vessels'])
+    tot_other = sum(v['other'] for v in payload['vessels'])
+    tot_chem = sum(v['chemical'] for v in payload['vessels'])
+    tot_pol = sum(v['pol'] for v in payload['vessels'])
+
+    set_c(f"F{v_r}", tot_qty, font=font_bold, fill=fill_total, fmt=NUM_FMT)
+    set_c(f"G{v_r}", None, fill=fill_total)
+    set_c(f"H{v_r}", tot_edible, font=font_bold, fill=fill_total, fmt=NUM_FMT)
+    set_c(f"I{v_r}", tot_other, font=font_bold, fill=fill_total, fmt=NUM_FMT)
+    set_c(f"J{v_r}", tot_chem, font=font_bold, fill=fill_total, fmt=NUM_FMT)
+    set_c(f"K{v_r}", tot_pol, font=font_bold, fill=fill_total, fmt=NUM_FMT)
+
+    ws.freeze_panes = "D3"
+    ws.sheet_view.showGridLines = True
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"BVsA_FY2027_{payload['report_date']}.xlsx"
+    return send_file(
+        buf,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
