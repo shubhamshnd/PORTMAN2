@@ -17,6 +17,8 @@ from database import get_db, get_cursor, get_user_permissions
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.label import DataLabelList
 
 MODULE_CODE = 'RP01'
 
@@ -1033,16 +1035,7 @@ def dpr_data():
         return jsonify({'error': str(e), 'traceback': tb}), 500
 
 
-@bp.route('/api/module/RP01/dpr/export')
-@login_required
-def dpr_export():
-    selected_date = _parse_date(request.args.get('date'))
-    payload = _get_dpr_payload(selected_date)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "DPR"
-
+def _populate_dpr_sheet(ws, payload):
     FONT_NAME = "Arial"
     thin = Side(style="thin", color="B7B7B7")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -1228,11 +1221,30 @@ def dpr_export():
     ws.freeze_panes = "A4"
     ws.sheet_view.showGridLines = True
 
+
+@bp.route('/api/module/RP01/dpr/export')
+@login_required
+def dpr_export():
+    selected_date = _parse_date(request.args.get('date'))
+    dpr_payload = _get_dpr_payload(selected_date)
+    bvsa_payload = _get_bvsa_payload(selected_date)
+
+    wb = Workbook()
+
+    # Sheet 1: DPR
+    ws_dpr = wb.active
+    ws_dpr.title = "DPR"
+    _populate_dpr_sheet(ws_dpr, dpr_payload)
+
+    # Sheet 2: BVsA FY 2027
+    ws_bvsa = wb.create_sheet(title="BVsA FY 2027")
+    _populate_bvsa_sheet(ws_bvsa, bvsa_payload)
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
 
-    filename = f"Daily_Performance_Report_{payload['report_date']}.xlsx"
+    filename = f"Daily_Performance_Report_{dpr_payload['report_date']}.xlsx"
     return send_file(
         buf,
         as_attachment=True,
@@ -1655,68 +1667,71 @@ def dpr_bvsa_data():
         return jsonify({'error': str(e), 'traceback': tb}), 500
 
 
-@bp.route('/api/module/RP01/dpr/export-bvsa')
-@login_required
-def dpr_export_bvsa():
-    """Excel Export for BVsA FY 2027 matching the reference workbook layout."""
-    date_str = request.args.get('date')
-    selected_date = _parse_date(date_str)
-    payload = _get_bvsa_payload(selected_date)
+def _populate_bvsa_sheet(ws, payload):
+    """Populates BVsA FY 2027 worksheet matching UI structure, table borders, gap spacing, and colors."""
+    FONT_NAME = "Calibri"
+    thin_gray = Side(style="thin", color="D9D9D9")
+    double_bottom = Side(style="double", color="000000")
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "BVsA FY 2027"
+    border_cell = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
+    border_total = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=double_bottom)
 
-    FONT_NAME = "Arial"
-    thin = Side(style="thin", color="B7B7B7")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    fill_header = PatternFill("solid", fgColor="BCD6EE")
-    fill_section = PatternFill("solid", fgColor="DDEBF7")
-    fill_month = PatternFill("solid", fgColor="FFF2A8")
-    fill_total = PatternFill("solid", fgColor="FCE0CD")
-    fill_green = PatternFill("solid", fgColor="C6EFCE")
+    # UI-identical Color Fills
+    fill_navy = PatternFill("solid", fgColor="1F4E78")      # .th-blue
+    fill_sub_blue = PatternFill("solid", fgColor="2F5597")  # .th-sub-blue
+    fill_curr_month = PatternFill("solid", fgColor="D66011")# Active month accent
+    fill_soft_green = PatternFill("solid", fgColor="C6EFCE")# .tr-green
+    fill_cum_budget = PatternFill("solid", fgColor="E2EFDA")# .tr-cum-budget
+    fill_highlight = PatternFill("solid", fgColor="DDEBF7") # .tr-highlight
     fill_white = PatternFill("solid", fgColor="FFFFFF")
-    fill_title = PatternFill("solid", fgColor="1F4E78")
+    fill_month_alt = PatternFill("solid", fgColor="EAF2F8") # .vessel-month-alt
+    fill_amber = PatternFill("solid", fgColor="FFC000")     # Month Total cell
 
-    font_title = Font(name=FONT_NAME, size=11, bold=True, color="FFFFFF")
-    font_header = Font(name=FONT_NAME, bold=True, size=10)
-    font_bold = Font(name=FONT_NAME, bold=True, size=10)
-    font_normal = Font(name=FONT_NAME, size=10)
-    font_pct = Font(name=FONT_NAME, size=10, italic=True)
+    # Typography
+    font_title = Font(name=FONT_NAME, size=10.5, bold=True, color="FFFFFF")
+    font_header = Font(name=FONT_NAME, size=10, bold=True, color="FFFFFF")
+    font_bold = Font(name=FONT_NAME, size=10, bold=True, color="000000")
+    font_normal = Font(name=FONT_NAME, size=10, color="000000")
+    font_italic = Font(name=FONT_NAME, size=10, italic=True, color="475569")
+    font_green_bold = Font(name=FONT_NAME, size=10, bold=True, color="006100")
     font_var_neg = Font(name=FONT_NAME, size=10, bold=True, color="C00000")
     font_var_pos = Font(name=FONT_NAME, size=10, bold=True, color="006100")
+    font_floating_sum = Font(name=FONT_NAME, size=11, bold=True, color="1F4E78")
 
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    right = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
     NUM_FMT = "#,##0.000"
 
-    def set_c(addr, val, font=font_normal, fill=fill_white, align=right, fmt=None):
+    def set_c(addr, val, font=font_normal, fill=fill_white, align=right, fmt=None, bdr=border_cell):
         c = ws[addr]
         c.value = val
         c.font = font
         c.fill = fill
         c.alignment = align
-        c.border = border
+        c.border = bdr
         if fmt:
             c.number_format = fmt
         return c
 
-    # Row 1: Month indices (1 to 12)
-    for i in range(12):
-        col_let = get_column_letter(4 + i) # D to O
-        set_c(f"{col_let}1", i + 1, font=font_header, fill=fill_header, align=center)
+    # 1. TOP CARGO PROJECTIONS TABLE
+    set_c("B1", "CARGO PROJECTIONS", font=font_title, fill=fill_navy, align=left)
+    set_c("C1", None, fill=fill_navy)
+    ws.merge_cells("B1:C1")
 
-    # Row 2: Headers
-    set_c("B2", "CARGO PROJECTIONS", font=font_title, fill=fill_title, align=left)
-    ws.merge_cells("B2:C2")
     for i, m in enumerate(payload['months']):
-        col_let = get_column_letter(4 + i)
-        set_c(f"{col_let}2", m['label'], font=font_header, fill=fill_month if m['is_past_or_current'] else fill_header, align=center)
-    set_c("P2", "2026-27", font=font_header, fill=fill_header, align=center)
-    set_c("R2", "Till Date", font=font_header, fill=fill_header, align=center)
-    set_c("S2", "Balance", font=font_header, fill=fill_header, align=center)
+        col_let = get_column_letter(4 + i) # D to O
+        is_curr = (i == payload.get('active_month_idx'))
+        f_fill = fill_curr_month if is_curr else fill_navy
+        set_c(f"{col_let}1", m['label'], font=font_header, fill=f_fill, align=center)
+
+    set_c("P1", "2026-27", font=font_header, fill=fill_navy, align=center)
+
+    # Side Table Header
+    set_c("R1", "Particulars", font=font_header, fill=fill_navy, align=left)
+    set_c("S1", "Till Date", font=font_header, fill=fill_navy, align=center)
+    set_c("T1", "Balance", font=font_header, fill=fill_navy, align=center)
+    set_c("U1", "Target", font=font_header, fill=fill_navy, align=center)
 
     cats = [
         ('Edible Oil', 'edible'),
@@ -1725,78 +1740,106 @@ def dpr_export_bvsa():
         ('POL', 'pol'),
     ]
 
-    cur_r = 3
+    cur_r = 2
     for cat_lbl, cat_k in cats:
-        set_c(f"B{cur_r}", cat_lbl, font=font_bold, fill=fill_section, align=left)
+        set_c(f"B{cur_r}", cat_lbl, font=font_bold, fill=fill_white, align=left)
+        set_c(f"C{cur_r}", None, fill=fill_white)
         ws.merge_cells(f"B{cur_r}:C{cur_r}")
         for i, m in enumerate(payload['months']):
             col_let = get_column_letter(4 + i)
-            set_c(f"{col_let}{cur_r}", m['budget'][cat_k], font=font_normal, fmt=NUM_FMT)
-        set_c(f"P{cur_r}", payload['summary']['category_summary'][cat_k]['budget'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
-        set_c(f"R{cur_r}", payload['summary']['category_summary'][cat_k]['actual'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
-        set_c(f"S{cur_r}", payload['summary']['category_summary'][cat_k]['balance'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
+            val = m['budget'][cat_k]
+            set_c(f"{col_let}{cur_r}", val if val > 0 else None, font=font_normal, fmt=NUM_FMT if val > 0 else None)
+
+        cat_summary = payload['summary']['category_summary'][cat_k]
+        b_val = cat_summary['budget']
+        act_val = cat_summary['actual']
+        bal_val = cat_summary['balance']
+        set_c(f"P{cur_r}", b_val if b_val > 0 else None, font=font_bold, fmt=NUM_FMT if b_val > 0 else None)
+
+        # Side table
+        set_c(f"R{cur_r}", cat_lbl, font=font_bold, align=left)
+        set_c(f"S{cur_r}", act_val, font=font_bold, fmt=NUM_FMT)
+        set_c(f"T{cur_r}", bal_val if bal_val > 0 else None, font=font_var_neg if bal_val > 0 else font_bold, fmt=NUM_FMT if bal_val > 0 else None)
+        set_c(f"U{cur_r}", b_val if b_val > 0 else None, font=font_bold, fmt=NUM_FMT if b_val > 0 else None)
         cur_r += 1
 
     # Total Cargo Budget
-    set_c(f"B{cur_r}", "Total Cargo Budget", font=font_bold, fill=fill_green, align=left)
+    set_c(f"B{cur_r}", "Total Cargo Budget", font=font_green_bold, fill=fill_soft_green, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_soft_green)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
-        set_c(f"{col_let}{cur_r}", m['budget']['total'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
-    set_c(f"P{cur_r}", payload['summary']['full_year_budget'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
-    set_c(f"R{cur_r}", payload['summary']['ytd_actual'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
-    set_c(f"S{cur_r}", payload['summary']['balance'], font=font_bold, fill=fill_green, fmt=NUM_FMT)
+        set_c(f"{col_let}{cur_r}", m['budget']['total'], font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT)
+
+    tot_bud = payload['summary']['full_year_budget']
+    ytd_act = payload['summary']['ytd_actual']
+    tot_bal = payload['summary']['balance']
+
+    set_c(f"P{cur_r}", tot_bud, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT)
+    set_c(f"R{cur_r}", "Total", font=font_green_bold, fill=fill_soft_green, align=left)
+    set_c(f"S{cur_r}", ytd_act, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT)
+    set_c(f"T{cur_r}", tot_bal if tot_bal > 0 else None, font=font_var_neg, fill=fill_soft_green, fmt=NUM_FMT if tot_bal > 0 else None)
+    set_c(f"U{cur_r}", tot_bud, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT)
     cur_r += 1
 
     # Cum Budget
-    set_c(f"B{cur_r}", "Cum Budget", font=font_bold, fill=fill_section, align=left)
+    set_c(f"B{cur_r}", "Cum Budget", font=font_bold, fill=fill_cum_budget, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_cum_budget)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
-        set_c(f"{col_let}{cur_r}", m['cum_budget'], font=font_normal, fmt=NUM_FMT)
+        set_c(f"{col_let}{cur_r}", m['cum_budget'], font=font_normal, fill=fill_cum_budget, fmt=NUM_FMT)
+    set_c(f"P{cur_r}", tot_bud, font=font_bold, fill=fill_cum_budget, fmt=NUM_FMT)
     cur_r += 1
 
     # Actual
-    set_c(f"B{cur_r}", "Actual", font=font_bold, fill=fill_section, align=left)
+    act_r = cur_r
+    set_c(f"B{cur_r}", "Actual", font=font_bold, fill=fill_highlight, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_highlight)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
         val = m['actual']['total'] if m['is_past_or_current'] else None
-        set_c(f"{col_let}{cur_r}", val, font=font_normal, fmt=NUM_FMT if val is not None else None)
-    set_c(f"P{cur_r}", payload['summary']['ytd_actual'], font=font_bold, fill=fill_total, fmt=NUM_FMT)
+        set_c(f"{col_let}{cur_r}", val, font=font_bold if val is not None else font_normal, fill=fill_highlight, fmt=NUM_FMT if val is not None else None)
+    set_c(f"P{cur_r}", ytd_act, font=font_bold, fill=fill_highlight, fmt=NUM_FMT)
     cur_r += 1
 
     # % Achieved
-    set_c(f"B{cur_r}", "% Achieved", font=font_pct, fill=fill_white, align=left)
+    set_c(f"B{cur_r}", "% Achieved", font=font_italic, fill=fill_white, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_white)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
         val = (m['pct_achieved'] / 100.0) if m['pct_achieved'] is not None else None
-        set_c(f"{col_let}{cur_r}", val, font=font_pct, fmt="0.0%" if val is not None else None)
-    font_green_bold = Font(name="Calibri", size=10, bold=True, color="006100")
-    set_c(f"P{cur_r}", (payload['summary']['pct_achieved_ytd'] / 100.0), font=font_green_bold, fill=fill_total, fmt="0.0%")
+        set_c(f"{col_let}{cur_r}", val, font=font_italic, fmt="0.0%" if val is not None else None)
+    set_c(f"P{cur_r}", (payload['summary']['pct_achieved_ytd'] / 100.0), font=font_green_bold, fill=fill_white, fmt="0.0%")
     cur_r += 1
 
     # Cumulative Achieved
-    set_c(f"B{cur_r}", "Cumulative Achieved", font=font_bold, fill=fill_section, align=left)
+    set_c(f"B{cur_r}", "Cumulative Achieved", font=font_bold, fill=fill_highlight, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_highlight)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
         val = m['cum_actual'] if m['is_past_or_current'] else None
-        set_c(f"{col_let}{cur_r}", val, font=font_normal, fmt=NUM_FMT if val is not None else None)
+        set_c(f"{col_let}{cur_r}", val, font=font_bold if val is not None else font_normal, fill=fill_highlight, fmt=NUM_FMT if val is not None else None)
+    set_c(f"P{cur_r}", ytd_act, font=font_bold, fill=fill_highlight, fmt=NUM_FMT)
     cur_r += 1
 
     # % Achieved Cumulative
-    set_c(f"B{cur_r}", "% Achieved Cumulative", font=font_pct, fill=fill_white, align=left)
+    set_c(f"B{cur_r}", "% Achieved Cumulative", font=font_italic, fill=fill_white, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_white)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
         val = (m['pct_cum_achieved'] / 100.0) if m['pct_cum_achieved'] is not None else None
-        set_c(f"{col_let}{cur_r}", val, font=font_pct, fmt="0.0%" if val is not None else None)
+        set_c(f"{col_let}{cur_r}", val, font=font_italic, fmt="0.0%" if val is not None else None)
+    set_c(f"P{cur_r}", (payload['summary']['pct_cum_fy'] / 100.0), font=font_italic, fill=fill_white, fmt="0.0%")
     cur_r += 1
 
     # Variance
-    set_c(f"B{cur_r}", "Variance (Act - Bud)", font=font_bold, fill=fill_section, align=left)
+    set_c(f"B{cur_r}", "Variance", font=font_bold, fill=fill_white, align=left)
+    set_c(f"C{cur_r}", None, fill=fill_white)
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
@@ -1804,10 +1847,111 @@ def dpr_export_bvsa():
         fnt = font_var_pos if (val or 0) >= 0 else font_var_neg
         set_c(f"{col_let}{cur_r}", val, font=fnt, fmt=NUM_FMT if val is not None else None)
     tot_var = payload['summary']['ytd_variance']
-    set_c(f"P{cur_r}", tot_var, font=font_var_pos if tot_var >= 0 else font_var_neg, fill=fill_total, fmt=NUM_FMT)
+    fnt_tot = font_var_pos if tot_var >= 0 else font_var_neg
+    set_c(f"P{cur_r}", tot_var, font=fnt_tot, fmt=NUM_FMT)
 
-    # Vessel Details Table
-    v_r = cur_r + 4
+    # 2. CARGO VOLUMES BAR CHART (Anchored at X1)
+    chart = BarChart()
+    chart.type = "col"
+    chart.style = 10
+    chart.title = "Cargo Volumes"
+    chart.y_axis.title = None
+    chart.x_axis.title = None
+    chart.legend = None
+    chart.width = 16
+    chart.height = 7.5
+    chart.dataLabels = DataLabelList()
+    chart.dataLabels.showVal = True
+
+    data_ref = Reference(ws, min_col=4, min_row=act_r, max_col=15, max_row=act_r)
+    cats_ref = Reference(ws, min_col=4, min_row=1, max_col=15, max_row=1)
+    chart.add_data(data_ref, from_rows=True)
+    chart.set_categories(cats_ref)
+    ws.add_chart(chart, "X1")
+
+    # 3. HISTORICAL & QUARTERLY BREAKDOWN TABLE (Under Chart, Rows 12 to 25, Cols X, Y, Z)
+    border_b_med = Border(bottom=Side(style="medium", color="B7B7B7"))
+    border_t_thin = Border(top=Side(style="thin", color="D9D9D9"))
+
+    hist = payload['summary'].get('historical', {})
+    q = payload['summary'].get('quarterly', {})
+    fy25_val = hist.get('fy25', 200912.538)
+    fy26_val = hist.get('fy26', 1300492.320)
+    fy26_q1 = hist.get('fy26_q1', 283589.208)
+    fy26_q2 = hist.get('fy26_q2', 455638.864)
+    fy26_q3 = hist.get('fy26_q3', 282231.927)
+    fy26_q4 = hist.get('fy26_q4', 277032.321)
+
+    q1_27 = q.get('q1', 0.0)
+    q2_27 = q.get('q2', 0.0)
+    q3_27 = q.get('q3', 0.0)
+    q4_27 = q.get('q4', 0.0)
+    fy27_val = payload['summary'].get('ytd_actual', 0.0)
+
+    # FY 25
+    set_c("X12", "Nov-Mar", font=font_normal, align=left, bdr=None)
+    set_c("Y12", fy25_val, font=font_bold, align=right, fmt=NUM_FMT, bdr=None)
+
+    set_c("X13", "FY 25", font=font_bold, align=left, bdr=border_b_med)
+    set_c("Y13", fy25_val, font=font_bold, align=right, fmt=NUM_FMT, bdr=border_b_med)
+
+    # FY 26
+    set_c("X15", "Q1", font=font_normal, align=left, bdr=None)
+    set_c("Y15", fy26_q1, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z15", (fy26_q1 / fy26_val) if fy26_val > 0 else None, font=font_normal, align=right, fmt="0%", bdr=None)
+
+    set_c("X16", "Q2", font=font_normal, align=left, bdr=None)
+    set_c("Y16", fy26_q2, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z16", (fy26_q2 / fy26_val) if fy26_val > 0 else None, font=font_normal, align=right, fmt="0%", bdr=None)
+
+    set_c("X17", "Q3", font=font_normal, align=left, bdr=None)
+    set_c("Y17", fy26_q3, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z17", (fy26_q3 / fy26_val) if fy26_val > 0 else None, font=font_normal, align=right, fmt="0%", bdr=None)
+
+    set_c("X18", "Q4", font=font_normal, align=left, bdr=None)
+    set_c("Y18", fy26_q4, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z18", (fy26_q4 / fy26_val) if fy26_val > 0 else None, font=font_normal, align=right, fmt="0%", bdr=None)
+
+    set_c("X19", "FY 26", font=font_bold, align=left, bdr=border_b_med)
+    set_c("Y19", fy26_val, font=font_bold, align=right, fmt=NUM_FMT, bdr=border_b_med)
+
+    # FY 27
+    set_c("X21", "Q1", font=font_normal, align=left, bdr=None)
+    set_c("Y21", q1_27, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z21", (q1_27 / fy27_val) if (fy27_val > 0 and q1_27 > 0) else None, font=font_normal, align=right, fmt="0%" if q1_27 > 0 else None, bdr=None)
+
+    set_c("X22", "Q2", font=font_normal, align=left, bdr=None)
+    set_c("Y22", q2_27, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z22", (q2_27 / fy27_val) if (fy27_val > 0 and q2_27 > 0) else None, font=font_normal, align=right, fmt="0%" if q2_27 > 0 else None, bdr=None)
+
+    set_c("X23", "Q3", font=font_normal, align=left, bdr=None)
+    set_c("Y23", q3_27 if q3_27 > 0 else 0.0, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z23", "-", font=font_normal, align=right, bdr=None)
+
+    set_c("X24", "Q4", font=font_normal, align=left, bdr=None)
+    set_c("Y24", q4_27 if q4_27 > 0 else 0.0, font=font_normal, align=right, fmt=NUM_FMT, bdr=None)
+    set_c("Z24", "-", font=font_normal, align=right, bdr=None)
+
+    set_c("X25", "FY 27", font=font_bold, align=left, bdr=border_t_thin)
+    set_c("Y25", fy27_val, font=font_bold, align=right, fmt=NUM_FMT, bdr=border_t_thin)
+
+    # 4. TABLE GAP SPACING (Rows before Bottom Vessel Table)
+    cur_r = max(cur_r + 3, 27)
+
+    # 5. BOTTOM VESSEL TABLE
+    # Floating category summary row
+    tot_edible = sum(v['edible'] for v in payload['vessels'])
+    tot_other = sum(v['other'] for v in payload['vessels'])
+    tot_chem = sum(v['chemical'] for v in payload['vessels'])
+    tot_pol = sum(v['pol'] for v in payload['vessels'])
+
+    set_c(f"H{cur_r}", tot_edible, font=font_floating_sum, fill=fill_white, bdr=None)
+    set_c(f"I{cur_r}", tot_other, font=font_floating_sum, fill=fill_white, bdr=None)
+    set_c(f"J{cur_r}", tot_chem, font=font_floating_sum, fill=fill_white, bdr=Border())
+    set_c(f"K{cur_r}", tot_pol, font=font_floating_sum, fill=fill_white, bdr=Border())
+    cur_r += 1
+
+    # Vessel Table Headers
     v_hdrs = [
         ("A", "#", center), ("B", "Month", center), ("C", "Vessel Name", left),
         ("D", "Cargo", left), ("E", "Customer", left), ("F", "Quantity", right),
@@ -1816,9 +1960,7 @@ def dpr_export_bvsa():
         ("K", "POL", right)
     ]
     for col_l, h_title, al in v_hdrs:
-        set_c(f"{col_l}{v_r}", h_title, font=font_header, fill=fill_header, align=al)
-
-    fill_amber = PatternFill("solid", fgColor="FFC000")
+        set_c(f"{col_l}{cur_r}", h_title, font=font_header, fill=fill_sub_blue, align=al)
 
     # Determine last vessel index for each month
     month_totals = {}
@@ -1828,56 +1970,70 @@ def dpr_export_bvsa():
         month_totals[m_lbl] = month_totals.get(m_lbl, 0.0) + (v['quantity'] or 0.0)
         last_vessel_idx_for_month[m_lbl] = idx
 
+    # Alternating month shading
+    last_month = ''
+    month_flip = False
+
     for idx, v in enumerate(payload['vessels']):
-        v_r += 1
+        cur_r += 1
+        if v['month'] != last_month:
+            month_flip = not month_flip
+            last_month = v['month']
+        row_fill = fill_month_alt if month_flip else fill_white
+
         is_last = (last_vessel_idx_for_month.get(v['month']) == idx)
         m_tot_val = month_totals.get(v['month']) if is_last else None
 
-        set_c(f"A{v_r}", v['sr_no'], align=center)
-        set_c(f"B{v_r}", v['month'], align=center)
-        set_c(f"C{v_r}", v['vessel_name'], align=left)
-        set_c(f"D{v_r}", v['cargo'], align=left)
-        set_c(f"E{v_r}", v['customer'], align=left)
-        set_c(f"F{v_r}", v['quantity'], fmt=NUM_FMT)
+        set_c(f"A{cur_r}", v['sr_no'], font=font_normal, fill=row_fill, align=center)
+        set_c(f"B{cur_r}", v['month'], font=font_bold, fill=row_fill, align=center)
+        set_c(f"C{cur_r}", v['vessel_name'], font=font_bold, fill=row_fill, align=left)
+        set_c(f"D{cur_r}", v['cargo'], font=font_normal, fill=row_fill, align=left)
+        set_c(f"E{cur_r}", v['customer'], font=font_normal, fill=row_fill, align=left)
+        set_c(f"F{cur_r}", v['quantity'], font=font_bold, fill=row_fill, fmt=NUM_FMT)
+
         if is_last:
-            set_c(f"G{v_r}", m_tot_val, font=font_bold, fill=fill_amber, fmt=NUM_FMT)
+            set_c(f"G{cur_r}", m_tot_val, font=font_bold, fill=fill_amber, fmt=NUM_FMT)
         else:
-            set_c(f"G{v_r}", None)
-        set_c(f"H{v_r}", v['edible'] if v['edible'] > 0 else None, fmt=NUM_FMT)
-        set_c(f"I{v_r}", v['other'] if v['other'] > 0 else None, fmt=NUM_FMT)
-        set_c(f"J{v_r}", v['chemical'] if v['chemical'] > 0 else None, fmt=NUM_FMT)
-        set_c(f"K{v_r}", v['pol'] if v['pol'] > 0 else None, fmt=NUM_FMT)
+            set_c(f"G{cur_r}", None, fill=row_fill)
+
+        set_c(f"H{cur_r}", v['edible'] if v['edible'] > 0 else None, font=font_normal, fill=row_fill, fmt=NUM_FMT)
+        set_c(f"I{cur_r}", v['other'] if v['other'] > 0 else None, font=font_normal, fill=row_fill, fmt=NUM_FMT)
+        set_c(f"J{cur_r}", v['chemical'] if v['chemical'] > 0 else None, font=font_normal, fill=row_fill, fmt=NUM_FMT)
+        set_c(f"K{cur_r}", v['pol'] if v['pol'] > 0 else None, font=font_normal, fill=row_fill, fmt=NUM_FMT)
 
     # Total row for vessels
-    v_r += 1
-    set_c(f"A{v_r}", "Total", font=font_bold, fill=fill_total, align=left)
-    ws.merge_cells(f"A{v_r}:E{v_r}")
+    cur_r += 1
+    set_c(f"A{cur_r}", f"Total ({len(payload['vessels'])} vessel calls)", font=font_green_bold, fill=fill_soft_green, align=left, bdr=border_total)
+    for col_l in ('B', 'C', 'D', 'E'):
+        set_c(f"{col_l}{cur_r}", None, fill=fill_soft_green, bdr=border_total)
+    ws.merge_cells(f"A{cur_r}:E{cur_r}")
+
     tot_qty = sum(v['quantity'] for v in payload['vessels'])
-    tot_edible = sum(v['edible'] for v in payload['vessels'])
-    tot_other = sum(v['other'] for v in payload['vessels'])
-    tot_chem = sum(v['chemical'] for v in payload['vessels'])
-    tot_pol = sum(v['pol'] for v in payload['vessels'])
+    set_c(f"F{cur_r}", tot_qty, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT, bdr=border_total)
+    set_c(f"G{cur_r}", None, fill=fill_soft_green, bdr=border_total)
+    set_c(f"H{cur_r}", tot_edible, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT, bdr=border_total)
+    set_c(f"I{cur_r}", tot_other, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT, bdr=border_total)
+    set_c(f"J{cur_r}", tot_chem, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT, bdr=border_total)
+    set_c(f"K{cur_r}", tot_pol, font=font_green_bold, fill=fill_soft_green, fmt=NUM_FMT, bdr=border_total)
 
-    set_c(f"F{v_r}", tot_qty, font=font_bold, fill=fill_total, fmt=NUM_FMT)
-    set_c(f"G{v_r}", None, fill=fill_total)
-    set_c(f"H{v_r}", tot_edible, font=font_bold, fill=fill_total, fmt=NUM_FMT)
-    set_c(f"I{v_r}", tot_other, font=font_bold, fill=fill_total, fmt=NUM_FMT)
-    set_c(f"J{v_r}", tot_chem, font=font_bold, fill=fill_total, fmt=NUM_FMT)
-    set_c(f"K{v_r}", tot_pol, font=font_bold, fill=fill_total, fmt=NUM_FMT)
+    # Column Widths
+    col_widths = {
+        'A': 6, 'B': 12, 'C': 30, 'D': 20, 'E': 32, 'F': 16, 'G': 16,
+        'H': 15, 'I': 15, 'J': 15, 'K': 15, 'L': 14, 'M': 14, 'N': 14,
+        'O': 14, 'P': 16, 'Q': 4, 'R': 18, 'S': 16, 'T': 16, 'U': 16,
+        'V': 4, 'W': 4, 'X': 14, 'Y': 16, 'Z': 10
+    }
+    for col_l, width in col_widths.items():
+        ws.column_dimensions[col_l].width = width
 
-    ws.freeze_panes = "D3"
     ws.sheet_view.showGridLines = True
+    return ws
 
-    buf = BytesIO()
-    wb.save(buf)
-    buf.seek(0)
 
-    filename = f"BVsA_FY2027_{payload['report_date']}.xlsx"
-    return send_file(
-        buf,
-        as_attachment=True,
-        download_name=filename,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+@bp.route('/api/module/RP01/dpr/export-bvsa')
+@login_required
+def dpr_export_bvsa():
+    """Export the combined 2-sheet workbook (Sheet 1: DPR, Sheet 2: BVsA FY 2027)."""
+    return dpr_export()
 
 

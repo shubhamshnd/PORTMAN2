@@ -650,7 +650,7 @@
     <!-- Report Tabs -->
     <div class="dpr-tabs-bar" id="dprTabsBar">
         <button class="dpr-tab-btn active" data-tab="dpr" onclick="switchDprTab('dpr')">DPR</button>
-        <button class="dpr-tab-btn" data-tab="bvsa" onclick="switchDprTab('bvsa')">BVsA FY 2027</button>
+        <button class="dpr-tab-btn" data-tab="bvsa" onclick="switchDprTab('bvsa')">BvsA FY 2027</button>
         <!-- <button class="dpr-tab-btn" data-tab="income" onclick="switchDprTab('income')">Income FY 2027</button>
         <button class="dpr-tab-btn" data-tab="budget" onclick="switchDprTab('budget')">Budget</button>
         <button class="dpr-tab-btn" data-tab="reason" onclick="switchDprTab('reason')">Reason for handling at
@@ -1144,20 +1144,13 @@
         const summary = data.summary || {};
         const catSum = summary.category_summary || { edible: {}, other: {}, chemical: {}, pol: {} };
 
-        // Row 1: Month Indices 1 to 12
+        // Header Row: CARGO PROJECTIONS, Month Labels, 2026-27
         let html = `<thead><tr><th colspan="2" class="th-blue" style="text-align:left;">CARGO PROJECTIONS</th>`;
         months.forEach((m, i) => {
-            html += `<th class="th-blue" style="width:58px;">${i + 1}</th>`;
-        });
-        html += `<th class="th-blue" style="width:75px;">2026-27</th></tr>`;
-
-        // Row 2: Month Labels
-        html += `<tr><th colspan="2" class="th-blue" style="text-align:left;"></th>`;
-        months.forEach((m, i) => {
             const isCurr = (i === data.active_month_idx);
-            html += `<th class="${isCurr ? 'th-curr-month' : 'th-month'}">${m.label}</th>`;
+            html += `<th class="${isCurr ? 'th-curr-month' : 'th-month'}" style="width:58px;">${m.label}</th>`;
         });
-        html += `<th class="th-blue">Full Year</th></tr></thead><tbody>`;
+        html += `<th class="th-blue" style="width:75px;">2026-27</th></tr></thead><tbody>`;
 
         const cats = [
             { key: 'edible', label: 'Edible Oil' },
