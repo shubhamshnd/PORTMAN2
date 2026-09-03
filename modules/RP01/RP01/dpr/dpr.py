@@ -1436,18 +1436,38 @@ def _get_bvsa_payload(selected_date):
 
         # 3. Actuals from Live Operational Data (Jul 1 07:00 onwards up to window_end)
         cur.execute("""
+            WITH parcel_consignee AS (
+                SELECT 
+                    po.id AS po_id,
+                    COALESCE(
+                        NULLIF(TRIM((SELECT consigner_name FROM vcn_consigners WHERE id::text = po.parcel_ids LIMIT 1)), ''),
+                        NULLIF(TRIM((SELECT consigner_name FROM vcn_export_cargo_declaration WHERE id::text = po.parcel_ids LIMIT 1)), ''),
+                        NULLIF(TRIM((SELECT customer_name FROM vcn_cargo_declaration WHERE id::text = po.parcel_ids LIMIT 1)), ''),
+                        NULLIF(TRIM((SELECT consigner_name FROM vcn_consigners WHERE vcn_id = lh.vcn_id AND cargo_name = po.cargo_name LIMIT 1)), ''),
+                        NULLIF(TRIM((SELECT consigner_name FROM vcn_export_cargo_declaration WHERE vcn_id = lh.vcn_id AND cargo_name = po.cargo_name LIMIT 1)), ''),
+                        NULLIF(TRIM((SELECT customer_name FROM vcn_cargo_declaration WHERE vcn_id = lh.vcn_id AND cargo_name = po.cargo_name LIMIT 1)), ''),
+                        NULLIF(TRIM(vh.customer_name), ''),
+                        NULLIF(TRIM(vh.importer_exporter_name), ''),
+                        NULLIF(TRIM(po.terminal_name), ''),
+                        'Live Operation'
+                    ) AS consignee_name
+                FROM ldud_parcel_ops po
+                JOIN ldud_header lh ON lh.id = po.ldud_id
+                LEFT JOIN vcn_header vh ON vh.id = lh.vcn_id
+            )
             SELECT
                 lh.id AS ldud_id,
                 lh.vessel_name,
                 lh.cast_off_datetime,
                 po.cargo_name,
-                COALESCE(po.terminal_name, 'Live Operation') AS customer,
+                pc.consignee_name AS customer,
                 vc.cargo_sub_category_2,
                 vc.cargo_category,
                 vc.cargo_type,
                 SUM(COALESCE(log.quantity, 0)) AS qty
             FROM ldud_header lh
             JOIN ldud_parcel_ops po ON po.ldud_id = lh.id
+            JOIN parcel_consignee pc ON pc.po_id = po.id
             JOIN lueu_parcel_log log ON log.parcel_op_id = po.id
             LEFT JOIN vessel_cargo vc ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(po.cargo_name))
             WHERE NULLIF(TRIM(lh.cast_off_datetime::text), '') IS NOT NULL
@@ -1457,7 +1477,7 @@ def _get_bvsa_payload(selected_date):
               AND COALESCE(log.is_shortclose, FALSE) = FALSE
               AND LOWER(COALESCE(log.remarks, '')) NOT LIKE '%%short%%'
               AND COALESCE(lh.is_deleted, FALSE) = FALSE
-            GROUP BY lh.id, lh.vessel_name, lh.cast_off_datetime, po.cargo_name, po.terminal_name, vc.cargo_sub_category_2, vc.cargo_category, vc.cargo_type
+            GROUP BY lh.id, lh.vessel_name, lh.cast_off_datetime, po.cargo_name, pc.consignee_name, vc.cargo_sub_category_2, vc.cargo_category, vc.cargo_type
             ORDER BY lh.cast_off_datetime
         """, (window_end,))
         for r in cur.fetchall():
