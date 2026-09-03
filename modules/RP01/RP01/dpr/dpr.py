@@ -109,75 +109,142 @@ def _fmt_eta(dt_val):
     return str(dt_val)
 
 
+def _parse_entry_dt(entry_date, from_time=None):
+    """Safely parse entry_date (text or date) + optional from_time into a datetime object without SQL casting errors."""
+    if not entry_date:
+        return None
+
+    base_dt = None
+    if isinstance(entry_date, datetime):
+        base_dt = entry_date
+    elif hasattr(entry_date, 'year') and hasattr(entry_date, 'month') and not hasattr(entry_date, 'hour'):
+        base_dt = datetime.combine(entry_date, time(0, 0))
+    else:
+        s = str(entry_date).strip()
+        for fmt in (
+            '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M',
+            '%d-%m-%Y %H:%M:%S', '%d-%m-%Y %H:%M', '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M',
+            '%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%Y/%m/%d', '%d.%m.%Y'
+        ):
+            try:
+                base_dt = datetime.strptime(s, fmt)
+                break
+            except Exception:
+                continue
+        if not base_dt:
+            try:
+                base_dt = datetime.fromisoformat(s)
+            except Exception:
+                try:
+                    d = datetime.strptime(s[:10], '%Y-%m-%d').date()
+                    base_dt = datetime.combine(d, time(0, 0))
+                except Exception:
+                    return None
+
+    if from_time:
+        try:
+            parts = str(from_time).strip().split(':')
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                return datetime.combine(base_dt.date(), time(int(parts[0]), int(parts[1])))
+        except Exception:
+            pass
+
+    return base_dt
+
+
 def _load_vessel_cargo_map(cur):
     """Load cargo master mapping dynamically from database category columns across all 3 tables."""
     master_map = {}
 
-    def resolve_category(primary_cat, fallback_name=""):
-        p = str(primary_cat or '').strip()
-        if p:
-            # Standardize capitalization slightly to match expected columns
-            if p.upper() == 'EDIBLE OIL': return 'Edible Oil'
-            if p.upper() == 'OTHER LIQUID': return 'Other liquid'
-            if p.upper() == 'CHEMICAL': return 'Chemical'
-            if p.upper() == 'POL': return 'POL'
-            return p
+    def resolve_category(cat_val, fallback_name=""):
+        s = str(cat_val or '').strip().upper()
+        if not s:
+            s = str(fallback_name or '').strip().upper()
+        if 'EDIBLE' in s:
+            return 'Edible Oil'
+        if 'POL' in s:
+            return 'POL'
+        if 'CHEM' in s:
+            return 'Chemical'
         return 'Other liquid'
 
     try:
-        # 1. vessel_cargo (master table) -> use cargo_sub_category_2
+        # 1. vessel_cargo (master table) -> check cargo_sub_category_2 FIRST, then cargo_category, cargo_type
         cur.execute("""
-            SELECT LOWER(TRIM(cargo_name)) AS norm_name, cargo_sub_category_2
+            SELECT LOWER(TRIM(cargo_name)) AS norm_name, cargo_sub_category_2, cargo_category, cargo_type
             FROM vessel_cargo
             WHERE cargo_name IS NOT NULL AND TRIM(cargo_name) != ''
         """)
         for r in cur.fetchall():
-            master_map[r['norm_name']] = resolve_category(r.get('cargo_sub_category_2'), r['norm_name'])
+            primary = r.get('cargo_sub_category_2') or r.get('cargo_category') or r.get('cargo_type')
+            master_map[r['norm_name']] = resolve_category(primary, r['norm_name'])
 
-        # 2. mis_vessel_master -> use new_cat
+        # 2. mis_vessel_master -> use new_cat, category1, category
         cur.execute("""
-            SELECT LOWER(TRIM(cargo)) AS norm_name, new_cat
+            SELECT LOWER(TRIM(cargo)) AS norm_name, new_cat, category1, category
             FROM mis_vessel_master
             WHERE cargo IS NOT NULL AND TRIM(cargo) != ''
         """)
         for r in cur.fetchall():
             cn = r['norm_name']
             if cn not in master_map:
-                master_map[cn] = resolve_category(r.get('new_cat'), cn)
+                primary = r.get('new_cat') or r.get('category1') or r.get('category')
+                master_map[cn] = resolve_category(primary, cn)
 
-        # 3. mis_history -> use cargo_sub_category_2
+        # 3. mis_history -> use cargo_sub_category_2, cargo_category, cargo_type
         cur.execute("""
-            SELECT LOWER(TRIM(cargo_name)) AS norm_name, cargo_sub_category_2
+            SELECT LOWER(TRIM(cargo_name)) AS norm_name, cargo_sub_category_2, cargo_category, cargo_type
             FROM mis_history
             WHERE cargo_name IS NOT NULL AND TRIM(cargo_name) != ''
         """)
         for r in cur.fetchall():
             cn = r['norm_name']
             if cn not in master_map:
-                master_map[cn] = resolve_category(r.get('cargo_sub_category_2'), cn)
+                primary = r.get('cargo_sub_category_2') or r.get('cargo_category') or r.get('cargo_type')
+                master_map[cn] = resolve_category(primary, cn)
 
         return master_map
     except Exception:
         return master_map
 
 
-def _categorize_cargo(cargo_name, cargo_cat=None, cargo_sub=None, cargo_sub2=None, vc_map=None):
-    """Map cargo to Section B categories directly from DB column."""
+def _categorize_cargo(cargo_name, cargo_sub2=None, cargo_cat=None, cargo_sub=None, vc_map=None):
+    """
+    Map cargo to Section B categories: Edible Oil, Other liquid, Chemical, POL.
+    In mis_history and master tables, cargo_sub_category_2 has the exact specific bucket
+    (CHEMICAL, EDIBLE OIL, FARM LIQUIDS, OTHER LIQUID, POL).
+    FARM LIQUIDS and OTHER LIQUID combine into 'Other liquid'.
+    """
+    # 1. First priority: explicit category fields (cargo_sub2 checked first, e.g. cargo_sub_category_2 or new_cat)
+    for val in (cargo_sub2, cargo_cat, cargo_sub):
+        if not val:
+            continue
+        s = str(val).strip().upper()
+        if 'EDIBLE' in s:
+            return 'Edible Oil'
+        if 'CHEM' in s:
+            return 'Chemical'
+        if 'POL' in s:
+            return 'POL'
+        if 'FARM' in s or 'OTHER' in s:
+            return 'Other liquid'
+
+    # 2. Second priority: master mapping by cargo name
     c_norm = str(cargo_name or '').strip().lower()
-
     if vc_map and c_norm in vc_map:
-        return vc_map[c_norm]
+        mapped = vc_map[c_norm]
+        if mapped in ('Edible Oil', 'Other liquid', 'Chemical', 'POL'):
+            return mapped
 
-    # For live data (like balance on board), user requested to rely on cargo_sub_category_2, 
-    # then fallback to cat if needed, but primarily use the column value dynamically.
-    cat_val = str(cargo_sub2 or cargo_cat or cargo_sub or '').strip()
-    if cat_val:
-        if cat_val.upper() == 'EDIBLE OIL': return 'Edible Oil'
-        if cat_val.upper() == 'OTHER LIQUID': return 'Other liquid'
-        if cat_val.upper() == 'CHEMICAL': return 'Chemical'
-        if cat_val.upper() == 'POL': return 'POL'
-        return cat_val
-        
+    # 3. Third priority: cargo name keywords
+    s_name = str(cargo_name or '').strip().upper()
+    if 'EDIBLE' in s_name or 'PALM' in s_name or 'SOYA' in s_name or 'SUNFLOWER' in s_name or 'CPO' in s_name or 'CDSBO' in s_name:
+        return 'Edible Oil'
+    if 'POL' in s_name or 'MOTOR SPIRIT' in s_name or 'HSD' in s_name or 'NAPHTHA' in s_name or 'DIESEL' in s_name or 'PETROL' in s_name:
+        return 'POL'
+    if 'CHEM' in s_name or 'BENZENE' in s_name or 'HEXANE' in s_name or 'METHANOL' in s_name or 'ETHANOL' in s_name or 'ACETONE' in s_name:
+        return 'Chemical'
+
     return 'Other liquid'
 
 
@@ -202,9 +269,9 @@ def _get_section_a(cur, window_start, window_end):
             po.parcel_ids,
             COALESCE(po.cargo_name, vh.cargo_type, 'Liquid Bulk') AS cargo,
             po.quantity AS op_qty,
-            NULLIF(po.start_dt,'')::timestamp AS start_dt,
-            NULLIF(po.end_dt,'')::timestamp AS end_dt,
-            NULLIF(po.expected_start,'')::timestamp AS expected_start,
+            po.start_dt,
+            po.end_dt,
+            po.expected_start,
             COALESCE(po.expected_flow_rate, 0) AS expected_flow_rate,
             lh.alongside_datetime,
             lh.cast_off_datetime
@@ -274,17 +341,14 @@ def _get_section_a(cur, window_start, window_end):
 
         g['total_bl_qty'] += p_qty
 
-        start_time = r.get('start_dt')
+        start_time = _parse_entry_dt(r.get('start_dt'))
         if not start_time and r.get('alongside_datetime'):
-            try:
-                s_str = str(r['alongside_datetime']).strip()[:16]
-                start_time = datetime.strptime(s_str, '%Y-%m-%dT%H:%M')
-            except Exception:
-                pass
+            start_time = _parse_entry_dt(r.get('alongside_datetime'))
         if start_time:
             g['commenced_times'].append(start_time)
 
-        comp_time = r.get('end_dt')
+        comp_time = _parse_entry_dt(r.get('end_dt'))
+        exp_start = _parse_entry_dt(r.get('expected_start'))
         pid = r.get('parcel_op_id')
         real_qty = 0.0
         hours = 0.0
@@ -326,8 +390,8 @@ def _get_section_a(cur, window_start, window_end):
                 avg_rate = real_qty / hours
                 if avg_rate > 0:
                     comp_time = start_time + timedelta(hours=(p_qty / avg_rate))
-            elif r.get('expected_start') and r.get('expected_flow_rate') and float(r['expected_flow_rate']) > 0 and p_qty > 0:
-                comp_time = r['expected_start'] + timedelta(hours=(p_qty / float(r['expected_flow_rate'])))
+            elif exp_start and r.get('expected_flow_rate') and float(r['expected_flow_rate']) > 0 and p_qty > 0:
+                comp_time = exp_start + timedelta(hours=(p_qty / float(r['expected_flow_rate'])))
             if comp_time:
                 g['completed_times'].append(comp_time)
 
@@ -457,13 +521,20 @@ def _get_section_b(cur, selected_date, window_start, window_end):
 
         rem = max(p_qty - real_qty, 0.0)
         cat = _categorize_cargo(c_name, r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'), vc_map=vc_map)
+        if cat not in categories:
+            cat = 'Other liquid'
         grid['balance_on_board'][cat] += rem
 
-    # 2. Cargo discharged during Day (window_start <= log_timestamp < window_end)
+    # 2 & 3. Cargo discharged during Day and Month from lueu_parcel_log (safe Python datetime parsing)
     cur.execute("""
         SELECT
             po.cargo_name,
-            SUM(COALESCE(log.quantity, 0)) AS qty
+            COALESCE(log.quantity, 0) AS qty,
+            log.entry_date,
+            log.from_time,
+            log.to_time,
+            log.remarks,
+            log.is_shortclose
         FROM lueu_parcel_log log
         JOIN ldud_parcel_ops po ON po.id = log.parcel_op_id
         JOIN ldud_header lh ON lh.id = po.ldud_id
@@ -471,116 +542,136 @@ def _get_section_b(cur, selected_date, window_start, window_end):
           AND COALESCE(log.is_shortclose, FALSE) = FALSE
           AND COALESCE(lh.is_deleted, FALSE) = FALSE
           AND NULLIF(TRIM(log.entry_date), '') IS NOT NULL
-          AND (
-              CASE
-                  WHEN LENGTH(TRIM(log.entry_date)) > 10 THEN NULLIF(TRIM(log.entry_date), '')::timestamp
-                  ELSE (TRIM(log.entry_date) || ' ' || COALESCE(NULLIF(TRIM(log.from_time), ''), NULLIF(TRIM(log.to_time), ''), '00:00'))::timestamp
-              END
-          ) >= %s
-          AND (
-              CASE
-                  WHEN LENGTH(TRIM(log.entry_date)) > 10 THEN NULLIF(TRIM(log.entry_date), '')::timestamp
-                  ELSE (TRIM(log.entry_date) || ' ' || COALESCE(NULLIF(TRIM(log.from_time), ''), NULLIF(TRIM(log.to_time), ''), '00:00'))::timestamp
-              END
-          ) < %s
-        GROUP BY po.cargo_name
-    """, (window_start, window_end))
+    """)
     for r in cur.fetchall():
+        if r.get('is_shortclose') or 'short' in str(r.get('remarks') or '').lower():
+            continue
+        entry_dt = _parse_entry_dt(r.get('entry_date'), r.get('from_time'))
+        if not entry_dt:
+            continue
         c_name = r.get('cargo_name')
         q = float(r.get('qty') or 0)
         cat = _categorize_cargo(c_name, vc_map=vc_map)
-        grid['day_discharged'][cat] += q
+        if cat not in categories:
+            cat = 'Other liquid'
 
-    # 3. Cargo discharge in this Month (month_start <= log_timestamp < window_end)
-    cur.execute("""
-        SELECT
-            po.cargo_name,
-            SUM(COALESCE(log.quantity, 0)) AS qty
-        FROM lueu_parcel_log log
-        JOIN ldud_parcel_ops po ON po.id = log.parcel_op_id
-        JOIN ldud_header lh ON lh.id = po.ldud_id
-        WHERE COALESCE(log.is_deleted, FALSE) = FALSE
-          AND COALESCE(log.is_shortclose, FALSE) = FALSE
-          AND COALESCE(lh.is_deleted, FALSE) = FALSE
-          AND NULLIF(TRIM(log.entry_date), '') IS NOT NULL
-          AND (
-              CASE
-                  WHEN LENGTH(TRIM(log.entry_date)) > 10 THEN NULLIF(TRIM(log.entry_date), '')::timestamp
-                  ELSE (TRIM(log.entry_date) || ' ' || COALESCE(NULLIF(TRIM(log.from_time), ''), NULLIF(TRIM(log.to_time), ''), '00:00'))::timestamp
-              END
-          ) >= %s
-          AND (
-              CASE
-                  WHEN LENGTH(TRIM(log.entry_date)) > 10 THEN NULLIF(TRIM(log.entry_date), '')::timestamp
-                  ELSE (TRIM(log.entry_date) || ' ' || COALESCE(NULLIF(TRIM(log.from_time), ''), NULLIF(TRIM(log.to_time), ''), '00:00'))::timestamp
-              END
-          ) < %s
-        GROUP BY po.cargo_name
-    """, (month_start, window_end))
-    for r in cur.fetchall():
-        c_name = r.get('cargo_name')
-        q = float(r.get('qty') or 0)
-        cat = _categorize_cargo(c_name, vc_map=vc_map)
-        grid['month_discharged'][cat] += q
+        if window_start <= entry_dt < window_end:
+            grid['day_discharged'][cat] += q
 
-    # 4. Cum handled FY 2026-27 (from mis_vessel_master LEFT JOIN vessel_cargo)
+        if month_start <= entry_dt < window_end:
+            grid['month_discharged'][cat] += q
+
+    # 4. Cum handled FY 2026-27
+    # Part 4A: Reconciled MIS data from mis_vessel_master (covers Apr to Jun 2026)
     cur.execute("""
         SELECT
             mvm.cargo,
             mvm.new_cat,
             mvm.category1,
             mvm.category,
-            vc.cargo_category AS vc_cat,
-            vc.cargo_sub_category_2 AS vc_sub2,
             SUM(COALESCE(mvm.quantity, 0)) AS qty
         FROM mis_vessel_master mvm
-        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(mvm.cargo)) = LOWER(TRIM(vc.cargo_name))
         WHERE mvm.fin_year = '2026-27'
-        GROUP BY mvm.cargo, mvm.new_cat, mvm.category1, mvm.category, vc.cargo_category, vc.cargo_sub_category_2
+        GROUP BY mvm.cargo, mvm.new_cat, mvm.category1, mvm.category
     """)
     for r in cur.fetchall():
-        cat = _categorize_cargo(r.get('cargo'), r.get('new_cat'), r.get('category1'), r.get('category'), vc_map=vc_map)
         q = float(r.get('qty') or 0)
+        cat = _categorize_cargo(r.get('cargo'), cargo_sub2=r.get('new_cat'), cargo_cat=r.get('category1'), cargo_sub=r.get('category'), vc_map=vc_map)
+        if cat not in categories:
+            cat = 'Other liquid'
         grid['cum_fy_curr'][cat] += q
 
-    # 5. Cum handled FY 2025-26 (from mis_history LEFT JOIN vessel_cargo)
+    # Part 4B: Live operational data (from ldud_header, ldud_parcel_ops, lueu_parcel_log)
+    # Includes vessels with cast_off_datetime after June (from Jul 1 onwards) up to window_end.
+    # Uses vessel_cargo.cargo_sub_category_2 to classify the cargo.
+    if selected_date.month < 4:
+        live_start = datetime(selected_date.year - 1, 7, 1, 7, 0, 0)
+    else:
+        live_start = datetime(selected_date.year, 7, 1, 7, 0, 0)
+
+    cur.execute("""
+        SELECT
+            lh.id AS ldud_id,
+            lh.vessel_name,
+            lh.cast_off_datetime,
+            po.cargo_name,
+            vc.cargo_sub_category_2,
+            vc.cargo_category,
+            vc.cargo_type,
+            SUM(COALESCE(log.quantity, 0)) AS qty
+        FROM ldud_header lh
+        JOIN ldud_parcel_ops po ON po.ldud_id = lh.id
+        JOIN lueu_parcel_log log ON log.parcel_op_id = po.id
+        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(po.cargo_name))
+        WHERE NULLIF(TRIM(lh.cast_off_datetime::text), '') IS NOT NULL
+          AND COALESCE(log.is_deleted, FALSE) = FALSE
+          AND COALESCE(log.is_shortclose, FALSE) = FALSE
+          AND COALESCE(lh.is_deleted, FALSE) = FALSE
+        GROUP BY
+            lh.id,
+            lh.vessel_name,
+            lh.cast_off_datetime,
+            po.cargo_name,
+            vc.cargo_sub_category_2,
+            vc.cargo_category,
+            vc.cargo_type
+    """)
+    for r in cur.fetchall():
+        cast_off_dt = _parse_entry_dt(r.get('cast_off_datetime'))
+        if not cast_off_dt:
+            continue
+
+        if live_start <= cast_off_dt <= window_end:
+            q = float(r.get('qty') or 0)
+            if q <= 0:
+                continue
+            cat = _categorize_cargo(
+                r.get('cargo_name'),
+                cargo_sub2=r.get('cargo_sub_category_2'),
+                cargo_cat=r.get('cargo_category'),
+                cargo_sub=r.get('cargo_type'),
+                vc_map=vc_map
+            )
+            if cat not in categories:
+                cat = 'Other liquid'
+            grid['cum_fy_curr'][cat] += q
+
+    # 5. Cum handled FY 2025-26 (from mis_history)
     cur.execute("""
         SELECT
             mh.cargo_name,
-            mh.cargo_category,
-            mh.cargo_sub_category,
             mh.cargo_sub_category_2,
-            vc.cargo_category AS vc_cat,
-            vc.cargo_sub_category_2 AS vc_sub2,
+            mh.cargo_category,
+            mh.cargo_type,
             SUM(COALESCE(mh.quantity, 0)) AS qty
         FROM mis_history mh
-        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(mh.cargo_name)) = LOWER(TRIM(vc.cargo_name))
         WHERE mh.fin_year = '2025-26'
-        GROUP BY mh.cargo_name, mh.cargo_category, mh.cargo_sub_category, mh.cargo_sub_category_2, vc.cargo_category, vc.cargo_sub_category_2
+        GROUP BY mh.cargo_name, mh.cargo_sub_category_2, mh.cargo_category, mh.cargo_type
     """)
     for r in cur.fetchall():
-        cat = _categorize_cargo(r.get('cargo_name'), r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'), vc_map=vc_map)
         q = float(r.get('qty') or 0)
+        cat = _categorize_cargo(r.get('cargo_name'), cargo_sub2=r.get('cargo_sub_category_2'), cargo_cat=r.get('cargo_category'), cargo_sub=r.get('cargo_type'), vc_map=vc_map)
+        if cat not in categories:
+            cat = 'Other liquid'
         grid['cum_fy_2025_26'][cat] += q
 
-    # 6. Cum handled FY 2024-25 (from mis_history LEFT JOIN vessel_cargo)
+    # 6. Cum handled FY 2024-25 (from mis_history)
     cur.execute("""
         SELECT
             mh.cargo_name,
-            mh.cargo_category,
-            mh.cargo_sub_category,
             mh.cargo_sub_category_2,
-            vc.cargo_category AS vc_cat,
-            vc.cargo_sub_category_2 AS vc_sub2,
+            mh.cargo_category,
+            mh.cargo_type,
             SUM(COALESCE(mh.quantity, 0)) AS qty
         FROM mis_history mh
-        LEFT JOIN vessel_cargo vc ON LOWER(TRIM(mh.cargo_name)) = LOWER(TRIM(vc.cargo_name))
         WHERE mh.fin_year = '2024-25'
-        GROUP BY mh.cargo_name, mh.cargo_category, mh.cargo_sub_category, mh.cargo_sub_category_2, vc.cargo_category, vc.cargo_sub_category_2
+        GROUP BY mh.cargo_name, mh.cargo_sub_category_2, mh.cargo_category, mh.cargo_type
     """)
     for r in cur.fetchall():
-        cat = _categorize_cargo(r.get('cargo_name'), r.get('cargo_category'), r.get('cargo_sub_category'), r.get('cargo_sub_category_2'), vc_map=vc_map)
         q = float(r.get('qty') or 0)
+        cat = _categorize_cargo(r.get('cargo_name'), cargo_sub2=r.get('cargo_sub_category_2'), cargo_cat=r.get('cargo_category'), cargo_sub=r.get('cargo_type'), vc_map=vc_map)
+        if cat not in categories:
+            cat = 'Other liquid'
         grid['cum_fy_2024_25'][cat] += q
 
     # 7. Cum Loading/unloading till date = FY 2026-27 + FY 2025-26 + FY 2024-25
@@ -935,8 +1026,9 @@ def dpr_data():
     try:
         return jsonify(_get_dpr_payload(selected_date))
     except Exception as e:
-        import traceback
+        import traceback, sys
         tb = traceback.format_exc()
+        print(f"[DPR ERROR] {e}\n{tb}", file=sys.stderr, flush=True)
         return jsonify({'error': str(e), 'traceback': tb}), 500
 
 
@@ -950,63 +1042,74 @@ def dpr_export():
     ws = wb.active
     ws.title = "DPR"
 
-    # Styling constants
-    font_title = Font(name="Arial", size=14, bold=True, color="FFFFFF")
-    font_section = Font(name="Arial", size=11, bold=True, color="1E4620")
-    font_header = Font(name="Arial", size=10, bold=True, color="000000")
-    font_bold = Font(name="Arial", size=10, bold=True)
-    font_normal = Font(name="Arial", size=10)
-
-    fill_title = PatternFill("solid", fgColor="1F4E78")
-    fill_sub_hdr = PatternFill("solid", fgColor="D9E1F2")
-    fill_section = PatternFill("solid", fgColor="C6E0B4") # Soft green matching screenshot
-    fill_tbl_hdr = PatternFill("solid", fgColor="E2EFDA")
-    fill_total = PatternFill("solid", fgColor="F2F2F2")
-
-    thin = Side(style="thin", color="BFBFBF")
+    FONT_NAME = "Arial"
+    thin = Side(style="thin", color="B7B7B7")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    align_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    align_right = Alignment(horizontal="right", vertical="center")
+    fill_header = PatternFill("solid", fgColor="BCD6EE")
+    fill_section = PatternFill("solid", fgColor="DDEBF7")
+    fill_month = PatternFill("solid", fgColor="FFF2A8")
+    fill_total = PatternFill("solid", fgColor="FCE0CD")
+    fill_white = PatternFill("solid", fgColor="FFFFFF")
+    fill_title = PatternFill("solid", fgColor="1F4E78")
+
+    font_title = Font(name=FONT_NAME, size=12, bold=True, color="FFFFFF")
+    font_header = Font(name=FONT_NAME, bold=True, size=10)
+    font_section = Font(name=FONT_NAME, bold=True, size=10)
+    font_normal = Font(name=FONT_NAME, size=10)
+    font_value = Font(name=FONT_NAME, size=10, color="1F4E78")
+    font_total = Font(name=FONT_NAME, bold=True, size=10)
+
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
 
     NUM_FMT = '#,##0.000;(#,##0.000);"-"'
 
-    # Set column widths
-    ws.column_dimensions['A'].width = 38
-    ws.column_dimensions['B'].width = 22
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 18
-    ws.column_dimensions['E'].width = 18
-    ws.column_dimensions['F'].width = 18
-    ws.column_dimensions['G'].width = 18
+    def set_cell(coord, value, font=font_normal, fill=None, align=center, fmt=None):
+        c = ws[coord]
+        c.value = value
+        c.font = font
+        c.border = border
+        c.alignment = align
+        if fill:
+            c.fill = fill
+        if fmt:
+            c.number_format = fmt
+        return c
 
-    # Title Bar
-    ws.merge_cells("A1:G1")
-    cell = ws["A1"]
-    cell.value = "DAILY REPORT - JSW JNPT LIQUID TERMINAL PRIVATE LIMITED (JJLTPL)"
-    cell.font = font_title
-    cell.fill = fill_title
-    cell.alignment = align_center
+    def merge(rng, value=None, font=font_normal, fill=None, align=center, fmt=None):
+        ws.merge_cells(rng)
+        top_left = rng.split(":")[0]
+        set_cell(top_left, value, font=font, fill=fill, align=align, fmt=fmt)
+        for row in ws[rng]:
+            for cell in row:
+                cell.border = border
+                if fill:
+                    cell.fill = fill
 
-    # Meta dates row
-    ws["A3"] = "Report Date"
-    ws["A3"].font = font_bold
-    ws["B3"] = payload['report_date_display']
-    ws["B3"].font = font_normal
+    # Column widths (A to H)
+    widths = {
+        "A": 36, "B": 22, "C": 18, "D": 18,
+        "E": 18, "F": 18, "G": 22, "H": 26
+    }
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
 
-    ws["F3"] = "Reporting Date"
-    ws["F3"].font = font_bold
-    ws["G3"] = payload['reporting_date_display']
-    ws["G3"].font = font_normal
+    # Title Bar (A1:H1)
+    merge("A1:H1", "DAILY REPORT - JSW JNPT LIQUID TERMINAL PRIVATE LIMITED (JJLTPL)",
+          font=font_title, fill=fill_title, align=center)
+
+    # Meta dates strip (A3:H3)
+    set_cell("A3", "Report Date", font=font_header, fill=fill_header, align=left)
+    set_cell("B3", payload['report_date_display'], font=font_value, fill=fill_white, align=center)
+    merge("C3:E3", "", fill=fill_white)
+    set_cell("F3", "Reporting Date", font=font_header, fill=fill_header, align=left)
+    merge("G3:H3", payload['reporting_date_display'], font=font_value, fill=fill_white, align=center)
 
     r = 5
     # Section A
-    ws.merge_cells(f"A{r}:G{r}")
-    ws[f"A{r}"] = "Section A: Vessel handling at JJLTPL"
-    ws[f"A{r}"].font = font_section
-    ws[f"A{r}"].fill = fill_section
-    ws[f"A{r}"].alignment = align_left
+    merge(f"A{r}:H{r}", "Section A: Vessel handling at JJLTPL", font=font_section, fill=fill_section, align=left)
 
     r += 1
     sec_a_fields = [
@@ -1020,127 +1123,109 @@ def dpr_export():
     ]
 
     for label, vals in sec_a_fields:
-        ws[f"A{r}"] = label
-        ws[f"A{r}"].font = font_bold
-        ws[f"A{r}"].border = border
-        for idx, val in enumerate(vals):
+        set_cell(f"A{r}", label, font=font_header, fill=fill_header, align=left)
+        for idx in range(7):  # Columns B through H
             col_let = get_column_letter(2 + idx)
-            cell = ws[f"{col_let}{r}"]
-            cell.value = val
-            cell.font = font_normal
-            cell.border = border
-            cell.alignment = align_center
-            if label == "BL Quantity" and isinstance(val, (int, float)):
-                cell.number_format = NUM_FMT
+            val = vals[idx] if idx < len(vals) else None
+            is_bl = (label == "BL Quantity") and isinstance(val, (int, float))
+            set_cell(f"{col_let}{r}", val, font=font_value if val is not None else font_normal,
+                     fill=fill_white, align=right if is_bl else center,
+                     fmt=NUM_FMT if is_bl else None)
         r += 1
 
     # Section B
     r += 1
-    ws.merge_cells(f"A{r}:G{r}")
-    ws[f"A{r}"] = "Section B: Cargo Handled"
-    ws[f"A{r}"].font = font_section
-    ws[f"A{r}"].fill = fill_section
-    ws[f"A{r}"].alignment = align_left
+    merge(f"A{r}:H{r}", "Section B: Cargo Handled", font=font_section, fill=fill_section, align=left)
 
     r += 1
     b_headers = ["Particulars", "Edible Oil", "Other liquid", "Chemical", "POL", "Total"]
     for i, h in enumerate(b_headers):
         col_let = get_column_letter(1 + i)
-        cell = ws[f"{col_let}{r}"]
-        cell.value = h
-        cell.font = font_header
-        cell.fill = fill_tbl_hdr
-        cell.border = border
-        cell.alignment = align_left if i == 0 else align_right
+        set_cell(f"{col_let}{r}", h, font=font_header, fill=fill_header, align=left if i == 0 else right)
+    set_cell(f"G{r}", None, fill=fill_white)
+    set_cell(f"H{r}", None, fill=fill_white)
 
     for row_data in payload['section_b']:
         r += 1
-        ws[f"A{r}"] = row_data['particulars']
-        ws[f"A{r}"].font = font_bold if "till date" in row_data['particulars'].lower() else font_normal
-        ws[f"A{r}"].border = border
+        is_total = "till date" in row_data['particulars'].lower()
+        is_month = "month" in row_data['particulars'].lower()
+        row_fill = fill_total if is_total else (fill_month if is_month else fill_white)
+        row_font = font_total if is_total else font_normal
+
+        set_cell(f"A{r}", row_data['particulars'], font=row_font, fill=row_fill, align=left)
 
         cats = ["Edible Oil", "Other liquid", "Chemical", "POL", "total"]
         for idx, cat in enumerate(cats):
             col_let = get_column_letter(2 + idx)
-            cell = ws[f"{col_let}{r}"]
             val = row_data.get(cat, 0.0)
-            cell.value = val
-            cell.font = font_bold if cat == "total" or "till date" in row_data['particulars'].lower() else font_normal
-            cell.border = border
-            cell.alignment = align_right
-            cell.number_format = NUM_FMT
+            cell_font = font_total if (cat == "total" or is_total) else font_value
+            cell_fill = fill_total if (cat == "total" or is_total) else row_fill
+            set_cell(f"{col_let}{r}", val, font=cell_font, fill=cell_fill, align=right, fmt=NUM_FMT)
+
+        set_cell(f"G{r}", None, fill=fill_white)
+        set_cell(f"H{r}", None, fill=fill_white)
 
     # Section C
     r += 2
-    ws.merge_cells(f"A{r}:G{r}")
-    ws[f"A{r}"] = "Section C: Vessels Expected"
-    ws[f"A{r}"].font = font_section
-    ws[f"A{r}"].fill = fill_section
+    merge(f"A{r}:H{r}", "Section C: Vessels Expected", font=font_section, fill=fill_section, align=left)
 
     r += 1
     c_headers = ["Vessel", "Cargo", "Berth", "B/L Qty", "EXIM", "Agent", "ETA", "Remarks"]
     for i, h in enumerate(c_headers):
         col_let = get_column_letter(1 + i)
-        cell = ws[f"{col_let}{r}"]
-        cell.value = h
-        cell.font = font_header
-        cell.fill = fill_tbl_hdr
-        cell.border = border
+        set_cell(f"{col_let}{r}", h, font=font_header, fill=fill_header, align=right if i == 3 else (left if i in (0, 1, 5, 7) else center))
 
-    for v in payload['section_c']:
+    if payload['section_c']:
+        for v in payload['section_c']:
+            r += 1
+            vals = [v['vessel'], v['cargo'], v['berth'], v['bl_qty'], v['exim'], v['agent'], v['eta'], v['remarks']]
+            for i, val in enumerate(vals):
+                col_let = get_column_letter(1 + i)
+                is_num = (i == 3 and isinstance(val, (int, float)))
+                set_cell(f"{col_let}{r}", val, font=font_value, fill=fill_white,
+                         align=right if is_num else (left if i in (0, 1, 5, 7) else center),
+                         fmt=NUM_FMT if is_num else None)
+    else:
         r += 1
-        vals = [v['vessel'], v['cargo'], v['berth'], v['bl_qty'], v['exim'], v['agent'], v['eta'], v['remarks']]
-        for i, val in enumerate(vals):
-            col_let = get_column_letter(1 + i)
-            cell = ws[f"{col_let}{r}"]
-            cell.value = val
-            cell.font = font_normal
-            cell.border = border
-            cell.alignment = align_right if i == 3 else align_left
-            if i == 3 and isinstance(val, (int, float)):
-                cell.number_format = NUM_FMT
+        merge(f"A{r}:H{r}", "No expected vessels for selected month", font=font_normal, fill=fill_white, align=center)
 
     # Section D
     r += 2
     sec_d = payload['section_d']
-    ws.merge_cells(f"A{r}:G{r}")
-    ws[f"A{r}"] = f"Section D: Vessels Handled / operations / declared in {sec_d['month_name']}"
-    ws[f"A{r}"].font = font_section
-    ws[f"A{r}"].fill = fill_section
+    merge(f"A{r}:H{r}", f"Section D: Vessels Handled / operations / declared in {sec_d['month_name']}",
+          font=font_section, fill=fill_section, align=left)
 
     r += 1
     d_headers = ["Vessel", "Cargo", "Customer", "Quantity", "Berth", "Agent", "Remarks"]
     for i, h in enumerate(d_headers):
         col_let = get_column_letter(1 + i)
-        cell = ws[f"{col_let}{r}"]
-        cell.value = h
-        cell.font = font_header
-        cell.fill = fill_tbl_hdr
-        cell.border = border
+        set_cell(f"{col_let}{r}", h, font=font_header, fill=fill_header, align=right if i == 3 else (left if i in (0, 1, 2, 5, 6) else center))
+    set_cell(f"H{r}", None, fill=fill_white)
 
-    for v in sec_d['vessels']:
+    if sec_d['vessels']:
+        for v in sec_d['vessels']:
+            r += 1
+            vals = [v['vessel'], v['cargo'], v['customer'], v['quantity'], v['berth'], v['agent'], v['remarks']]
+            for i, val in enumerate(vals):
+                col_let = get_column_letter(1 + i)
+                is_num = (i == 3 and isinstance(val, (int, float)))
+                set_cell(f"{col_let}{r}", val, font=font_value, fill=fill_white,
+                         align=right if is_num else (left if i in (0, 1, 2, 5, 6) else center),
+                         fmt=NUM_FMT if is_num else None)
+            set_cell(f"H{r}", None, fill=fill_white)
+    else:
         r += 1
-        vals = [v['vessel'], v['cargo'], v['customer'], v['quantity'], v['berth'], v['agent'], v['remarks']]
-        for i, val in enumerate(vals):
-            col_let = get_column_letter(1 + i)
-            cell = ws[f"{col_let}{r}"]
-            cell.value = val
-            cell.font = font_normal
-            cell.border = border
-            cell.alignment = align_right if i == 3 else align_left
-            if i == 3 and isinstance(val, (int, float)):
-                cell.number_format = NUM_FMT
+        merge(f"A{r}:G{r}", "No vessels handled in selected month", font=font_normal, fill=fill_white, align=center)
+        set_cell(f"H{r}", None, fill=fill_white)
 
     # Total Row for Section D
     r += 1
-    ws[f"A{r}"] = "Total"
-    ws[f"A{r}"].font = font_bold
-    ws[f"A{r}"].border = border
-    ws[f"D{r}"] = sec_d['total_quantity']
-    ws[f"D{r}"].font = font_bold
-    ws[f"D{r}"].border = border
-    ws[f"D{r}"].alignment = align_right
-    ws[f"D{r}"].number_format = NUM_FMT
+    merge(f"A{r}:C{r}", "Total", font=font_total, fill=fill_total, align=left)
+    set_cell(f"D{r}", sec_d['total_quantity'], font=font_total, fill=fill_total, align=right, fmt=NUM_FMT)
+    merge(f"E{r}:H{r}", "", fill=fill_total)
+
+    ws.freeze_panes = "A4"
+    ws.sheet_view.showGridLines = True
 
     buf = BytesIO()
     wb.save(buf)
