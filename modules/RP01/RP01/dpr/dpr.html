@@ -1094,6 +1094,14 @@
         return Number(val).toFixed(1) + '%';
     }
 
+    function fmtNum3(val) {
+        if (val === null || val === undefined || isNaN(val) || val === '') return '-';
+        return Number(val).toLocaleString('en-IN', {
+            minimumFractionDigits: 3,
+            maximumFractionDigits: 3
+        });
+    }
+
     async function loadBvsaData() {
         const dateVal = document.getElementById('dprDate').value;
         const loading = document.getElementById('bvsaLoading');
@@ -1163,49 +1171,49 @@
             html += `<tr><td colspan="2" class="td-cat">${c.label}</td>`;
             months.forEach(m => {
                 const b = m.budget[c.key] || 0;
-                html += `<td class="num">${b > 0 ? fmtNum(b) : '-'}</td>`;
+                html += `<td class="num">${b > 0 ? fmtNum3(b) : '-'}</td>`;
             });
             const totB = catSum[c.key]?.budget || 0;
-            html += `<td class="num bold">${totB > 0 ? fmtNum(totB) : '-'}</td></tr>`;
+            html += `<td class="num bold">${totB > 0 ? fmtNum3(totB) : '-'}</td></tr>`;
         });
 
         // Total Cargo Budget (Green)
         html += `<tr class="tr-green"><td colspan="2">Total Cargo Budget</td>`;
         months.forEach(m => {
             const b = m.budget.total || 0;
-            html += `<td class="num bold">${fmtNum(b)}</td>`;
+            html += `<td class="num bold">${fmtNum3(b)}</td>`;
         });
-        html += `<td class="num bold">${fmtNum(summary.full_year_budget)}</td></tr>`;
+        html += `<td class="num bold">${fmtNum3(summary.full_year_budget)}</td></tr>`;
 
         // Cum Budget (Soft Green)
         html += `<tr class="tr-cum-budget"><td colspan="2">Cum Budget</td>`;
         months.forEach(m => {
-            html += `<td class="num">${fmtNum(m.cum_budget)}</td>`;
+            html += `<td class="num">${fmtNum3(m.cum_budget)}</td>`;
         });
-        html += `<td class="num bold">${fmtNum(summary.full_year_budget)}</td></tr>`;
+        html += `<td class="num bold">${fmtNum3(summary.full_year_budget)}</td></tr>`;
 
         // Actual
         html += `<tr class="tr-highlight"><td colspan="2">Actual</td>`;
         months.forEach(m => {
-            const val = m.is_past_or_current ? fmtNum(m.actual.total) : '';
+            const val = m.is_past_or_current ? fmtNum3(m.actual.total) : '';
             html += `<td class="num bold">${val}</td>`;
         });
-        html += `<td class="num bold">${fmtNum(summary.ytd_actual)}</td></tr>`;
+        html += `<td class="num bold">${fmtNum3(summary.ytd_actual)}</td></tr>`;
 
         // % Achieved
         html += `<tr><td colspan="2" style="font-style:italic;color:#475569;">% Achieved</td>`;
         months.forEach(m => {
             html += `<td class="num" style="font-style:italic;">${fmtPct(m.pct_achieved)}</td>`;
         });
-        html += `<td class="num bold" style="font-style:italic;">${fmtPct(summary.pct_achieved_ytd)}</td></tr>`;
+        html += `<td class="num bold" style="color:#006100;font-weight:800;">${fmtPct(summary.pct_achieved_ytd)}</td></tr>`;
 
         // Cumulative Achieved
         html += `<tr class="tr-highlight"><td colspan="2">Cumulative Achieved</td>`;
         months.forEach(m => {
-            const val = m.is_past_or_current ? fmtNum(m.cum_actual) : '';
+            const val = m.is_past_or_current ? fmtNum3(m.cum_actual) : '';
             html += `<td class="num bold">${val}</td>`;
         });
-        html += `<td class="num bold">${fmtNum(summary.ytd_actual)}</td></tr>`;
+        html += `<td class="num bold">${fmtNum3(summary.ytd_actual)}</td></tr>`;
 
         // % Achieved Cumulative
         html += `<tr><td colspan="2" style="font-style:italic;color:#475569;">% Achieved Cumulative</td>`;
@@ -1221,11 +1229,11 @@
                 html += `<td class="num" style="color:#94a3b8;"></td>`;
             } else {
                 const isPos = (m.variance >= 0);
-                html += `<td class="num ${isPos ? 'var-pos' : 'var-neg'}">${isPos ? '+' : ''}${fmtNum(m.variance)}</td>`;
+                html += `<td class="num ${isPos ? 'var-pos' : 'var-neg'}">${isPos ? '+' : ''}${fmtNum3(m.variance)}</td>`;
             }
         });
         const isTotVarPos = (summary.ytd_variance >= 0);
-        html += `<td class="num bold ${isTotVarPos ? 'var-pos' : 'var-neg'}">${isTotVarPos ? '+' : ''}${fmtNum(summary.ytd_variance)}</td></tr>`;
+        html += `<td class="num bold ${isTotVarPos ? 'var-pos' : 'var-neg'}">${isTotVarPos ? '+' : ''}${fmtNum3(summary.ytd_variance)}</td></tr>`;
 
         html += `</tbody>`;
         tbl.innerHTML = html;
@@ -1241,6 +1249,7 @@
         let html = `
             <thead>
                 <tr>
+                    <th class="th-blue" style="text-align:left;min-width:105px;">Particulars</th>
                     <th class="th-blue" style="width:75px;">Till Date</th>
                     <th class="th-blue" style="width:75px;">Balance</th>
                     <th class="th-blue" style="width:75px;">Target</th>
@@ -1249,15 +1258,22 @@
             <tbody>
         `;
 
-        const cats = ['edible', 'other', 'chemical', 'pol'];
-        cats.forEach(k => {
-            const item = catSum[k] || { actual: 0, balance: 0, budget: 0 };
+        const cats = [
+            { key: 'edible', label: 'Edible Oil' },
+            { key: 'other', label: 'Other liquid' },
+            { key: 'chemical', label: 'Chemical' },
+            { key: 'pol', label: 'POL' }
+        ];
+
+        cats.forEach(c => {
+            const item = catSum[c.key] || { actual: 0, balance: 0, budget: 0 };
             const bal = item.balance || 0;
             html += `
                 <tr>
-                    <td class="num bold">${fmtNum(item.actual)}</td>
-                    <td class="num ${bal > 0 ? 'var-neg' : 'bold'}">${bal > 0 ? fmtNum(bal) : '-'}</td>
-                    <td class="num bold">${item.budget > 0 ? fmtNum(item.budget) : '-'}</td>
+                    <td class="td-cat" style="text-align:left;font-weight:600;">${c.label}</td>
+                    <td class="num bold">${fmtNum3(item.actual)}</td>
+                    <td class="num ${bal > 0 ? 'var-neg' : 'bold'}">${bal > 0 ? fmtNum3(bal) : '-'}</td>
+                    <td class="num bold">${item.budget > 0 ? fmtNum3(item.budget) : '-'}</td>
                 </tr>
             `;
         });
@@ -1266,9 +1282,10 @@
         const totBal = summary.balance || 0;
         html += `
                 <tr class="tr-green">
-                    <td class="num bold">${fmtNum(summary.ytd_actual)}</td>
-                    <td class="num ${totBal > 0 ? 'var-neg' : 'bold'}">${totBal > 0 ? fmtNum(totBal) : '-'}</td>
-                    <td class="num bold">${fmtNum(summary.full_year_budget)}</td>
+                    <td style="text-align:left;font-weight:700;">Total</td>
+                    <td class="num bold">${fmtNum3(summary.ytd_actual)}</td>
+                    <td class="num ${totBal > 0 ? 'var-neg' : 'bold'}">${totBal > 0 ? fmtNum3(totBal) : '-'}</td>
+                    <td class="num bold">${fmtNum3(summary.full_year_budget)}</td>
                 </tr>
             </tbody>
         `;
@@ -1329,18 +1346,18 @@
 
         histBox.innerHTML = `
             <table class="bvsa-hist-table">
-                <tr><td>Nov-Mar</td><td class="num bold">2,00,912</td><td></td></tr>
-                <tr style="border-bottom:2px solid #b7b7b7;"><td class="bold">FY 25</td><td class="num bold">2,00,912</td><td></td></tr>
-                <tr><td>Q1</td><td class="num">2,93,549</td><td class="num">${q1Pct26}</td></tr>
-                <tr><td>Q2</td><td class="num">4,44,804</td><td class="num">${q2Pct26}</td></tr>
-                <tr><td>Q3</td><td class="num">2,98,730</td><td class="num">${q3Pct26}</td></tr>
-                <tr><td>Q4</td><td class="num">2,63,409</td><td class="num">${q4Pct26}</td></tr>
-                <tr style="border-bottom:2px solid #b7b7b7;"><td class="bold">FY 26</td><td class="num bold">13,00,492</td><td></td></tr>
-                <tr><td>Q1</td><td class="num">${fmtNum(q.q1)}</td><td class="num">${q.q1 > 0 ? q1Pct27 : '-'}</td></tr>
-                <tr><td>Q2</td><td class="num">${fmtNum(q.q2)}</td><td class="num">${q.q2 > 0 ? q2Pct27 : '-'}</td></tr>
-                <tr><td>Q3</td><td class="num">${fmtNum(q.q3)}</td><td class="num">-</td></tr>
-                <tr><td>Q4</td><td class="num">${fmtNum(q.q4)}</td><td class="num">-</td></tr>
-                <tr style="border-top:1px solid #b7b7b7;"><td class="bold">FY 27</td><td class="num bold">${fmtNum(summary.ytd_actual)}</td><td></td></tr>
+                <tr><td>Nov-Mar</td><td class="num bold">2,00,912.538</td><td></td></tr>
+                <tr style="border-bottom:2px solid #b7b7b7;"><td class="bold">FY 25</td><td class="num bold">2,00,912.538</td><td></td></tr>
+                <tr><td>Q1</td><td class="num">2,93,549.000</td><td class="num">${q1Pct26}</td></tr>
+                <tr><td>Q2</td><td class="num">4,44,804.000</td><td class="num">${q2Pct26}</td></tr>
+                <tr><td>Q3</td><td class="num">2,98,730.000</td><td class="num">${q3Pct26}</td></tr>
+                <tr><td>Q4</td><td class="num">2,63,409.000</td><td class="num">${q4Pct26}</td></tr>
+                <tr style="border-bottom:2px solid #b7b7b7;"><td class="bold">FY 26</td><td class="num bold">13,00,492.320</td><td></td></tr>
+                <tr><td>Q1</td><td class="num">${fmtNum3(q.q1)}</td><td class="num">${q.q1 > 0 ? q1Pct27 : '-'}</td></tr>
+                <tr><td>Q2</td><td class="num">${fmtNum3(q.q2)}</td><td class="num">${q.q2 > 0 ? q2Pct27 : '-'}</td></tr>
+                <tr><td>Q3</td><td class="num">${fmtNum3(q.q3)}</td><td class="num">-</td></tr>
+                <tr><td>Q4</td><td class="num">${fmtNum3(q.q4)}</td><td class="num">-</td></tr>
+                <tr style="border-top:1px solid #b7b7b7;"><td class="bold">FY 27</td><td class="num bold">${fmtNum3(summary.ytd_actual)}</td><td></td></tr>
             </table>
         `;
     }
@@ -1388,7 +1405,7 @@
             const rowClass = monthFlip ? 'vessel-month-alt' : '';
 
             const isLast = (lastVesselIdxForMonth[v.month] === idx);
-            const mTotalVal = isLast ? fmtNum(monthTotals[v.month]) : '';
+            const mTotalVal = isLast ? fmtNum3(monthTotals[v.month]) : '';
             const mTotalStyle = isLast ? 'background:#FFC000;color:#000000;font-weight:700;border:1px solid #bf8f00;' : '';
 
             html += `
@@ -1398,12 +1415,12 @@
                     <td class="bold">${v.vessel_name}</td>
                     <td>${v.cargo}</td>
                     <td style="color:#334155;">${v.customer}</td>
-                    <td class="num bold">${fmtNum(v.quantity)}</td>
+                    <td class="num bold">${fmtNum3(v.quantity)}</td>
                     <td class="num" style="${mTotalStyle}">${mTotalVal}</td>
-                    <td class="num">${v.edible > 0 ? fmtNum(v.edible) : ''}</td>
-                    <td class="num">${v.other > 0 ? fmtNum(v.other) : ''}</td>
-                    <td class="num">${v.chemical > 0 ? fmtNum(v.chemical) : ''}</td>
-                    <td class="num">${v.pol > 0 ? fmtNum(v.pol) : ''}</td>
+                    <td class="num">${v.edible > 0 ? fmtNum3(v.edible) : ''}</td>
+                    <td class="num">${v.other > 0 ? fmtNum3(v.other) : ''}</td>
+                    <td class="num">${v.chemical > 0 ? fmtNum3(v.chemical) : ''}</td>
+                    <td class="num">${v.pol > 0 ? fmtNum3(v.pol) : ''}</td>
                 </tr>
             `;
         });
@@ -1413,10 +1430,10 @@
         if (sumRow) {
             sumRow.innerHTML = `
                 <th colspan="7" style="border:none;background:transparent;"></th>
-                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum(totEd)}</th>
-                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum(totOt)}</th>
-                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum(totCh)}</th>
-                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum(totPo)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totEd)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totOt)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totCh)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totPo)}</th>
             `;
         }
 
@@ -1424,12 +1441,12 @@
             tfoot.innerHTML = `
                 <tr class="tr-green">
                     <td colspan="5" style="text-align:left;font-weight:700;">Total (${vessels.length} vessel calls)</td>
-                    <td class="num bold">${fmtNum(totQ)}</td>
+                    <td class="num bold">${fmtNum3(totQ)}</td>
                     <td></td>
-                    <td class="num bold">${fmtNum(totEd)}</td>
-                    <td class="num bold">${fmtNum(totOt)}</td>
-                    <td class="num bold">${fmtNum(totCh)}</td>
-                    <td class="num bold">${fmtNum(totPo)}</td>
+                    <td class="num bold">${fmtNum3(totEd)}</td>
+                    <td class="num bold">${fmtNum3(totOt)}</td>
+                    <td class="num bold">${fmtNum3(totCh)}</td>
+                    <td class="num bold">${fmtNum3(totPo)}</td>
                 </tr>
             `;
         }

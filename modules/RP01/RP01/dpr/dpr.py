@@ -1560,6 +1560,48 @@ def _get_bvsa_payload(selected_date):
         fy26_q3 = sum(m_26.get(k, 0.0) for k in ('Oct-25', 'Nov-25', 'Dec-25')) or 298730.0
         fy26_q4 = sum(m_26.get(k, 0.0) for k in ('Jan-26', 'Feb-26', 'Mar-26')) or 263409.0
 
+        # Ensure all numeric quantities in BVsA payload have exact 3 decimal places
+        for m in months:
+            for k in ('edible', 'other', 'chemical', 'pol', 'total'):
+                m['budget'][k] = round(float(m['budget'][k]), 3)
+                m['actual'][k] = round(float(m['actual'][k]), 3)
+            m['cum_budget'] = round(float(m['cum_budget']), 3)
+            if m['cum_actual'] is not None:
+                m['cum_actual'] = round(float(m['cum_actual']), 3)
+            if m['variance'] is not None:
+                m['variance'] = round(float(m['variance']), 3)
+            if m['cum_variance'] is not None:
+                m['cum_variance'] = round(float(m['cum_variance']), 3)
+
+        for v in vessels:
+            v['quantity'] = round(float(v['quantity']), 3)
+            v['edible'] = round(float(v['edible']), 3)
+            v['other'] = round(float(v['other']), 3)
+            v['chemical'] = round(float(v['chemical']), 3)
+            v['pol'] = round(float(v['pol']), 3)
+
+        full_year_budget = round(float(full_year_budget), 3)
+        ytd_budget = round(float(ytd_budget), 3)
+        ytd_actual = round(float(ytd_actual), 3)
+        ytd_variance = round(float(ytd_variance), 3)
+        balance = round(float(balance), 3)
+        asking_rate = round(float(asking_rate), 3)
+
+        for k in ('edible', 'other', 'chemical', 'pol'):
+            fy_summary[k]['budget'] = round(float(fy_summary[k]['budget']), 3)
+            fy_summary[k]['actual'] = round(float(fy_summary[k]['actual']), 3)
+            fy_summary[k]['balance'] = round(float(fy_summary[k]['balance']), 3)
+        fy_summary['total']['budget'] = full_year_budget
+        fy_summary['total']['actual'] = ytd_actual
+        fy_summary['total']['balance'] = balance
+
+        q1_act = round(float(q1_act), 3)
+        q2_act = round(float(q2_act), 3)
+        q3_act = round(float(q3_act), 3)
+        q4_act = round(float(q4_act), 3)
+        fy25_tot = round(float(fy25_tot), 3)
+        fy26_tot = round(float(fy26_tot), 3)
+
         return {
             'financial_year': '2026-27',
             'report_date': selected_date.isoformat(),
@@ -1731,7 +1773,8 @@ def dpr_export_bvsa():
         col_let = get_column_letter(4 + i)
         val = (m['pct_achieved'] / 100.0) if m['pct_achieved'] is not None else None
         set_c(f"{col_let}{cur_r}", val, font=font_pct, fmt="0.0%" if val is not None else None)
-    set_c(f"P{cur_r}", (payload['summary']['pct_achieved_ytd'] / 100.0), font=font_bold, fill=fill_total, fmt="0.0%")
+    font_green_bold = Font(name="Calibri", size=10, bold=True, color="006100")
+    set_c(f"P{cur_r}", (payload['summary']['pct_achieved_ytd'] / 100.0), font=font_green_bold, fill=fill_total, fmt="0.0%")
     cur_r += 1
 
     # Cumulative Achieved
