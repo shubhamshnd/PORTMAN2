@@ -95,7 +95,11 @@ def get_data(page=1, size=20, filters=None):
                               AND d.delay_start ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}'
                               AND d.delay_end   ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}'
                               AND d.delay_end >= d.delay_start
-                        ) AS total_delay_mins
+                        ) AS total_delay_mins, (
+                            SELECT l.anchored_datetime FROM ldud_header l
+                            WHERE l.vcn_id = h.id AND l.is_deleted IS NOT TRUE
+                            ORDER BY l.id DESC LIMIT 1
+                        ) AS anchored_datetime
                         FROM vcn_header h {where_sql} ORDER BY h.id DESC LIMIT %s OFFSET %s''',
                     params + [size, (page - 1) * size])
         rows = []
@@ -104,6 +108,8 @@ def get_data(page=1, size=20, filters=None):
             r.pop('igm_document', None)   # BYTEA — not JSON-serializable
             r['has_igm_doc'] = bool(r.get('igm_document_name'))
             r['total_delay_mins'] = int(r.get('total_delay_mins') or 0)   # Decimal -> JSON
+            # no anchorage time yet => delays can't exist; the grid says so instead of "0"
+            r['has_anchorage'] = bool(r.pop('anchored_datetime', None))
             rows.append(r)
         return rows, total
     finally:
@@ -116,7 +122,8 @@ def save_header(data):
     row_id = data.get('id')
 
     # computed / blob fields never come through the JSON save path
-    for k in ('has_igm_doc', 'igm_document', 'igm_document_name', 'total_delay_mins'):
+    for k in ('has_igm_doc', 'igm_document', 'igm_document_name', 'total_delay_mins',
+              'has_anchorage'):
         data.pop(k, None)
 
     if row_id:

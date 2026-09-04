@@ -40,3 +40,29 @@ def test_total_delay_mins_zero_without_delays():
         assert _find(rows, vcn_id)['total_delay_mins'] == 0
     finally:
         model.delete_header(vcn_id)
+
+
+def test_has_anchorage_follows_the_ldud_anchorage_time():
+    """No anchorage time => no delays are possible; with one, the grid can say
+    "No delays recorded" instead of showing a blank."""
+    conn = get_db(); cur = get_cursor(conn)
+    cur.execute("INSERT INTO vcn_header (operation_type) VALUES ('Import') RETURNING id")
+    vcn_id = cur.fetchone()['id']
+    conn.commit(); conn.close()
+    try:
+        rows, _ = model.get_data(page=1, size=200)
+        assert _find(rows, vcn_id)['has_anchorage'] is False
+
+        conn = get_db(); cur = get_cursor(conn)
+        cur.execute("INSERT INTO ldud_header (vcn_id, anchored_datetime) VALUES (%s, %s)",
+                    (vcn_id, '2026-01-01T06:00'))
+        conn.commit(); conn.close()
+
+        rows, _ = model.get_data(page=1, size=200)
+        r = _find(rows, vcn_id)
+        assert r['has_anchorage'] is True and r['total_delay_mins'] == 0
+    finally:
+        conn = get_db(); cur = get_cursor(conn)
+        cur.execute('DELETE FROM ldud_header WHERE vcn_id=%s', (vcn_id,))
+        conn.commit(); conn.close()
+        model.delete_header(vcn_id)

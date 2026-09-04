@@ -849,8 +849,12 @@
             {title: "Total Delay", field: "total_delay_mins", width: 105, hozAlign: "right",
                 headerTooltip: "Sum of the Pre Berthing/Anchoring Delays (open Details to edit)",
                 formatter: function(cell) {
+                    const data = cell.getRow().getData();
                     const mins = Number(cell.getValue()) || 0;
-                    if (!mins) return '<span style="color:#a0aec0;">-</span>';
+                    // Delays only exist inside the LDUD01 anchorage window: no anchorage
+                    // time means none are possible yet, which is not the same as none logged.
+                    if (!data.has_anchorage) return '<span style="color:#a0aec0;">-</span>';
+                    if (!mins) return '<span style="color:#b7791f;font-size:11px;">No delays recorded</span>';
                     return `<span style="font-weight:600;">${formatMins(mins)}</span>`;
                 }
             },
@@ -1540,7 +1544,8 @@
         if (!sub || !table) return;
         const mins = sub.getData().reduce((sum, r) => sum + Math.max(delayRowMins(r), 0), 0);
         const row = table.getRows().find(r => r.getData().id === vcnId);
-        if (row) row.update({total_delay_mins: mins});
+        if (row) row.update({total_delay_mins: mins,
+                             has_anchorage: !!(delayWindows[vcnId] || {}).anchored});
     }
 
     async function deleteSubRow(type, id, vcnId) {
