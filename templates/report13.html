@@ -4,92 +4,246 @@
 
 {% block head %}
 <style>
-
-    :root{
-        --rp-blue:#2F6FED;
-        --rp-blue-dark:#1D4FB8;
-        --rp-green:#16A34A;
-        --rp-green-dark:#0F7C38;
-        --rp-ink:#1F2937;
-        --rp-muted:#6B7280;
-        --rp-border:#DDE3EA;
-        --rp-bg:#F6F8FA;
-        --rp-card:#FFFFFF;
-        --rp-highlight-blue:#E8F0FB;
+    :root {
+        --rp-blue: #2F6FED;
+        --rp-blue-dark: #1D4FB8;
+        --rp-green: #16A34A;
+        --rp-green-dark: #0F7C38;
+        --rp-ink: #1F2937;
+        --rp-muted: #6B7280;
+        --rp-border: #DDE3EA;
+        --rp-bg: #F6F8FA;
+        --rp-card: #FFFFFF;
+        --rp-highlight-blue: #E8F0FB;
     }
 
-    .rp13-wrap *{ box-sizing:border-box; }
-    .rp13-wrap{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
-
-    .module-header{
-        display:flex; align-items:center; gap:12px;
-        margin-bottom:20px; padding-bottom:16px;
-        border-bottom:1px solid var(--rp-border);
-    }
-    .module-header h2{ margin:0; font-size:22px; font-weight:700; color:var(--rp-ink); }
-    .module-header .rp-badge{
-        background:var(--rp-blue); color:#fff; padding:4px 12px;
-        border-radius:20px; font-size:12px; font-weight:700; letter-spacing:0.4px;
-    }
-    .module-header .rp-back{
-        margin-left:auto; font-size:13px; font-weight:500;
-        color:var(--rp-blue); text-decoration:none;
-    }
-    .module-header .rp-back:hover{ text-decoration:underline; }
-
-    .jjltpl-toolbar{
-        display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-        background:var(--rp-card); border:1px solid var(--rp-border);
-        border-radius:10px; padding:14px 16px; margin-bottom:14px;
-    }
-    .jjltpl-toolbar label{
-        font-size:12px; font-weight:600; color:var(--rp-muted);
-        text-transform:uppercase; letter-spacing:0.4px; margin-right:2px;
-    }
-    .jjltpl-toolbar select{
-        font-size:13px; font-weight:500; color:var(--rp-ink);
-        background:var(--rp-bg); border:1px solid var(--rp-border);
-        border-radius:6px; padding:7px 10px; cursor:pointer; outline:none;
-    }
-    .jjltpl-toolbar select:focus{ border-color:var(--rp-blue); }
-    .jjltpl-toolbar button{
-        font-size:13px; font-weight:600; border-radius:6px; padding:8px 16px;
-        border:none; cursor:pointer; color:#fff;
-    }
-    .jjltpl-toolbar button:active{ transform:translateY(1px); }
-    .jjltpl-load-btn{ background:var(--rp-blue); }
-    .jjltpl-load-btn:hover{ background:var(--rp-blue-dark); }
-    .jjltpl-export-btn{ background:var(--rp-green); margin-left:auto; }
-    .jjltpl-export-btn:hover{ background:var(--rp-green-dark); }
-
-    #reportStatus{ font-size:13px; color:var(--rp-muted); min-height:18px; margin-bottom:14px; }
-
-    .jjltpl-table-wrap{
-        background:var(--rp-card); border:1px solid var(--rp-border);
-        border-radius:10px; overflow:hidden; margin-bottom:24px;
+    .rp13-wrap * {
+        box-sizing: border-box;
     }
 
-    .report-header{ padding:18px 20px 14px; border-bottom:1px solid var(--rp-border); background:var(--rp-bg); }
-    .report-title{ text-align:center; font-weight:700; font-size:16px; color:var(--rp-ink); margin-bottom:4px;}
-    .report-subtitle{ text-align:center; font-weight:700; font-size:14px; color:var(--rp-ink); margin-bottom:10px;}
-
-    .report-info{ width:100%; border-collapse:collapse; margin-bottom:4px; }
-    .report-info td{ padding:3px 6px; border:none; font-size:14px; color:var(--rp-ink); }
-    .report-info .label{ text-align:left; font-weight:600; color:var(--rp-muted); white-space:nowrap; width:1%; }
-    .report-info td:last-child{ text-align:left; font-weight:700; color:var(--rp-ink); padding-left:10px; }
-
-    .vessel-table-scroll{ overflow-x:auto; }
-    .traffic-report-table{ width:100%; border-collapse:collapse; min-width:1400px; }
-    .traffic-report-table th, .traffic-report-table td{ border:1px solid var(--rp-border); }
-    .traffic-report-table thead th{
-        background:var(--rp-bg); color:var(--rp-ink); font-weight:700;
-        font-size:12px; text-align:center; padding:8px 8px; white-space:nowrap;
+    .rp13-wrap {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    .traffic-report-table tbody td{ padding:7px 8px; font-size:12.5px; color:var(--rp-ink); text-align:right; white-space:nowrap; }
-    .traffic-report-table td.sr-col{ text-align:center; color:var(--rp-muted); }
-    .traffic-report-table td.label-col{ text-align:left; font-weight:600; color:#7B241C; }
-    .traffic-report-table td.qty-col{ font-weight:700; background:var(--rp-highlight-blue); }
 
+    .module-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--rp-border);
+    }
+
+    .module-header h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--rp-ink);
+    }
+
+    .module-header .rp-badge {
+        background: var(--rp-blue);
+        color: #fff;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+    }
+
+    .module-header .rp-back {
+        margin-left: auto;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--rp-blue);
+        text-decoration: none;
+    }
+
+    .module-header .rp-back:hover {
+        text-decoration: underline;
+    }
+
+    .jjltpl-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+    }
+
+    .jjltpl-toolbar label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--rp-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        margin-right: 2px;
+    }
+
+    .jjltpl-toolbar select {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--rp-ink);
+        background: var(--rp-bg);
+        border: 1px solid var(--rp-border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        cursor: pointer;
+        outline: none;
+    }
+
+    .jjltpl-toolbar select:focus {
+        border-color: var(--rp-blue);
+    }
+
+    .jjltpl-toolbar button {
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 8px 16px;
+        border: none;
+        cursor: pointer;
+        color: #fff;
+    }
+
+    .jjltpl-toolbar button:active {
+        transform: translateY(1px);
+    }
+
+    .jjltpl-load-btn {
+        background: var(--rp-blue);
+    }
+
+    .jjltpl-load-btn:hover {
+        background: var(--rp-blue-dark);
+    }
+
+    .jjltpl-export-btn {
+        background: var(--rp-green);
+        margin-left: auto;
+    }
+
+    .jjltpl-export-btn:hover {
+        background: var(--rp-green-dark);
+    }
+
+    #reportStatus {
+        font-size: 13px;
+        color: var(--rp-muted);
+        min-height: 18px;
+        margin-bottom: 14px;
+    }
+
+    .jjltpl-table-wrap {
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 24px;
+    }
+
+    .report-header {
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--rp-border);
+        background: var(--rp-bg);
+    }
+
+    .report-title {
+        text-align: center;
+        font-weight: 700;
+        font-size: 16px;
+        color: var(--rp-ink);
+        margin-bottom: 4px;
+    }
+
+    .report-subtitle {
+        text-align: center;
+        font-weight: 700;
+        font-size: 14px;
+        color: var(--rp-ink);
+        margin-bottom: 10px;
+    }
+
+    .report-info {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 4px;
+    }
+
+    .report-info td {
+        padding: 3px 6px;
+        border: none;
+        font-size: 14px;
+        color: var(--rp-ink);
+    }
+
+    .report-info .label {
+        text-align: left;
+        font-weight: 600;
+        color: var(--rp-muted);
+        white-space: nowrap;
+        width: 1%;
+    }
+
+    .report-info td:last-child {
+        text-align: left;
+        font-weight: 700;
+        color: var(--rp-ink);
+        padding-left: 10px;
+    }
+
+    .vessel-table-scroll {
+        overflow-x: auto;
+    }
+
+    .traffic-report-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1400px;
+    }
+
+    .traffic-report-table th,
+    .traffic-report-table td {
+        border: 1px solid var(--rp-border);
+    }
+
+    .traffic-report-table thead th {
+        background: var(--rp-bg);
+        color: var(--rp-ink);
+        font-weight: 700;
+        font-size: 12px;
+        text-align: center;
+        padding: 8px 8px;
+        white-space: nowrap;
+    }
+
+    .traffic-report-table tbody td {
+        padding: 7px 8px;
+        font-size: 12.5px;
+        color: var(--rp-ink);
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .traffic-report-table td.sr-col {
+        text-align: center;
+        color: var(--rp-muted);
+    }
+
+    .traffic-report-table td.label-col {
+        text-align: left;
+        font-weight: 600;
+        color: #7B241C;
+    }
+
+    .traffic-report-table td.qty-col {
+        font-weight: 700;
+        background: var(--rp-highlight-blue);
+    }
 </style>
 {% endblock %}
 
@@ -146,6 +300,7 @@
                         <th>Terminal</th>
                         <th>Berth</th>
                         <th>Anchored Time</th>
+                        <th>Readiness Time</th>
                         <th>Pilot Boarded</th>
                         <th>Alongside Time</th>
                         <th>Cargo Commenced</th>
@@ -166,52 +321,52 @@
 
 {% block scripts %}
 <script>
-let META = { years: [], months: {} };
+    let META = { years: [], months: {} };
 
-function fmtNum(val) {
-    if (val === null || val === undefined || val === "") return "";
-    return Number(val).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-}
-function fmtDt(val) {
-    if (!val) return "";
-    return val;
-}
+    function fmtNum(val) {
+        if (val === null || val === undefined || val === "") return "";
+        return Number(val).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    }
+    function fmtDt(val) {
+        if (!val) return "";
+        return val;
+    }
 
-function populateYearSelect() {
-    const yearSelect = document.getElementById("yearSelect");
-    yearSelect.innerHTML = META.years.map(y => `<option value="${y}">${y}</option>`).join("");
-    if (META.years.length) yearSelect.value = META.years[META.years.length - 1];
-}
+    function populateYearSelect() {
+        const yearSelect = document.getElementById("yearSelect");
+        yearSelect.innerHTML = META.years.map(y => `<option value="${y}">${y}</option>`).join("");
+        if (META.years.length) yearSelect.value = META.years[META.years.length - 1];
+    }
 
-function populateMonthSelect() {
-    const monthSelect = document.getElementById("monthSelect");
-    const year = document.getElementById("yearSelect").value;
-    const months = META.months[year] || [];
-    monthSelect.innerHTML = months.map(m => `<option value="${m.idx}">${m.label}</option>`).join("");
-    if (months.length) monthSelect.value = months[months.length - 1].idx;
-}
+    function populateMonthSelect() {
+        const monthSelect = document.getElementById("monthSelect");
+        const year = document.getElementById("yearSelect").value;
+        const months = META.months[year] || [];
+        monthSelect.innerHTML = months.map(m => `<option value="${m.idx}">${m.label}</option>`).join("");
+        if (months.length) monthSelect.value = months[months.length - 1].idx;
+    }
 
-function onYearChange() { populateMonthSelect(); }
+    function onYearChange() { populateMonthSelect(); }
 
-function loadMetaThenReport() {
-    const status = document.getElementById("reportStatus");
-    status.textContent = "Loading...";
-    fetch(`/api/module/RP01/report13/meta`)
-        .then(r => r.json().then(j => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => {
-            if (!ok) { status.textContent = j.error || "Failed to load year/month options."; return; }
-            META = j;
-            populateYearSelect();
-            populateMonthSelect();
-            status.textContent = "";
-            loadReport13();
-        })
-        .catch(err => { status.textContent = "Failed to load year/month options."; console.error(err); });
-}
+    function loadMetaThenReport() {
+        const status = document.getElementById("reportStatus");
+        status.textContent = "Loading...";
+        fetch(`/api/module/RP01/report13/meta`)
+            .then(r => r.json().then(j => ({ ok: r.ok, j })))
+            .then(({ ok, j }) => {
+                if (!ok) { status.textContent = j.error || "Failed to load year/month options."; return; }
+                META = j;
+                populateYearSelect();
+                populateMonthSelect();
+                status.textContent = "";
+                loadReport13();
+            })
+            .catch(err => { status.textContent = "Failed to load year/month options."; console.error(err); });
+    }
 
-function renderVesselTable(rows) {
-    document.getElementById("vesselBody").innerHTML =
-        (rows || []).map((r, i) => `
+    function renderVesselTable(rows) {
+        document.getElementById("vesselBody").innerHTML =
+            (rows || []).map((r, i) => `
             <tr>
                 <td class="sr-col">${i + 1}</td>
                 <td>${r.via_no ?? ""}</td>
@@ -225,6 +380,7 @@ function renderVesselTable(rows) {
                 <td>${r.terminal ?? ""}</td>
                 <td>${r.berth ?? ""}</td>
                 <td>${fmtDt(r.anchored_time)}</td>
+                <td>${fmtDt(r.readiness_time)}</td>
                 <td>${fmtDt(r.pilot_boarded)}</td>
                 <td>${fmtDt(r.alongside_time)}</td>
                 <td>${fmtDt(r.cargo_commenced)}</td>
@@ -234,33 +390,33 @@ function renderVesselTable(rows) {
                 <td class="qty-col">${fmtNum(r.quantity)}</td>
             </tr>
         `).join("");
-}
+    }
 
-function loadReport13() {
-    const fin_year = document.getElementById("yearSelect").value;
-    const month_idx = document.getElementById("monthSelect").value;
-    const status = document.getElementById("reportStatus");
+    function loadReport13() {
+        const fin_year = document.getElementById("yearSelect").value;
+        const month_idx = document.getElementById("monthSelect").value;
+        const status = document.getElementById("reportStatus");
 
-    if (!fin_year || month_idx === "") { status.textContent = "Select a year and month first."; return; }
-    status.textContent = "";
+        if (!fin_year || month_idx === "") { status.textContent = "Select a year and month first."; return; }
+        status.textContent = "";
 
-    fetch(`/api/module/RP01/report13/report?fin_year=${fin_year}&month_idx=${month_idx}`)
-        .then(r => r.json().then(j => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => {
-            if (!ok) { status.textContent = j.error || "Failed to load report."; return; }
-            document.getElementById("reportMonth").textContent = j.month_label || "";
-            renderVesselTable(j.rows);
-        })
-        .catch(err => { status.textContent = "Failed to load report."; console.error(err); });
-}
+        fetch(`/api/module/RP01/report13/report?fin_year=${fin_year}&month_idx=${month_idx}`)
+            .then(r => r.json().then(j => ({ ok: r.ok, j })))
+            .then(({ ok, j }) => {
+                if (!ok) { status.textContent = j.error || "Failed to load report."; return; }
+                document.getElementById("reportMonth").textContent = j.month_label || "";
+                renderVesselTable(j.rows);
+            })
+            .catch(err => { status.textContent = "Failed to load report."; console.error(err); });
+    }
 
-function exportReport13() {
-    const fin_year = document.getElementById("yearSelect").value;
-    const month_idx = document.getElementById("monthSelect").value;
-    if (!fin_year || month_idx === "") { document.getElementById("reportStatus").textContent = "Select a year and month first."; return; }
-    window.location.href = `/api/module/RP01/report13/export?fin_year=${fin_year}&month_idx=${month_idx}`;
-}
+    function exportReport13() {
+        const fin_year = document.getElementById("yearSelect").value;
+        const month_idx = document.getElementById("monthSelect").value;
+        if (!fin_year || month_idx === "") { document.getElementById("reportStatus").textContent = "Select a year and month first."; return; }
+        window.location.href = `/api/module/RP01/report13/export?fin_year=${fin_year}&month_idx=${month_idx}`;
+    }
 
-loadMetaThenReport();
+    loadMetaThenReport();
 </script>
 {% endblock %}

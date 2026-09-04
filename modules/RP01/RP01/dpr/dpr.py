@@ -1442,10 +1442,48 @@ def _get_bvsa_payload(selected_date):
                     COALESCE(
                         NULLIF(
                             TRIM((
+                                SELECT STRING_AGG(DISTINCT TRIM(consigner_name), ', ')
+                                FROM vcn_consigners
+                                WHERE id::text = ANY(STRING_TO_ARRAY(REPLACE(po.parcel_ids, ' ', ''), ','))
+                                  AND NULLIF(TRIM(consigner_name), '') IS NOT NULL
+                            )),
+                            ''
+                        ),
+                        NULLIF(
+                            TRIM((
+                                SELECT STRING_AGG(DISTINCT TRIM(consigner_name), ', ')
+                                FROM vcn_export_cargo_declaration
+                                WHERE id::text = ANY(STRING_TO_ARRAY(REPLACE(po.parcel_ids, ' ', ''), ','))
+                                  AND NULLIF(TRIM(consigner_name), '') IS NOT NULL
+                            )),
+                            ''
+                        ),
+                        NULLIF(
+                            TRIM((
                                 SELECT STRING_AGG(DISTINCT TRIM(customer_name), ', ')
                                 FROM vcn_cargo_declaration
-                                WHERE id::text = po.parcel_ids
+                                WHERE id::text = ANY(STRING_TO_ARRAY(REPLACE(po.parcel_ids, ' ', ''), ','))
                                   AND NULLIF(TRIM(customer_name), '') IS NOT NULL
+                            )),
+                            ''
+                        ),
+                        NULLIF(
+                            TRIM((
+                                SELECT STRING_AGG(DISTINCT TRIM(consigner_name), ', ')
+                                FROM vcn_consigners
+                                WHERE vcn_id = lh.vcn_id
+                                  AND LOWER(TRIM(cargo_name)) = LOWER(TRIM(po.cargo_name))
+                                  AND NULLIF(TRIM(consigner_name), '') IS NOT NULL
+                            )),
+                            ''
+                        ),
+                        NULLIF(
+                            TRIM((
+                                SELECT STRING_AGG(DISTINCT TRIM(consigner_name), ', ')
+                                FROM vcn_export_cargo_declaration
+                                WHERE vcn_id = lh.vcn_id
+                                  AND LOWER(TRIM(cargo_name)) = LOWER(TRIM(po.cargo_name))
+                                  AND NULLIF(TRIM(consigner_name), '') IS NOT NULL
                             )),
                             ''
                         ),
@@ -1454,11 +1492,13 @@ def _get_bvsa_payload(selected_date):
                                 SELECT STRING_AGG(DISTINCT TRIM(customer_name), ', ')
                                 FROM vcn_cargo_declaration
                                 WHERE vcn_id = lh.vcn_id
-                                  AND cargo_name = po.cargo_name
+                                  AND LOWER(TRIM(cargo_name)) = LOWER(TRIM(po.cargo_name))
                                   AND NULLIF(TRIM(customer_name), '') IS NOT NULL
                             )),
                             ''
                         ),
+                        NULLIF(TRIM(vh.customer_name), ''),
+                        NULLIF(TRIM(vh.importer_exporter_name), ''),
                         '-'
                     ) AS consignee_name
                 FROM ldud_parcel_ops po
