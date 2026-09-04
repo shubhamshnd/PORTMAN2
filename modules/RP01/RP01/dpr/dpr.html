@@ -20,7 +20,7 @@
         border-radius: 10px;
         border: 1px solid var(--border-color, #e2e8f0);
         margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
     }
 
     .dpr-date-picker-group {
@@ -58,6 +58,7 @@
         background: #2563eb;
         color: #ffffff;
     }
+
     .btn-action-primary:hover {
         background: #1d4ed8;
     }
@@ -67,6 +68,7 @@
         color: var(--text-primary, #334155);
         border-color: var(--border-color, #cbd5e1);
     }
+
     .btn-action-secondary:hover {
         background: #e2e8f0;
     }
@@ -75,6 +77,7 @@
         background: #107c41;
         color: #ffffff;
     }
+
     .btn-action-excel:hover {
         background: #0b6a36;
     }
@@ -135,6 +138,7 @@
         align-items: center;
         justify-content: center;
     }
+
     .dpr-brand-logo span {
         color: #0056b3;
     }
@@ -155,7 +159,8 @@
         font-size: 12px;
     }
 
-    .dpr-table th, .dpr-table td {
+    .dpr-table th,
+    .dpr-table td {
         border: 1px solid #b7b7b7;
         padding: 6px 10px;
         text-align: left;
@@ -191,11 +196,13 @@
         table-layout: fixed;
         width: 100%;
     }
+
     .sec-a-table th,
     .sec-a-table td {
         width: 20% !important;
         box-sizing: border-box;
     }
+
     .sec-a-table td.label-col {
         background: #F2F2F2;
         font-weight: 700;
@@ -206,14 +213,16 @@
         display: inline-block;
         width: 20px;
         height: 20px;
-        border: 3px solid rgba(0,0,0,0.1);
+        border: 3px solid rgba(0, 0, 0, 0.1);
         border-radius: 50%;
         border-top-color: #2563eb;
         animation: spin 0.8s linear infinite;
     }
 
     @keyframes spin {
-        to { transform: rotate(360deg); }
+        to {
+            transform: rotate(360deg);
+        }
     }
 
     /* ---------- Module header ---------- */
@@ -225,12 +234,14 @@
         padding-bottom: 16px;
         border-bottom: 1px solid var(--border-color, #e2e8f0);
     }
+
     .module-header h2 {
         margin: 0;
         font-size: 22px;
         font-weight: 700;
         color: var(--text-primary, #1e293b);
     }
+
     .module-header .rp-badge {
         background: #4a90d9;
         color: #fff;
@@ -240,6 +251,7 @@
         font-weight: 700;
         letter-spacing: 0.5px;
     }
+
     .module-header .rp-back {
         margin-left: auto;
         font-size: 13px;
@@ -247,6 +259,7 @@
         color: #4a90d9;
         text-decoration: none;
     }
+
     .module-header .rp-back:hover {
         text-decoration: underline;
     }
@@ -263,6 +276,7 @@
         padding: 14px 16px;
         margin-bottom: 8px;
     }
+
     .jjltpl-toolbar label {
         font-size: 12px;
         font-weight: 600;
@@ -271,6 +285,7 @@
         letter-spacing: 0.4px;
         margin-right: 2px;
     }
+
     .jjltpl-toolbar input[type="date"] {
         font-size: 13px;
         font-weight: 500;
@@ -281,6 +296,7 @@
         padding: 6px 10px;
         outline: none;
     }
+
     .jjltpl-load-btn {
         font-size: 13px;
         font-weight: 600;
@@ -292,6 +308,7 @@
         background: #3b82f6;
         transition: background 0.2s ease;
     }
+
     .jjltpl-load-btn:hover {
         background: #2563eb;
     }
@@ -308,6 +325,7 @@
         margin-left: auto;
         transition: background 0.2s ease;
     }
+
     .jjltpl-export-btn:hover {
         background: #15803d;
     }
@@ -317,6 +335,292 @@
         color: var(--text-secondary, #64748b);
         margin-bottom: 16px;
         padding-left: 2px;
+    }
+
+    /* ---------- Report Tabs (DPR / BVsA / Income / Budget / Reason) ---------- */
+    .dpr-tabs-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+
+    .dpr-tab-btn {
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 8px 16px;
+        border: 1px solid var(--border-color, #cbd5e1);
+        cursor: pointer;
+        background: var(--bg-secondary, #ffffff);
+        color: var(--text-primary, #334155);
+        transition: all 0.15s ease;
+    }
+
+    .dpr-tab-btn:hover {
+        background: #eef2ff;
+        border-color: #93a5fd;
+    }
+
+    .dpr-tab-btn.active {
+        background: #1F4E78;
+        color: #ffffff;
+        border-color: #1F4E78;
+    }
+
+    .dpr-static-note {
+        font-size: 12px;
+        color: #92400e;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-bottom: 12px;
+    }
+
+    .dpr-static-wrap {
+        overflow-x: auto;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        padding: 4px;
+    }
+
+    table.dpr-static-table {
+        border-collapse: collapse;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    table.dpr-static-table td {
+        border: 1px solid #e2e8f0;
+        padding: 4px 8px;
+        color: #1e293b;
+    }
+
+    table.dpr-static-table td.static-empty {
+        border: none;
+        background: transparent;
+    }
+
+    /* ---------- BVsA FY 2027 Excel-Authentic Styles ---------- */
+    .bvsa-container {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        font-family: Calibri, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .bvsa-excel-sheet {
+        background: #ffffff;
+        border: 1px solid #b7b7b7;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+        padding: 16px 20px;
+        overflow-x: auto;
+    }
+
+    .bvsa-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .bvsa-toolbar-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #1F4E78;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .bvsa-toolbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    /* Side-by-side Top Section: Projections + TillDate/Balance + Chart */
+    .bvsa-top-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 24px;
+        overflow-x: auto;
+        padding-bottom: 12px;
+    }
+
+    .bvsa-top-main {
+        flex: 0 0 auto;
+    }
+
+    .bvsa-top-side {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 24px;
+        align-items: flex-start;
+    }
+
+    table.excel-table {
+        border-collapse: collapse;
+        font-size: 11px;
+        white-space: nowrap;
+        color: #000000;
+        background: #ffffff;
+    }
+
+    table.excel-table th, table.excel-table td {
+        border: 1px solid #b7b7b7;
+        padding: 4px 7px;
+        height: 22px;
+        box-sizing: border-box;
+    }
+
+    table.excel-table th.th-blue {
+        background: #1F4E78;
+        color: #ffffff;
+        font-weight: 700;
+        text-align: center;
+    }
+
+    table.excel-table th.th-sub-blue {
+        background: #2E75B6;
+        color: #ffffff;
+        font-weight: 700;
+        text-align: center;
+    }
+
+    table.excel-table th.th-month {
+        background: #1F4E78;
+        color: #ffffff;
+        font-weight: 700;
+        text-align: center;
+    }
+
+    table.excel-table th.th-curr-month {
+        background: #C55A11;
+        color: #ffffff;
+        font-weight: 700;
+    }
+
+    table.excel-table td.td-cat {
+        background: #DDEBF7;
+        font-weight: 700;
+        text-align: left;
+    }
+
+    table.excel-table tr.tr-green td {
+        background: #C6EFCE;
+        color: #006100;
+        font-weight: 700;
+    }
+
+    table.excel-table tr.tr-cum-budget td {
+        background: #E2EFDA;
+        font-weight: 700;
+    }
+
+    table.excel-table tr.tr-highlight td {
+        font-weight: 700;
+    }
+
+    table.excel-table td.num {
+        text-align: right;
+    }
+
+    table.excel-table td.center {
+        text-align: center;
+    }
+
+    table.excel-table td.var-neg {
+        color: #C00000;
+        font-weight: 700;
+    }
+
+    table.excel-table td.var-pos {
+        color: #006100;
+        font-weight: 700;
+    }
+
+    /* Chart & Historical Box */
+    .bvsa-chart-box {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        background: #ffffff;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        padding: 12px 16px;
+        min-width: 320px;
+    }
+
+    .bvsa-chart-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #1F4E78;
+        text-align: center;
+        margin-bottom: 4px;
+    }
+
+    .bvsa-bar-chart {
+        width: 100%;
+        height: 140px;
+    }
+
+    .bvsa-hist-table {
+        border-collapse: collapse;
+        font-size: 10.5px;
+        width: 100%;
+    }
+
+    .bvsa-hist-table td {
+        padding: 2px 4px;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .bvsa-hist-table td.bold {
+        font-weight: 700;
+    }
+
+    /* Table Gap */
+    .bvsa-table-gap {
+        height: 24px;
+    }
+
+    /* Bottom Vessel Breakdown Table */
+    .bvsa-bottom-section {
+        margin-top: 6px;
+    }
+
+    .bvsa-vessel-top-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .bvsa-vessel-top-header h4 {
+        margin: 0;
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #1F4E78;
+    }
+
+    .bvsa-vessel-search {
+        font-size: 12px;
+        padding: 5px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        width: 250px;
+        outline: none;
+    }
+
+    .vessel-month-alt {
+        background: #EAF2F8 !important;
     }
 </style>
 
@@ -339,10 +643,98 @@
 
     <!-- Status / Window Range text -->
     <div id="reportStatus">
-        Showing data from <span id="lblWindowStart">--</span> to <span id="lblWindowEnd">--</span> (07:00 &rarr; 07:00 operational day)
+        Showing data from <span id="lblWindowStart">--</span> to <span id="lblWindowEnd">--</span> (07:00 &rarr; 07:00
+        operational day)
     </div>
 
+    <!-- Report Tabs -->
+    <div class="dpr-tabs-bar" id="dprTabsBar">
+        <button class="dpr-tab-btn active" data-tab="dpr" onclick="switchDprTab('dpr')">DPR</button>
+        <button class="dpr-tab-btn" data-tab="bvsa" onclick="switchDprTab('bvsa')">BvsA FY 2027</button>
+        <!-- <button class="dpr-tab-btn" data-tab="income" onclick="switchDprTab('income')">Income FY 2027</button>
+        <button class="dpr-tab-btn" data-tab="budget" onclick="switchDprTab('budget')">Budget</button>
+        <button class="dpr-tab-btn" data-tab="reason" onclick="switchDprTab('reason')">Reason for handling at
+            BPCL</button> -->
+    </div>
 
+    <!-- Dynamic BVsA FY 2027 Tab Content (Excel Layout) -->
+    <div id="bvsaTabContent" style="display:none;" class="bvsa-container">
+        <div class="bvsa-excel-sheet">
+            <!-- Toolbar Strip -->
+            <div class="bvsa-toolbar">
+                <div class="bvsa-toolbar-title">
+                    BUDGET VS ACTUAL (BVsA) — FY 2026-27
+                </div>
+                <div class="bvsa-toolbar-actions">
+                    <button class="jjltpl-export-btn" onclick="exportBvsaExcel()" style="margin:0;">
+                        Export BVsA to Excel
+                    </button>
+                </div>
+            </div>
+
+            <!-- Loading Spinner -->
+            <div id="bvsaLoading" style="text-align:center;padding:40px;display:none;">
+                <div class="spinner"></div>
+                <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading BVsA Performance Data...</div>
+            </div>
+
+            <!-- Content Area (rendered on load) -->
+            <div id="bvsaContentWrap" style="display:none;">
+                <!-- TOP SECTION: Projections Table + Till Date / Balance + Chart & Historical -->
+                <div class="bvsa-top-layout">
+                    <!-- 1. Left: Main Cargo Projections Table -->
+                    <div class="bvsa-top-main">
+                        <table class="excel-table" id="tblBvsaMonthly"></table>
+                    </div>
+
+                    <!-- 2. Middle & Right: Till Date & Balance Table + Chart -->
+                    <div class="bvsa-top-side">
+                        <table class="excel-table" id="tblBvsaTillDate"></table>
+
+                        <!-- 3. Right: Cargo Volumes Chart & Historical Performance -->
+                        <div class="bvsa-chart-box">
+                            <div class="bvsa-chart-title">Cargo Volumes</div>
+                            <svg id="bvsaSvgChart" class="bvsa-bar-chart" viewBox="0 0 320 130"></svg>
+                            <div id="bvsaHistBox"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Excel Table Gap -->
+                <div class="bvsa-table-gap"></div>
+
+                <!-- BOTTOM SECTION: Completed Vessel Breakdown Table -->
+                <div class="bvsa-bottom-section">
+                    <div class="bvsa-vessel-top-header">
+                        <h4>FY 2026-27 COMPLETED VESSEL PERFORMANCE DETAILS</h4>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table class="excel-table" id="tblBvsaVessels" style="width:100%;">
+                            <thead>
+                                <!-- Floating Category Sums Row (Image 1 & 2) -->
+                                <tr id="tblBvsaVesselsSums"></tr>
+                                <tr>
+                                    <th class="th-sub-blue" style="width:40px;">#</th>
+                                    <th class="th-sub-blue" style="width:75px;">Month</th>
+                                    <th class="th-sub-blue">Vessel Name</th>
+                                    <th class="th-sub-blue">Cargo</th>
+                                    <th class="th-sub-blue">Customer</th>
+                                    <th class="th-sub-blue" style="text-align:right;">Quantity</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:90px;">Month Total</th>
+                                    <th class="th-sub-blue" style="text-align:right;">Edible Oil</th>
+                                    <th class="th-sub-blue" style="text-align:right;">Other liquid</th>
+                                    <th class="th-sub-blue" style="text-align:right;">Chemical</th>
+                                    <th class="th-sub-blue" style="text-align:right;">POL</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tblBvsaVesselsBody"></tbody>
+                            <tfoot id="tblBvsaVesselsFoot"></tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Main Report Content Paper -->
     <div class="dpr-paper" id="dprPaper">
@@ -358,7 +750,8 @@
                 <span id="lblReportDate" style="color:#0056b3;">-</span>
             </div>
             <div class="dpr-brand-logo">
-                <img src="{{ url_for('static', filename='img/logo31.png') }}" alt="JSW Infrastructure Logo" style="max-height: 36px; width: auto; object-fit: contain;">
+                <img src="{{ url_for('static', filename='img/logo31.png') }}" alt="JSW Infrastructure Logo"
+                    style="max-height: 36px; width: auto; object-fit: contain;">
             </div>
             <div class="dpr-meta-box">
                 <span>Reporting Date:</span>
@@ -368,7 +761,8 @@
 
         <div id="loadingState" style="text-align:center;padding:40px;">
             <div class="spinner"></div>
-            <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading Daily Performance Report...</div>
+            <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading Daily Performance
+                Report...</div>
         </div>
 
         <div id="reportContent" style="display:none;">
@@ -391,11 +785,10 @@
                 <thead>
                     <tr>
                         <th style="width:35%;">Particulars</th>
-                        <th style="width:11%;text-align:right;">Edible Oil</th>
-                        <th style="width:11%;text-align:right;">Phosphoric</th>
-                        <th style="width:11%;text-align:right;">Lube Oil</th>
-                        <th style="width:11%;text-align:right;">Chemicals</th>
-                        <th style="width:11%;text-align:right;">POL</th>
+                        <th style="width:13%;text-align:right;">Edible Oil</th>
+                        <th style="width:13%;text-align:right;">Other liquid</th>
+                        <th style="width:13%;text-align:right;">Chemical</th>
+                        <th style="width:13%;text-align:right;">POL</th>
                         <th style="width:10%;text-align:right;">Total</th>
                     </tr>
                 </thead>
@@ -531,7 +924,7 @@
         // Render Section A
         const secABody = document.getElementById('tblSecA');
         const secA = data.section_a || [];
-        
+
         let htmlA = `
             <tr>
                 <td class="label-col" style="width:20%;">Berth</td>
@@ -578,9 +971,8 @@
                 <tr class="${trClass}">
                     <td style="font-weight:${isTotalRow ? '700' : '600'};">${row.particulars}</td>
                     <td class="num">${fmtNum(row['Edible Oil'])}</td>
-                    <td class="num">${fmtNum(row['Phosphoric'])}</td>
-                    <td class="num">${fmtNum(row['Lube Oil'])}</td>
-                    <td class="num">${fmtNum(row['Chemicals'])}</td>
+                    <td class="num">${fmtNum(row['Other liquid'])}</td>
+                    <td class="num">${fmtNum(row['Chemical'])}</td>
                     <td class="num">${fmtNum(row['POL'])}</td>
                     <td class="num" style="font-weight:700;background:${isTotalRow ? '#fce0cd' : 'transparent'};">${fmtNum(row['total'])}</td>
                 </tr>
@@ -654,8 +1046,402 @@
     }
 
     function exportExcel() {
+        if (currentTab === 'bvsa') {
+            exportBvsaExcel();
+            return;
+        }
         const dateVal = document.getElementById('dprDate').value;
         window.location.href = `/api/module/RP01/dpr/export?date=${dateVal}`;
+    }
+
+    // ---------------------------------------------------------------
+    // TAB SWITCHING: DPR vs BVsA FY 2027
+    // Preserves first DPR tab completely intact.
+    // ---------------------------------------------------------------
+    let currentTab = 'dpr';
+    let bvsaPayload = null;
+
+    function switchDprTab(tabKey) {
+        currentTab = tabKey;
+        document.querySelectorAll('#dprTabsBar .dpr-tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabKey);
+        });
+
+        const dprPaper = document.getElementById('dprPaper');
+        const bvsaContent = document.getElementById('bvsaTabContent');
+        const reportStatus = document.getElementById('reportStatus');
+
+        if (tabKey === 'dpr') {
+            bvsaContent.style.display = 'none';
+            dprPaper.style.display = 'block';
+            reportStatus.style.display = 'block';
+            return;
+        }
+
+        dprPaper.style.display = 'none';
+        reportStatus.style.display = 'none';
+        bvsaContent.style.display = 'flex';
+        loadBvsaData();
+    }
+
+    function exportBvsaExcel() {
+        const dateVal = document.getElementById('dprDate').value;
+        window.location.href = `/api/module/RP01/dpr/export-bvsa?date=${dateVal}`;
+    }
+
+    function fmtPct(val) {
+        if (val === null || val === undefined || isNaN(val)) return '-';
+        return Number(val).toFixed(1) + '%';
+    }
+
+    function fmtNum3(val) {
+        if (val === null || val === undefined || isNaN(val) || val === '') return '-';
+        return Number(val).toLocaleString('en-IN', {
+            minimumFractionDigits: 3,
+            maximumFractionDigits: 3
+        });
+    }
+
+    async function loadBvsaData() {
+        const dateVal = document.getElementById('dprDate').value;
+        const loading = document.getElementById('bvsaLoading');
+        const contentWrap = document.getElementById('bvsaContentWrap');
+
+        loading.style.display = 'block';
+        contentWrap.style.display = 'none';
+
+        try {
+            const resp = await fetch(`/api/module/RP01/dpr/bvsa?date=${dateVal}`);
+            const data = await resp.json();
+
+            if (data.error) {
+                alert('Error loading BVsA data: ' + data.error);
+                loading.style.display = 'none';
+                return;
+            }
+
+            bvsaPayload = data;
+
+            renderBvsaMonthlyTable(data);
+            renderBvsaTillDateTable(data);
+            renderBvsaChartAndHist(data);
+            renderBvsaVesselsTable(data.vessels || []);
+
+            loading.style.display = 'none';
+            contentWrap.style.display = 'block';
+        } catch (err) {
+            console.error(err);
+            alert('Failed to connect to BVsA backend service.');
+            loading.style.display = 'none';
+        }
+    }
+
+    function renderBvsaMonthlyTable(data) {
+        const tbl = document.getElementById('tblBvsaMonthly');
+        if (!tbl) return;
+
+        const months = data.months || [];
+        const summary = data.summary || {};
+        const catSum = summary.category_summary || { edible: {}, other: {}, chemical: {}, pol: {} };
+
+        // Header Row: CARGO PROJECTIONS, Month Labels, 2026-27
+        let html = `<thead><tr><th colspan="2" class="th-blue" style="text-align:left;">CARGO PROJECTIONS</th>`;
+        months.forEach((m, i) => {
+            const isCurr = (i === data.active_month_idx);
+            html += `<th class="${isCurr ? 'th-curr-month' : 'th-month'}" style="width:58px;">${m.label}</th>`;
+        });
+        html += `<th class="th-blue" style="width:75px;">2026-27</th></tr></thead><tbody>`;
+
+        const cats = [
+            { key: 'edible', label: 'Edible Oil' },
+            { key: 'other', label: 'Other liquid' },
+            { key: 'chemical', label: 'Chemical' },
+            { key: 'pol', label: 'POL' }
+        ];
+
+        // 4 Cargo Budget Rows
+        cats.forEach(c => {
+            html += `<tr><td colspan="2" class="td-cat">${c.label}</td>`;
+            months.forEach(m => {
+                const b = m.budget[c.key] || 0;
+                html += `<td class="num">${b > 0 ? fmtNum3(b) : '-'}</td>`;
+            });
+            const totB = catSum[c.key]?.budget || 0;
+            html += `<td class="num bold">${totB > 0 ? fmtNum3(totB) : '-'}</td></tr>`;
+        });
+
+        // Total Cargo Budget (Green)
+        html += `<tr class="tr-green"><td colspan="2">Total Cargo Budget</td>`;
+        months.forEach(m => {
+            const b = m.budget.total || 0;
+            html += `<td class="num bold">${fmtNum3(b)}</td>`;
+        });
+        html += `<td class="num bold">${fmtNum3(summary.full_year_budget)}</td></tr>`;
+
+        // Cum Budget (Soft Green)
+        html += `<tr class="tr-cum-budget"><td colspan="2">Cum Budget</td>`;
+        months.forEach(m => {
+            html += `<td class="num">${fmtNum3(m.cum_budget)}</td>`;
+        });
+        html += `<td class="num bold">${fmtNum3(summary.full_year_budget)}</td></tr>`;
+
+        // Actual
+        html += `<tr class="tr-highlight"><td colspan="2">Actual</td>`;
+        months.forEach(m => {
+            const val = m.is_past_or_current ? fmtNum3(m.actual.total) : '';
+            html += `<td class="num bold">${val}</td>`;
+        });
+        html += `<td class="num bold">${fmtNum3(summary.ytd_actual)}</td></tr>`;
+
+        // % Achieved
+        html += `<tr><td colspan="2" style="font-style:italic;color:#475569;">% Achieved</td>`;
+        months.forEach(m => {
+            html += `<td class="num" style="font-style:italic;">${fmtPct(m.pct_achieved)}</td>`;
+        });
+        html += `<td class="num bold" style="color:#006100;font-weight:800;">${fmtPct(summary.pct_cum_fy)}</td></tr>`;
+
+        // Cumulative Achieved
+        html += `<tr class="tr-highlight"><td colspan="2">Cumulative Achieved</td>`;
+        months.forEach(m => {
+            const val = m.is_past_or_current ? fmtNum3(m.cum_actual) : '';
+            html += `<td class="num bold">${val}</td>`;
+        });
+        html += `<td class="num bold"></td></tr>`;
+
+        // % Achieved Cumulative
+        html += `<tr><td colspan="2" style="font-style:italic;color:#475569;">% Achieved Cumulative</td>`;
+        months.forEach(m => {
+            html += `<td class="num" style="font-style:italic;">${fmtPct(m.pct_cum_achieved)}</td>`;
+        });
+        html += `<td class="num bold" style="font-style:italic;"></td></tr>`;
+
+        // Variance
+        html += `<tr><td colspan="2" class="bold" style="color:#1F4E78;">Variance</td>`;
+        months.forEach(m => {
+            if (!m.is_past_or_current) {
+                html += `<td class="num" style="color:#94a3b8;"></td>`;
+            } else {
+                const isPos = (m.variance >= 0);
+                html += `<td class="num ${isPos ? 'var-pos' : 'var-neg'}">${fmtNum3(m.variance)}</td>`;
+            }
+        });
+        html += `<td class="num bold" style="color:#00B050;font-size:16px;font-weight:800;">${fmtPct(summary.pct_cum_fy)}</td></tr>`;
+
+        html += `</tbody>`;
+        tbl.innerHTML = html;
+    }
+
+    function renderBvsaTillDateTable(data) {
+        const tbl = document.getElementById('tblBvsaTillDate');
+        if (!tbl) return;
+
+        const summary = data.summary || {};
+        const catSum = summary.category_summary || { edible: {}, other: {}, chemical: {}, pol: {} };
+
+        let html = `
+            <thead>
+                <tr>
+                    <th class="th-blue" style="text-align:left;min-width:105px;">Particulars</th>
+                    <th class="th-blue" style="width:75px;">Till Date</th>
+                    <th class="th-blue" style="width:75px;">Balance</th>
+                    <th class="th-blue" style="width:75px;">Target</th>
+                </tr>
+            </thead>
+            <tbody>
+        `;
+
+        const cats = [
+            { key: 'edible', label: 'Edible Oil' },
+            { key: 'other', label: 'Other liquid' },
+            { key: 'chemical', label: 'Chemical' },
+            { key: 'pol', label: 'POL' }
+        ];
+
+        cats.forEach(c => {
+            const item = catSum[c.key] || { actual: 0, balance: 0, budget: 0 };
+            const bal = item.balance || 0;
+            html += `
+                <tr>
+                    <td class="td-cat" style="text-align:left;font-weight:600;">${c.label}</td>
+                    <td class="num bold">${fmtNum3(item.actual)}</td>
+                    <td class="num ${bal > 0 ? 'var-neg' : 'bold'}">${bal > 0 ? fmtNum3(bal) : '-'}</td>
+                    <td class="num bold">${item.budget > 0 ? fmtNum3(item.budget) : '-'}</td>
+                </tr>
+            `;
+        });
+
+        // Total Cargo Budget Row
+        const totBal = summary.balance || 0;
+        html += `
+                <tr class="tr-green">
+                    <td style="text-align:left;font-weight:700;">Total</td>
+                    <td class="num bold">${fmtNum3(summary.ytd_actual)}</td>
+                    <td class="num ${totBal > 0 ? 'var-neg' : 'bold'}">${totBal > 0 ? fmtNum3(totBal) : '-'}</td>
+                    <td class="num bold">${fmtNum3(summary.full_year_budget)}</td>
+                </tr>
+            </tbody>
+        `;
+        tbl.innerHTML = html;
+    }
+
+    function renderBvsaChartAndHist(data) {
+        const summary = data.summary || {};
+        const months = data.months || [];
+        const svg = document.getElementById('bvsaSvgChart');
+        const histBox = document.getElementById('bvsaHistBox');
+        if (!svg || !histBox) return;
+
+        // 1. Build SVG Monthly Volume Bars
+        let maxVal = Math.max(...months.map(m => m.actual.total || 0), 100000);
+        const chartW = 320, chartH = 130;
+        const barW = 18;
+        const startX = 14;
+        const gap = 7;
+        const baseH = 105;
+
+        let svgHtml = '';
+        months.forEach((m, idx) => {
+            const val = m.actual.total || 0;
+            const barH = val > 0 ? Math.max((val / maxVal) * 75, 4) : 0;
+            const x = startX + idx * (barW + gap);
+            const y = baseH - barH;
+
+            // Bar
+            if (val > 0) {
+                svgHtml += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="#2E75B6" rx="1"/>`;
+                // Text label on top
+                const dispText = (val >= 1000) ? Math.round(val / 1000) + 'k' : Math.round(val);
+                svgHtml += `<text x="${x + barW / 2}" y="${y - 4}" font-size="8" font-family="Calibri, sans-serif" font-weight="700" fill="#1e293b" text-anchor="middle">${dispText}</text>`;
+            }
+
+            // Month Label below axis
+            svgHtml += `<text x="${x + barW / 2}" y="${baseH + 13}" font-size="8.5" font-family="Calibri, sans-serif" fill="#64748b" text-anchor="middle" transform="rotate(-35, ${x + barW / 2}, ${baseH + 13})">${m.code}</text>`;
+        });
+
+        // Baseline
+        svgHtml += `<line x1="8" y1="${baseH}" x2="${chartW - 8}" y2="${baseH}" stroke="#cbd5e1" stroke-width="1"/>`;
+        svg.innerHTML = svgHtml;
+
+        // 2. Historical & Quarterly Breakdown
+        const hist = summary.historical || {};
+        const q = summary.quarterly || {};
+        const fy26Tot = hist.fy26 || 1300492;
+        const fy27Tot = summary.ytd_actual || 1;
+
+        const q1Pct26 = ((hist.fy26_q1 || 293549) / fy26Tot * 100).toFixed(0) + '%';
+        const q2Pct26 = ((hist.fy26_q2 || 444804) / fy26Tot * 100).toFixed(0) + '%';
+        const q3Pct26 = ((hist.fy26_q3 || 298730) / fy26Tot * 100).toFixed(0) + '%';
+        const q4Pct26 = ((hist.fy26_q4 || 263409) / fy26Tot * 100).toFixed(0) + '%';
+
+        const q1Pct27 = ((q.q1 || 0) / fy27Tot * 100).toFixed(0) + '%';
+        const q2Pct27 = ((q.q2 || 0) / fy27Tot * 100).toFixed(0) + '%';
+
+        histBox.innerHTML = `
+            <table class="bvsa-hist-table">
+                <tr><td>Nov-Mar</td><td class="num bold">2,00,912.538</td><td></td></tr>
+                <tr style="border-bottom:2px solid #b7b7b7;"><td class="bold">FY 25</td><td class="num bold">2,00,912.538</td><td></td></tr>
+                <tr><td>Q1</td><td class="num">2,93,549.000</td><td class="num">${q1Pct26}</td></tr>
+                <tr><td>Q2</td><td class="num">4,44,804.000</td><td class="num">${q2Pct26}</td></tr>
+                <tr><td>Q3</td><td class="num">2,98,730.000</td><td class="num">${q3Pct26}</td></tr>
+                <tr><td>Q4</td><td class="num">2,63,409.000</td><td class="num">${q4Pct26}</td></tr>
+                <tr style="border-bottom:2px solid #b7b7b7;"><td class="bold">FY 26</td><td class="num bold">13,00,492.320</td><td></td></tr>
+                <tr><td>Q1</td><td class="num">${fmtNum3(q.q1)}</td><td class="num">${q.q1 > 0 ? q1Pct27 : '-'}</td></tr>
+                <tr><td>Q2</td><td class="num">${fmtNum3(q.q2)}</td><td class="num">${q.q2 > 0 ? q2Pct27 : '-'}</td></tr>
+                <tr><td>Q3</td><td class="num">${fmtNum3(q.q3)}</td><td class="num">-</td></tr>
+                <tr><td>Q4</td><td class="num">${fmtNum3(q.q4)}</td><td class="num">-</td></tr>
+                <tr style="border-top:1px solid #b7b7b7;"><td class="bold">FY 27</td><td class="num bold">${fmtNum3(summary.ytd_actual)}</td><td></td></tr>
+            </table>
+        `;
+    }
+
+    function renderBvsaVesselsTable(vessels) {
+        const tbody = document.getElementById('tblBvsaVesselsBody');
+        const tfoot = document.getElementById('tblBvsaVesselsFoot');
+        const sumRow = document.getElementById('tblBvsaVesselsSums');
+        if (!tbody) return;
+
+        if (!vessels || vessels.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="11" class="center" style="color:#64748b;padding:24px;">No completed vessels handled for the selected period.</td></tr>`;
+            if (tfoot) tfoot.innerHTML = '';
+            if (sumRow) sumRow.innerHTML = '';
+            return;
+        }
+
+        let totQ = 0, totEd = 0, totOt = 0, totCh = 0, totPo = 0;
+        let html = '';
+
+        // Pre-compute month-wise quantity totals and locate the last vessel index for each month
+        const monthTotals = {};
+        const lastVesselIdxForMonth = {};
+
+        vessels.forEach((v, idx) => {
+            monthTotals[v.month] = (monthTotals[v.month] || 0) + (v.quantity || 0);
+            lastVesselIdxForMonth[v.month] = idx;
+        });
+
+        // Month color alternation
+        let lastMonth = '';
+        let monthFlip = false;
+
+        vessels.forEach((v, idx) => {
+            totQ += (v.quantity || 0);
+            totEd += (v.edible || 0);
+            totOt += (v.other || 0);
+            totCh += (v.chemical || 0);
+            totPo += (v.pol || 0);
+
+            if (v.month !== lastMonth) {
+                monthFlip = !monthFlip;
+                lastMonth = v.month;
+            }
+            const rowClass = monthFlip ? 'vessel-month-alt' : '';
+
+            const isLast = (lastVesselIdxForMonth[v.month] === idx);
+            const mTotalVal = isLast ? fmtNum3(monthTotals[v.month]) : '';
+            const mTotalStyle = isLast ? 'background:#FFC000;color:#000000;font-weight:700;border:1px solid #bf8f00;' : '';
+
+            html += `
+                <tr class="${rowClass}">
+                    <td class="center" style="color:#64748b;">${v.sr_no}</td>
+                    <td class="center bold">${v.month}</td>
+                    <td class="bold">${v.vessel_name}</td>
+                    <td>${v.cargo}</td>
+                    <td style="color:#334155;">${v.customer}</td>
+                    <td class="num bold">${fmtNum3(v.quantity)}</td>
+                    <td class="num" style="${mTotalStyle}">${mTotalVal}</td>
+                    <td class="num">${v.edible > 0 ? fmtNum3(v.edible) : ''}</td>
+                    <td class="num">${v.other > 0 ? fmtNum3(v.other) : ''}</td>
+                    <td class="num">${v.chemical > 0 ? fmtNum3(v.chemical) : ''}</td>
+                    <td class="num">${v.pol > 0 ? fmtNum3(v.pol) : ''}</td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = html;
+
+        // Top Floating Summary Row over category columns (Image 1 & 2)
+        if (sumRow) {
+            sumRow.innerHTML = `
+                <th colspan="7" style="border:none;background:transparent;"></th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totEd)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totOt)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totCh)}</th>
+                <th style="border:none;background:transparent;text-align:right;color:#1F4E78;font-weight:700;font-size:11.5px;padding:2px 7px;">${fmtNum3(totPo)}</th>
+            `;
+        }
+
+        if (tfoot) {
+            tfoot.innerHTML = `
+                <tr class="tr-green">
+                    <td colspan="5" style="text-align:left;font-weight:700;">Total (${vessels.length} vessel calls)</td>
+                    <td class="num bold">${fmtNum3(totQ)}</td>
+                    <td></td>
+                    <td class="num bold">${fmtNum3(totEd)}</td>
+                    <td class="num bold">${fmtNum3(totOt)}</td>
+                    <td class="num bold">${fmtNum3(totCh)}</td>
+                    <td class="num bold">${fmtNum3(totPo)}</td>
+                </tr>
+            `;
+        }
     }
 </script>
 {% endblock %}

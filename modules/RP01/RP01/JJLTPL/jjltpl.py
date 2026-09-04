@@ -901,54 +901,80 @@ def _jjltpl_build_workbook(payload):
 
     last_traffic_row = r2 + len(traffic) - 1
 
-    # ---- Helper for the simple "Category / TEUs" style sections below.
-    #      These have no DB source yet, so values are left blank; the
-    #      Total row is a live formula that sums whatever gets typed in. ----
-    def simple_section(start_row, label, sub_labels, header_label):
-        n = len(sub_labels)
-        merge(f"A{start_row}:A{start_row + n}", label, font=font_section, fill=fill_section, align=left)
-        set_cell(f"B{start_row}", header_label, font=font_header, fill=fill_header, align=left)
-        merge(f"C{start_row}:K{start_row}", "TEUs", font=font_header, fill=fill_header)
-
-        data_rows = [s for s in sub_labels if s != "Total"]
-        for i, row_label in enumerate(sub_labels):
-            rr = start_row + 1 + i
-            is_total = row_label == "Total"
-            if is_total:
-                first = start_row + 1
-                last = start_row + len(data_rows)
-                formula = f"=SUM(C{first}:C{last})"
-                set_cell(f"B{rr}", row_label, font=font_total, fill=fill_section, align=left)
-                merge(f"C{rr}:K{rr}", formula, font=font_total, fill=fill_total, fmt=NUM_FMT)
-            else:
-                set_cell(f"B{rr}", row_label, font=font_normal, fill=fill_white, align=left)
-                merge(f"C{rr}:K{rr}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
-        return start_row + n + 1
-
     nr = last_traffic_row + 2
-    nr = simple_section(nr, "YARD INVENTORY IN TEUS",
-                         ["Import", "Export", "Transhipment", "Total"], "Category")
-    nr += 1
-    nr = simple_section(nr, "GATE MOVEMENTS",
-                         ["In", "Out", "Total"], "Gate")
-    nr += 1
-    nr = simple_section(nr, "ICD PENDENCY",
-                         ["TKD", "Others", "Total"], "Destination")
-    nr += 1
-    nr = simple_section(nr, "CFS PENDENCY",
-                         ["Others"], "Destination")
-    nr += 1
 
-    # ---- Reefer Slots ----
-    r3 = nr
-    merge(f"A{r3}:A{r3 + 1}", "REEFER SLOTS", font=font_section, fill=fill_section, align=left)
-    set_cell(f"B{r3}", "Total", font=font_header, fill=fill_header)
-    set_cell(f"C{r3}", "Occupied", font=font_header, fill=fill_header)
-    merge(f"D{r3}:K{r3}", "Available", font=font_header, fill=fill_header)
+    # ---- YARD INVENTORY IN TEUS ----
+    # Horizontal layout: IMPORT | EXPORT | TRANSHIPMENT | TOTAL as column headers
+    set_cell(f"A{nr}", "YARD INVENTORY IN TEUS", font=font_section, fill=fill_section, align=left)
+    set_cell(f"B{nr}", "IMPORT",       font=font_header, fill=fill_header)
+    set_cell(f"C{nr}", "EXPORT",       font=font_header, fill=fill_header)
+    set_cell(f"D{nr}", "TRANSHIPMENT", font=font_header, fill=fill_header)
+    set_cell(f"E{nr}", "TOTAL",        font=font_header, fill=fill_total)
+    set_cell(f"A{nr+1}", None, fill=fill_section)
+    set_cell(f"B{nr+1}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    set_cell(f"C{nr+1}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    set_cell(f"D{nr+1}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    set_cell(f"E{nr+1}", f"=SUM(B{nr+1}:D{nr+1})", font=font_total, fill=fill_total, fmt=NUM_FMT)
+    nr = nr + 2 + 1
 
-    set_cell(f"B{r3 + 1}", None, font=font_value, fill=fill_white, fmt=INT_FMT)
-    set_cell(f"C{r3 + 1}", None, font=font_value, fill=fill_white, fmt=INT_FMT)
-    merge(f"D{r3 + 1}:K{r3 + 1}", f"=B{r3 + 1}-C{r3 + 1}", font=font_total, fill=fill_total, fmt=INT_FMT)
+    # ---- GATE MOVEMENTS ----
+    merge(f"A{nr}:A{nr+2}", "GATE MOVEMENTS", font=font_section, fill=fill_section, align=left)
+    merge(f"B{nr}:C{nr}", "GATE MOVEMENT IN TEUs", font=font_header, fill=fill_header)
+    merge(f"D{nr}:F{nr}", "NO. OF TRUCKS",         font=font_header, fill=fill_header)
+    set_cell(f"B{nr+1}", "IN",      font=font_header, fill=fill_header)
+    set_cell(f"C{nr+1}", "OUT",     font=font_header, fill=fill_header)
+    set_cell(f"D{nr+1}", "IN",      font=font_header, fill=fill_header)
+    set_cell(f"E{nr+1}", "OUT",     font=font_header, fill=fill_header)
+    set_cell(f"F{nr+1}", "AVG TAT", font=font_header, fill=fill_total)
+    for col in ("B", "C", "D", "E", "F"):
+        set_cell(f"{col}{nr+2}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    nr = nr + 3 + 1
+
+    # ---- ICD PENDENCY ----
+    icd_labels = ["TKD", "OTHERS", "TOTAL"]
+    merge(f"A{nr}:A{nr+len(icd_labels)}", "ICD PENDENCY", font=font_section, fill=fill_section, align=left)
+    set_cell(f"B{nr}", "DESTINATION", font=font_header, fill=fill_header, align=left)
+    set_cell(f"C{nr}", "TEUS",        font=font_header, fill=fill_header)
+    for i, lbl in enumerate(icd_labels):
+        rr = nr + 1 + i
+        is_total = lbl == "TOTAL"
+        if is_total:
+            set_cell(f"B{rr}", lbl, font=font_total, fill=fill_total, align=left)
+            set_cell(f"C{rr}", f"=SUM(C{nr+1}:C{nr+2})", font=font_total, fill=fill_total, fmt=NUM_FMT)
+        else:
+            set_cell(f"B{rr}", lbl, font=font_normal, fill=fill_white, align=left)
+            set_cell(f"C{rr}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    nr = nr + len(icd_labels) + 2
+
+    # ---- CFS PENDENCY ----
+    merge(f"A{nr}:A{nr+1}", "CFS PENDENCY", font=font_section, fill=fill_section, align=left)
+    set_cell(f"B{nr}", "DESTINATION", font=font_header, fill=fill_header, align=left)
+    set_cell(f"C{nr}", "TEUS",        font=font_header, fill=fill_header)
+    set_cell(f"B{nr+1}", "OTHERS", font=font_normal, fill=fill_white, align=left)
+    set_cell(f"C{nr+1}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    nr = nr + 2 + 1
+
+    # ---- IMPORT EMPTY ----
+    merge(f"A{nr}:A{nr+1}", "IMPORT EMPTY", font=font_section, fill=fill_section, align=left)
+    set_cell(f"B{nr}", "CATEGORY", font=font_header, fill=fill_header, align=left)
+    set_cell(f"C{nr}", "TEUS",     font=font_header, fill=fill_header)
+    set_cell(f"B{nr+1}", "INYARD", font=font_normal, fill=fill_white, align=left)
+    set_cell(f"C{nr+1}", None, font=font_value, fill=fill_white, fmt=NUM_FMT)
+    nr = nr + 2 + 1
+
+    # ---- REEFER SLOTS ----
+    merge(f"A{nr}:A{nr+1}", "REEFER SLOTS", font=font_section, fill=fill_section, align=left)
+    set_cell(f"B{nr}", "TOTAL",     font=font_header, fill=fill_header)
+    set_cell(f"C{nr}", "OCCUPIED",  font=font_header, fill=fill_header)
+    set_cell(f"D{nr}", "AVAILABLE", font=font_header, fill=fill_total)
+    set_cell(f"B{nr+1}", None, font=font_value, fill=fill_white, fmt=INT_FMT)
+    set_cell(f"C{nr+1}", None, font=font_value, fill=fill_white, fmt=INT_FMT)
+    set_cell(f"D{nr+1}", f"=B{nr+1}-C{nr+1}", font=font_total, fill=fill_total, fmt=INT_FMT)
+    nr = nr + 2 + 1
+
+
+
+
 
     ws.freeze_panes = "A3"
     ws.sheet_view.showGridLines = False
