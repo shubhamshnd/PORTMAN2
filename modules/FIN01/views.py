@@ -425,6 +425,17 @@ def proforma_invoice(customer_type, customer_id, vcn_id):
     if not vessel or not vessel['lines']:
         return "No billable lines found for this vessel/customer.", 404
 
+    # ?l=SRC:cargo_id:service_type_id,... — print only the lines ticked on the
+    # billables screen. Absent (a bookmarked/older link) means every line.
+    picked = request.args.get('l')
+    if picked:
+        want = set(picked.split(','))
+        vessel = {**vessel, 'lines': [
+            l for l in vessel['lines']
+            if f"{l['cargo_source_type']}:{l['cargo_source_id']}:{l['service_type_id']}" in want]}
+        if not vessel['lines']:
+            return "No lines selected for this vessel/customer.", 404
+
     conn = get_db()
     cur = get_cursor(conn)
     tbl = 'vessel_customers' if customer_type == 'Customer' else 'vessel_agents'

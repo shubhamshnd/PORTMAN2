@@ -267,7 +267,7 @@ function renderVessels(vessels) {
             ? `<span class="ldud-badge" style="background:#d1fae5;color:#065f46;">ACTUAL · LDUD ${v.ldud_status}</span>`
             : `<span class="ldud-badge" style="background:#fef3c7;color:#92400e;">PRO FORMA · LDUD ${v.ldud_status || 'Open'}</span>`;
         const proformaBtn = `<button class="btn btn-primary" style="font-size:10px;padding:3px 10px;"
-            onclick="event.stopPropagation();window.open('/module/FIN01/proforma/${ct}/${cid}/${v.vcn_id}','_blank')">🖨 Pro Forma Invoice</button>`;
+            onclick="event.stopPropagation();openProforma(${vi},'${ct}',${cid},${v.vcn_id})">🖨 Pro Forma Invoice</button>`;
         const rows = v.lines.map((l, li) => actual ? `
               <tr>
                 <td><input type="checkbox" class="bl-chk" data-vi="${vi}" data-li="${li}" ${l.rate>0?'checked':''} onchange="recalcSel()"></td>
@@ -280,6 +280,7 @@ function renderVessels(vessels) {
                 <td style="text-align:right" id="amt-${vi}-${li}">₹${(l.amount||0).toFixed(2)}</td>
               </tr>` : `
               <tr>
+                <td><input type="checkbox" class="pf-chk" data-vi="${vi}" data-li="${li}" checked></td>
                 <td>${l.parcel_no||''}</td><td>${l.cargo_name||''}</td>
                 <td>${l.service_name} <small>(${l.service_code})</small></td>
                 <td style="text-align:right">${(+l.qty).toFixed(3)} ${l.uom}</td>
@@ -288,7 +289,7 @@ function renderVessels(vessels) {
               </tr>`).join('');
         const head = actual
             ? '<th></th><th>Parcel</th><th>Cargo</th><th>Service</th><th>BL Qty</th><th>Actual Qty (LUEU01)</th><th>Rate</th><th>Amount</th>'
-            : '<th>Parcel</th><th>Cargo</th><th>Service</th><th>Declared Qty</th><th>Rate</th><th>Amount</th>';
+            : '<th></th><th>Parcel</th><th>Cargo</th><th>Service</th><th>Declared Qty</th><th>Rate</th><th>Amount</th>';
         return `
         <div class="vessel-card" data-vcn="${v.vcn_id}">
           <div class="vessel-head collapsible-header" onclick="toggleVessel(${vi})">
@@ -306,6 +307,17 @@ function renderVessels(vessels) {
     }).join('');
     window._vessels = vessels;
     recalcSel();
+}
+
+function openProforma(vi, ct, cid, vcnId) {
+    const lines = ((window._vessels || [])[vi] || {}).lines || [];
+    const keys = [];
+    document.querySelectorAll(`.bl-chk[data-vi="${vi}"]:checked, .pf-chk[data-vi="${vi}"]:checked`).forEach(chk => {
+        const l = lines[+chk.dataset.li];
+        if (l) keys.push(`${l.cargo_source_type}:${l.cargo_source_id}:${l.service_type_id}`);
+    });
+    if (!keys.length) { alert('Tick at least one line for the pro forma invoice.'); return; }
+    window.open(`/module/FIN01/proforma/${ct}/${cid}/${vcnId}?l=${encodeURIComponent(keys.join(','))}`, '_blank');
 }
 
 function toggleVessel(vi) {
