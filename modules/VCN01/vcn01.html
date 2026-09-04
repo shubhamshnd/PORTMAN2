@@ -760,6 +760,26 @@
     function isDraftRow(docStatus) {
         return !docStatus || docStatus === 'Draft' || docStatus === 'Pending';
     }
+
+    // Delay duration, shared by the grid's Total Delay column and the sub-table's
+    // Total Time cell. Returns minutes; -1 marks an unusable (reversed/NaN) pair.
+    function delayRowMins(row) {
+        if (!row.delay_start || !row.delay_end) return 0;
+        const diffMs = new Date(row.delay_end) - new Date(row.delay_start);
+        if (isNaN(diffMs) || diffMs < 0) return -1;
+        return Math.floor(diffMs / 60000);
+    }
+
+    function formatMins(totalMins) {
+        const days = Math.floor(totalMins / 1440);
+        const hrs = Math.floor((totalMins % 1440) / 60);
+        const mins = totalMins % 60;
+        const parts = [];
+        if (days) parts.push(`${days}d`);
+        if (hrs) parts.push(`${hrs}h`);
+        if (mins || parts.length === 0) parts.push(`${mins}m`);
+        return parts.join(' ');
+    }
     let currentModalData = null;
 
     // Only the trailing number of "VCN-2526-001" is editable — the editor shows
@@ -826,6 +846,14 @@
             },
             {title: "Operation Type", field: "operation_type", editor: canEdit ? "list" : false,
                 editorParams: {values: {"Import": "Import", "Export": "Export"}, autocomplete: false, allowEmpty: true}, width: 110},
+            {title: "Total Delay", field: "total_delay_mins", width: 105, hozAlign: "right",
+                headerTooltip: "Sum of the Pre Berthing/Anchoring Delays (open Details to edit)",
+                formatter: function(cell) {
+                    const mins = Number(cell.getValue()) || 0;
+                    if (!mins) return '<span style="color:#a0aec0;">-</span>';
+                    return `<span style="font-weight:600;">${formatMins(mins)}</span>`;
+                }
+            },
             {title: "VCN Doc", field: "vcn_doc_num", width: 110,
                 editor: canEdit ? docNumEditor : false,
                 editable: cell => !!cell.getRow().getData().id,   // new rows are numbered on save
@@ -866,11 +894,13 @@
                 formatter: function(cell) {
                     const val = cell.getValue() || 'Draft';
                     const id = cell.getRow().getData().id;
-                    let color, bg;
-                    if (val === 'Approved') { color = '#276749'; bg = '#c6f6d5'; }
-                    else { color = '#744210'; bg = '#fefcbf'; }
+                    // Colour-blind safe: blue vs amber (not green vs yellow), solid fill,
+                    // white text, and a glyph so the status reads without any colour at all.
+                    let bg, icon;
+                    if (val === 'Approved') { bg = '#1a4f8b'; icon = '✓'; }
+                    else { bg = '#b7791f'; icon = '✎'; }
                     const click = id ? `onclick="showApprovalLog(${id}, event)"` : '';
-                    return `<span class="approval-badge" style="background:${bg};color:${color};" ${click} title="Click for history">${val}</span>`;
+                    return `<span class="approval-badge" style="background:${bg};color:#fff;" ${click} title="Click for history">${icon} ${val}</span>`;
                 }
             },
             {
@@ -917,8 +947,12 @@
                 const data = row.getData();
                 const status = data.doc_status;
                 const el = row.getElement();
+                // Row state rides on a blue/amber tint plus a thick left stripe, so it
+                // survives red-green colour blindness (the old green/yellow pair did not).
+                el.style.borderLeft = '';
                 if (isDraftRow(status) && data.id) {
-                    el.style.backgroundColor = '#fffff0';
+                    el.style.backgroundColor = '#fdf1d6';
+                    el.style.borderLeft = '6px solid #b7791f';
                     el.style.outline = '';
                     el.title = '';
                 } else if (editMode && data.id && row.isSelected()) {
@@ -926,8 +960,13 @@
                     el.style.outline = '2px solid #3182ce';
                     el.title = '';
                 } else {
-                    if (status === 'Approved') el.style.backgroundColor = '#f0fff4';
-                    else el.style.backgroundColor = '#fffff0';
+                    if (status === 'Approved') {
+                        el.style.backgroundColor = '#cfe2f7';
+                        el.style.borderLeft = '6px solid #1a4f8b';
+                    } else {
+                        el.style.backgroundColor = '#fdf1d6';
+                        el.style.borderLeft = '6px solid #b7791f';
+                    }
                     if (data._autosave_error) {
                         el.style.outline = '2px solid #e53e3e';
                         el.title = `Autosave failed: ${data._autosave_error}`;
@@ -1290,19 +1329,9 @@
                     formatter: function(cell) {
                         const row = cell.getRow().getData();
                         if (!row.delay_start || !row.delay_end) return '';
-                        const start = new Date(row.delay_start);
-                        const end = new Date(row.delay_end);
-                        const diffMs = end - start;
-                        if (isNaN(diffMs) || diffMs < 0) return '<span style="color:#e53e3e">Invalid</span>';
-                        const totalMins = Math.floor(diffMs / 60000);
-                        const days = Math.floor(totalMins / 1440);
-                        const hrs = Math.floor((totalMins % 1440) / 60);
-                        const mins = totalMins % 60;
-                        let parts = [];
-                        if (days) parts.push(`${days}d`);
-                        if (hrs) parts.push(`${hrs}h`);
-                        if (mins || parts.length === 0) parts.push(`${mins}m`);
-                        return `<span style="font-weight:500;color:#2d3748">${parts.join(' ')}</span>`;
+                        const mins = delayRowMins(row);
+                        if (mins < 0) return '<span style="color:#e53e3e">Invalid</span>';
+                        return `<span style="font-weight:500;color:#2d3748">${formatMins(mins)}</span>`;
                     }
                 },
                 canDelays ? {title: "", field: "actions", formatter: deleteButtonFormatter, width: 60, widthGrow: 0, hozAlign: "center", headerSort: false,
@@ -1496,11 +1525,22 @@
             alert(`Error: ${errors[0].error}`);
         }
         if (type === 'consigners') renderCargoQuotas(vcnId);   // refresh available-per-cargo
+        if (type === 'delays') syncDelayTotal(vcnId);
 
         if (!hasError) {
             clearDirty(type);
             if (!silent) showSubStatus(type, vcnId, `Saved ${savedCount} row(s)`);
         }
+    }
+
+    // Delays are edited in the sub-table; recompute the grid's Total Delay from
+    // the rows on screen rather than re-fetching the page.
+    function syncDelayTotal(vcnId) {
+        const sub = subTables[vcnId] && subTables[vcnId].delays;
+        if (!sub || !table) return;
+        const mins = sub.getData().reduce((sum, r) => sum + Math.max(delayRowMins(r), 0), 0);
+        const row = table.getRows().find(r => r.getData().id === vcnId);
+        if (row) row.update({total_delay_mins: mins});
     }
 
     async function deleteSubRow(type, id, vcnId) {
@@ -1515,6 +1555,7 @@
             if (row) row.delete();
         }
         if (type === 'consigners') renderCargoQuotas(vcnId);
+        if (type === 'delays') syncDelayTotal(vcnId);
         try { const d = await res.json(); if (d.cargo_type !== undefined) syncHeaderCargo(vcnId, d.cargo_type); } catch (e) {}
     }
 

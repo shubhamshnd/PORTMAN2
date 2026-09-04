@@ -84,13 +84,26 @@ def get_data(page=1, size=20, filters=None):
     try:
         cur.execute(f'SELECT COUNT(*) FROM vcn_header {where_sql}', params)
         total = cur.fetchone()['count']
-        cur.execute(f'SELECT * FROM vcn_header {where_sql} ORDER BY id DESC LIMIT %s OFFSET %s',
+        # total_delay_mins: sum of the Pre Berthing/Anchoring Delays sub-table, so the
+        # grid shows it without opening each row. Times are TEXT 'YYYY-MM-DDTHH:MM' —
+        # the regex skips junk, and the >= compares fine lexicographically in that format.
+        cur.execute(f'''SELECT h.*, (
+                            SELECT COALESCE(SUM(EXTRACT(EPOCH FROM
+                                       (d.delay_end::timestamp - d.delay_start::timestamp)) / 60), 0)
+                            FROM vcn_delays d
+                            WHERE d.vcn_id = h.id
+                              AND d.delay_start ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}'
+                              AND d.delay_end   ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}'
+                              AND d.delay_end >= d.delay_start
+                        ) AS total_delay_mins
+                        FROM vcn_header h {where_sql} ORDER BY h.id DESC LIMIT %s OFFSET %s''',
                     params + [size, (page - 1) * size])
         rows = []
         for r in cur.fetchall():
             r = dict(r)
             r.pop('igm_document', None)   # BYTEA — not JSON-serializable
             r['has_igm_doc'] = bool(r.get('igm_document_name'))
+            r['total_delay_mins'] = int(r.get('total_delay_mins') or 0)   # Decimal -> JSON
             rows.append(r)
         return rows, total
     finally:
@@ -103,7 +116,7 @@ def save_header(data):
     row_id = data.get('id')
 
     # computed / blob fields never come through the JSON save path
-    for k in ('has_igm_doc', 'igm_document', 'igm_document_name'):
+    for k in ('has_igm_doc', 'igm_document', 'igm_document_name', 'total_delay_mins'):
         data.pop(k, None)
 
     if row_id:

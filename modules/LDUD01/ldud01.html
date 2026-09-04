@@ -420,7 +420,7 @@
         </div>
         <!-- Eligible content -->
         <div id="closureEligibleSection" style="display:none;">
-            <div id="closureQtyInfo" style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:13px;"></div>
+            <div id="closureQtyInfo" style="background:#ebf3fb;border:1px solid #90b8e0;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:13px;"></div>
             <!-- Proof of Quantity (mandatory) -->
             <div style="margin-bottom:14px;">
                 <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">
@@ -438,7 +438,7 @@
             <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Confirm your password <span style="color:#e53e3e">*</span></label>
             <input type="password" id="closurePassword" placeholder="Enter your login password…" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-bottom:14px;">
             <div style="display:flex;gap:8px;">
-                <button id="btnCloseVessel" onclick="confirmClose('Closed')" style="flex:1;padding:8px;background:#276749;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">✓ Close Vessel</button>
+                <button id="btnCloseVessel" onclick="confirmClose('Closed')" style="flex:1;padding:8px;background:#1a4f8b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">✓ Close Vessel</button>
                 <button id="btnPartialClose" onclick="confirmClose('Partial Close')" style="flex:1;padding:8px;background:#c05621;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">⚡ Partial Close</button>
             </div>
         </div>
@@ -787,11 +787,13 @@
                 formatter: function(cell) {
                     const val = cell.getValue();
                     const id = cell.getRow().getData().id;
-                    let color = '#744210', bg = '#fefcbf';
-                    if (val === 'Closed') { color = '#276749'; bg = '#c6f6d5'; }
-                    else if (val === 'Partial Close') { color = '#c05621'; bg = '#feebc8'; }
+                    // Colour-blind safe: blue / slate / amber (not green vs yellow vs orange),
+                    // solid fill with white text and a glyph, so colour is never the only cue.
+                    let bg = '#b7791f', icon = '✎';           // Draft
+                    if (val === 'Closed') { bg = '#1a4f8b'; icon = '✓'; }
+                    else if (val === 'Partial Close') { bg = '#4a5568'; icon = '◐'; }
                     const click = id ? `onclick="showClosureLog(${id}, event)"` : '';
-                    return `<span class="closure-badge" style="background:${bg};color:${color};" ${click} title="Click for history">${val || 'Draft'}</span>`;
+                    return `<span class="closure-badge" style="background:${bg};color:#fff;" ${click} title="Click for history">${icon} ${val || 'Draft'}</span>`;
                 }
             },
             {title: "Created By", field: "created_by", width: 90},
@@ -835,8 +837,12 @@
                 const data = row.getData();
                 const status = data.doc_status;
                 const el = row.getElement();
+                // Open vs closed rides on a blue/amber tint plus a thick left stripe, so it
+                // survives red-green colour blindness (the old green/yellow pair did not).
+                el.style.borderLeft = '';
                 if (isDraftRow(status) && data.id) {
-                    el.style.backgroundColor = '#fffff0';
+                    el.style.backgroundColor = '#fdf1d6';
+                    el.style.borderLeft = '6px solid #b7791f';
                     el.style.outline = '';
                     el.title = '';
                 } else if (editMode && data.id && row.isSelected()) {
@@ -844,9 +850,16 @@
                     el.style.outline = '2px solid #3182ce';
                     el.title = '';
                 } else {
-                    if (status === 'Closed') el.style.backgroundColor = '#f0fff4';
-                    else if (status === 'Partial Close') el.style.backgroundColor = '#fffbf0';
-                    else el.style.backgroundColor = '#fffff0';
+                    if (status === 'Closed') {
+                        el.style.backgroundColor = '#cfe2f7';
+                        el.style.borderLeft = '6px solid #1a4f8b';
+                    } else if (status === 'Partial Close') {
+                        el.style.backgroundColor = '#e2e8f0';
+                        el.style.borderLeft = '6px solid #4a5568';
+                    } else {
+                        el.style.backgroundColor = '#fdf1d6';
+                        el.style.borderLeft = '6px solid #b7791f';
+                    }
                     if (data._autosave_error) {
                         el.style.outline = '2px solid #e53e3e';
                         el.title = `Autosave failed: ${data._autosave_error}`;
