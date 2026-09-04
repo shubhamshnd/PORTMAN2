@@ -356,6 +356,7 @@ def _fetch_legacy(fin_year: str, month_idx: int):
                 'JJLTPL' AS terminal,
                 berth_no AS berth,
                 to_char(NULLIF(anchorage_time,'')::timestamp,'{DATETIME_FMT}') AS anchored_time,
+                to_char(NULLIF(nor,'')::timestamp,'{DATETIME_FMT}') AS readiness_time,
                 to_char(NULLIF(pilot_pickup,'')::timestamp,'{DATETIME_FMT}') AS pilot_boarded,
                 to_char(NULLIF(alongside,'')::timestamp,'{DATETIME_FMT}') AS alongside_time,
                 to_char(NULLIF(ops_commenced,'')::timestamp,'{DATETIME_FMT}') AS cargo_commenced,
@@ -459,6 +460,7 @@ def _fetch_new_schema(fin_year: str, month_idx: int) -> list[dict]:
                 vh.berth_name AS berth,
 
                 to_char(NULLIF(lh.anchored_datetime, '')::timestamp, '{DATETIME_FMT}') AS anchored_time,
+                to_char(NULLIF(COALESCE(lh.nor_accepted, lh.nor_tendered), '')::timestamp, '{DATETIME_FMT}') AS readiness_time,
                 to_char(NULLIF(lh.pilot_pickup_time, '')::timestamp, '{DATETIME_FMT}') AS pilot_boarded,
                 to_char(NULLIF(lh.alongside_datetime, '')::timestamp, '{DATETIME_FMT}') AS alongside_time,
                 to_char(pa.cargo_commenced::timestamp, '{DATETIME_FMT}') AS cargo_commenced,
@@ -568,7 +570,7 @@ EXPORT_FIELD_MAP = [
     "berth",
     None,                # WINDOW SCHEDULE DATE & TIME
     "anchored_time",
-    None,                # READINESS TIME
+    "readiness_time",    # READINESS TIME (NOR Accepted time)
     "pilot_boarded",
     "alongside_time",
    "cargo_commenced",    # CARGO COMMENCED 1 -- blank
