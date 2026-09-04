@@ -1198,7 +1198,7 @@
         months.forEach(m => {
             html += `<td class="num" style="font-style:italic;">${fmtPct(m.pct_achieved)}</td>`;
         });
-        html += `<td class="num bold" style="color:#006100;font-weight:800;">${fmtPct(summary.pct_achieved_ytd)}</td></tr>`;
+        html += `<td class="num bold" style="color:#006100;font-weight:800;">${fmtPct(summary.pct_cum_fy)}</td></tr>`;
 
         // Cumulative Achieved
         html += `<tr class="tr-highlight"><td colspan="2">Cumulative Achieved</td>`;
@@ -1206,14 +1206,14 @@
             const val = m.is_past_or_current ? fmtNum3(m.cum_actual) : '';
             html += `<td class="num bold">${val}</td>`;
         });
-        html += `<td class="num bold">${fmtNum3(summary.ytd_actual)}</td></tr>`;
+        html += `<td class="num bold"></td></tr>`;
 
         // % Achieved Cumulative
         html += `<tr><td colspan="2" style="font-style:italic;color:#475569;">% Achieved Cumulative</td>`;
         months.forEach(m => {
             html += `<td class="num" style="font-style:italic;">${fmtPct(m.pct_cum_achieved)}</td>`;
         });
-        html += `<td class="num bold" style="font-style:italic;">${fmtPct(summary.pct_cum_fy)}</td></tr>`;
+        html += `<td class="num bold" style="font-style:italic;"></td></tr>`;
 
         // Variance
         html += `<tr><td colspan="2" class="bold" style="color:#1F4E78;">Variance</td>`;
@@ -1222,11 +1222,10 @@
                 html += `<td class="num" style="color:#94a3b8;"></td>`;
             } else {
                 const isPos = (m.variance >= 0);
-                html += `<td class="num ${isPos ? 'var-pos' : 'var-neg'}">${isPos ? '+' : ''}${fmtNum3(m.variance)}</td>`;
+                html += `<td class="num ${isPos ? 'var-pos' : 'var-neg'}">${fmtNum3(m.variance)}</td>`;
             }
         });
-        const isTotVarPos = (summary.ytd_variance >= 0);
-        html += `<td class="num bold ${isTotVarPos ? 'var-pos' : 'var-neg'}">${isTotVarPos ? '+' : ''}${fmtNum3(summary.ytd_variance)}</td></tr>`;
+        html += `<td class="num bold" style="color:#00B050;font-size:16px;font-weight:800;">${fmtPct(summary.pct_cum_fy)}</td></tr>`;
 
         html += `</tbody>`;
         tbl.innerHTML = html;

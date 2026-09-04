@@ -1440,20 +1440,32 @@ def _get_bvsa_payload(selected_date):
                 SELECT 
                     po.id AS po_id,
                     COALESCE(
-                        NULLIF(TRIM((SELECT consigner_name FROM vcn_consigners WHERE id::text = po.parcel_ids LIMIT 1)), ''),
-                        NULLIF(TRIM((SELECT consigner_name FROM vcn_export_cargo_declaration WHERE id::text = po.parcel_ids LIMIT 1)), ''),
-                        NULLIF(TRIM((SELECT customer_name FROM vcn_cargo_declaration WHERE id::text = po.parcel_ids LIMIT 1)), ''),
-                        NULLIF(TRIM((SELECT consigner_name FROM vcn_consigners WHERE vcn_id = lh.vcn_id AND cargo_name = po.cargo_name LIMIT 1)), ''),
-                        NULLIF(TRIM((SELECT consigner_name FROM vcn_export_cargo_declaration WHERE vcn_id = lh.vcn_id AND cargo_name = po.cargo_name LIMIT 1)), ''),
-                        NULLIF(TRIM((SELECT customer_name FROM vcn_cargo_declaration WHERE vcn_id = lh.vcn_id AND cargo_name = po.cargo_name LIMIT 1)), ''),
-                        NULLIF(TRIM(vh.customer_name), ''),
-                        NULLIF(TRIM(vh.importer_exporter_name), ''),
-                        NULLIF(TRIM(po.terminal_name), ''),
-                        'Live Operation'
+                        NULLIF(
+                            TRIM((
+                                SELECT STRING_AGG(DISTINCT TRIM(customer_name), ', ')
+                                FROM vcn_cargo_declaration
+                                WHERE id::text = po.parcel_ids
+                                  AND NULLIF(TRIM(customer_name), '') IS NOT NULL
+                            )),
+                            ''
+                        ),
+                        NULLIF(
+                            TRIM((
+                                SELECT STRING_AGG(DISTINCT TRIM(customer_name), ', ')
+                                FROM vcn_cargo_declaration
+                                WHERE vcn_id = lh.vcn_id
+                                  AND cargo_name = po.cargo_name
+                                  AND NULLIF(TRIM(customer_name), '') IS NOT NULL
+                            )),
+                            ''
+                        ),
+                        '-'
                     ) AS consignee_name
                 FROM ldud_parcel_ops po
-                JOIN ldud_header lh ON lh.id = po.ldud_id
-                LEFT JOIN vcn_header vh ON vh.id = lh.vcn_id
+                JOIN ldud_header lh 
+                    ON lh.id = po.ldud_id
+                LEFT JOIN vcn_header vh 
+                    ON vh.id = lh.vcn_id
             )
             SELECT
                 lh.id AS ldud_id,
@@ -1524,7 +1536,7 @@ def _get_bvsa_payload(selected_date):
                 m['cum_actual'] = cum_a
                 m['pct_achieved'] = (m['actual']['total'] / m['budget']['total'] * 100) if m['budget']['total'] > 0 else (100.0 if m['actual']['total'] > 0 else 0.0)
                 m['pct_cum_achieved'] = (cum_a / full_year_budget * 100) if full_year_budget > 0 else 0.0
-                m['variance'] = m['actual']['total'] - m['budget']['total']
+                m['variance'] = cum_a - cum_b
                 m['cum_variance'] = cum_a - cum_b
             else:
                 m['cum_actual'] = None
@@ -1830,9 +1842,9 @@ def _populate_bvsa_sheet(ws, payload):
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
-        val = (m['pct_achieved'] / 100.0) if m['pct_achieved'] is not None else None
-        set_c(f"{col_let}{cur_r}", val, font=font_italic, fmt="0.0%" if val is not None else None)
-    set_c(f"P{cur_r}", (payload['summary']['pct_achieved_ytd'] / 100.0), font=font_green_bold, fill=fill_white, fmt="0.0%")
+        formula_val = f"={col_let}8/{col_let}6" if m['is_past_or_current'] else None
+        set_c(f"{col_let}{cur_r}", formula_val, font=font_italic, fmt="0%" if formula_val else None)
+    set_c(f"P{cur_r}", "=P8/P6", font=font_green_bold, fill=fill_white, fmt="0%")
     cur_r += 1
 
     # Cumulative Achieved
@@ -1841,9 +1853,15 @@ def _populate_bvsa_sheet(ws, payload):
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
-        val = m['cum_actual'] if m['is_past_or_current'] else None
-        set_c(f"{col_let}{cur_r}", val, font=font_bold if val is not None else font_normal, fill=fill_highlight, fmt=NUM_FMT if val is not None else None)
-    set_c(f"P{cur_r}", ytd_act, font=font_bold, fill=fill_highlight, fmt=NUM_FMT)
+        if not m['is_past_or_current']:
+            formula_val = None
+        elif i == 0:
+            formula_val = f"={col_let}8"
+        else:
+            prev_let = get_column_letter(4 + i - 1)
+            formula_val = f"={prev_let}10+{col_let}8"
+        set_c(f"{col_let}{cur_r}", formula_val, font=font_bold if formula_val else font_normal, fill=fill_highlight, fmt=NUM_FMT if formula_val else None)
+    set_c(f"P{cur_r}", None, fill=fill_highlight)
     cur_r += 1
 
     # % Achieved Cumulative
@@ -1852,9 +1870,9 @@ def _populate_bvsa_sheet(ws, payload):
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
-        val = (m['pct_cum_achieved'] / 100.0) if m['pct_cum_achieved'] is not None else None
-        set_c(f"{col_let}{cur_r}", val, font=font_italic, fmt="0.0%" if val is not None else None)
-    set_c(f"P{cur_r}", (payload['summary']['pct_cum_fy'] / 100.0), font=font_italic, fill=fill_white, fmt="0.0%")
+        formula_val = f"={col_let}10/$P$6" if m['is_past_or_current'] else None
+        set_c(f"{col_let}{cur_r}", formula_val, font=font_italic, fmt="0%" if formula_val else None)
+    set_c(f"P{cur_r}", None, fill=fill_white)
     cur_r += 1
 
     # Variance
@@ -1863,12 +1881,9 @@ def _populate_bvsa_sheet(ws, payload):
     ws.merge_cells(f"B{cur_r}:C{cur_r}")
     for i, m in enumerate(payload['months']):
         col_let = get_column_letter(4 + i)
-        val = m['variance'] if m['is_past_or_current'] else None
-        fnt = font_var_pos if (val or 0) >= 0 else font_var_neg
-        set_c(f"{col_let}{cur_r}", val, font=fnt, fmt=NUM_FMT if val is not None else None)
-    tot_var = payload['summary']['ytd_variance']
-    fnt_tot = font_var_pos if tot_var >= 0 else font_var_neg
-    set_c(f"P{cur_r}", tot_var, font=fnt_tot, fmt=NUM_FMT)
+        formula_val = f"={col_let}10-{col_let}7" if m['is_past_or_current'] else None
+        set_c(f"{col_let}{cur_r}", formula_val, font=font_var_neg if formula_val else font_normal, fmt=NUM_FMT if formula_val else None)
+    set_c(f"P{cur_r}", "=P8/P6", font=Font(name=FONT_NAME, size=16, bold=True, color="00B050"), fill=fill_white, align=right, fmt="0.0%")
 
     # 2. CARGO VOLUMES BAR CHART (Anchored at X1)
     chart = BarChart()
