@@ -1435,6 +1435,37 @@ def _get_bvsa_payload(selected_date):
             sr += 1
 
         # 3. Actuals from Live Operational Data (Jul 1 07:00 onwards up to window_end)
+        # Fetch LDUD cargo names from VCN declarations to match LDUD01 head cargo display exactly
+        cur.execute("""
+            SELECT lh.id AS ldud_id, lh.vcn_id
+            FROM ldud_header lh
+            WHERE NULLIF(TRIM(lh.cast_off_datetime::text), '') IS NOT NULL
+              AND REPLACE(TRIM(lh.cast_off_datetime), 'T', ' ')::timestamp >= '2026-07-01 07:00:00'
+              AND REPLACE(TRIM(lh.cast_off_datetime), 'T', ' ')::timestamp <= %s
+              AND COALESCE(lh.is_deleted, FALSE) = FALSE
+        """, (window_end,))
+        ldud_vcn_map = {r['vcn_id']: r['ldud_id'] for r in cur.fetchall() if r.get('vcn_id')}
+        ldud_cargo_display = {}
+        if ldud_vcn_map:
+            vids = list(ldud_vcn_map.keys())
+            cur.execute('SELECT vcn_id, cargo_name FROM vcn_cargo_declaration WHERE vcn_id = ANY(%s) AND cargo_name IS NOT NULL', (vids,))
+            ic = cur.fetchall()
+            cur.execute('SELECT vcn_id, cargo_name FROM vcn_export_cargo_declaration WHERE vcn_id = ANY(%s) AND cargo_name IS NOT NULL', (vids,))
+            ec = cur.fetchall()
+            cur.execute('SELECT vcn_id, cargo_name FROM vcn_consigners WHERE vcn_id = ANY(%s) AND cargo_name IS NOT NULL', (vids,))
+            cc = cur.fetchall()
+            vcn_c_dict = {}
+            for row_list in [ic, ec, cc]:
+                for c in row_list:
+                    vid = c['vcn_id']
+                    if vid not in vcn_c_dict:
+                        vcn_c_dict[vid] = []
+                    vcn_c_dict[vid].append(c['cargo_name'])
+            for vid, cnames in vcn_c_dict.items():
+                lid = ldud_vcn_map.get(vid)
+                if lid:
+                    ldud_cargo_display[lid] = ', '.join(cnames)
+
         cur.execute("""
             WITH parcel_consignee AS (
                 SELECT 
@@ -1532,6 +1563,10 @@ def _get_bvsa_payload(selected_date):
             GROUP BY lh.id, lh.vessel_name, lh.cast_off_datetime, po.cargo_name, pc.consignee_name, vc.cargo_sub_category_2, vc.cargo_category, vc.cargo_type
             ORDER BY lh.cast_off_datetime
         """, (window_end,))
+
+        live_vessels = {}
+        vessel_order = []
+
         for r in cur.fetchall():
             co_dt = _parse_entry_dt(r.get('cast_off_datetime'))
             if not co_dt:
@@ -1548,17 +1583,59 @@ def _get_bvsa_payload(selected_date):
             m_obj['actual'][cat] += q
             m_obj['actual']['total'] += q
 
+            lid = r.get('ldud_id')
+            if lid not in live_vessels:
+                vessel_order.append(lid)
+                live_vessels[lid] = {
+                    'month': m_obj['label'],
+                    'vessel_name': r.get('vessel_name') or '-',
+                    'cargos': [],
+                    'customers': [],
+                    'quantity': 0.0,
+                    'edible': 0.0,
+                    'other': 0.0,
+                    'chemical': 0.0,
+                    'pol': 0.0,
+                }
+            v_rec = live_vessels[lid]
+            v_rec['quantity'] += q
+            if cat == 'edible':
+                v_rec['edible'] += q
+            elif cat == 'other':
+                v_rec['other'] += q
+            elif cat == 'chemical':
+                v_rec['chemical'] += q
+            elif cat == 'pol':
+                v_rec['pol'] += q
+
+            if c_name and c_name != '-':
+                v_rec['cargos'].append(c_name.strip())
+
+            cust = (r.get('customer') or '').strip()
+            if cust and cust not in ('-', 'Live Operation'):
+                for c_part in cust.split(','):
+                    cp = c_part.strip()
+                    if cp and cp not in v_rec['customers']:
+                        v_rec['customers'].append(cp)
+
+        for lid in vessel_order:
+            v_rec = live_vessels[lid]
+            cargo_str = ldud_cargo_display.get(lid)
+            if not cargo_str:
+                cargo_str = ', '.join(v_rec['cargos']) if v_rec['cargos'] else '-'
+            customer_str = ', '.join(v_rec['customers']) if v_rec['customers'] else 'Live Operation'
+
             vessels.append({
                 'sr_no': sr,
-                'month': m_obj['label'],
-                'vessel_name': r.get('vessel_name') or '-',
-                'cargo': c_name or '-',
-                'customer': r.get('customer') or 'Live Operation',
-                'quantity': q,
-                'edible': q if cat == 'edible' else 0.0,
-                'other': q if cat == 'other' else 0.0,
-                'chemical': q if cat == 'chemical' else 0.0,
-                'pol': q if cat == 'pol' else 0.0,
+                'month': v_rec['month'],
+                'vessel_name': v_rec['vessel_name'],
+                'cargo': cargo_str,
+                'customer': customer_str,
+                'quantity': v_rec['quantity'],
+                'edible': v_rec['edible'],
+                'other': v_rec['other'],
+                'chemical': v_rec['chemical'],
+                'pol': v_rec['pol'],
             })
             sr += 1
 
