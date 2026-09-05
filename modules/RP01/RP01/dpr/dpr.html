@@ -623,6 +623,40 @@
     .vessel-month-alt {
         background: #EAF2F8 !important;
     }
+
+    #tblBvsaVessels {
+        width: 100%;
+        min-width: 1250px;
+        table-layout: fixed;
+    }
+
+    .th-resizable {
+        position: relative;
+        padding-right: 14px !important;
+    }
+
+    .col-resizer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 8px;
+        cursor: col-resize;
+        user-select: none;
+        height: 100%;
+        z-index: 10;
+    }
+
+    .col-resizer:hover,
+    .col-resizer.is-resizing {
+        background-color: rgba(96, 165, 250, 0.4);
+        border-right: 2px solid #3b82f6;
+    }
+
+    .td-truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
 </style>
 
 <div class="dpr-wrapper">
@@ -711,16 +745,38 @@
                         <h4>FY 2026-27 COMPLETED VESSEL PERFORMANCE DETAILS</h4>
                     </div>
                     <div style="overflow-x:auto;">
-                        <table class="excel-table" id="tblBvsaVessels" style="width:100%;">
+                        <table class="excel-table" id="tblBvsaVessels">
+                            <colgroup>
+                                <col style="width:40px;">
+                                <col style="width:75px;">
+                                <col style="width:170px;" id="colVessel">
+                                <col style="width:230px;" id="colCargo">
+                                <col style="width:230px;" id="colCustomer">
+                                <col style="width:100px;">
+                                <col style="width:90px;">
+                                <col style="width:95px;">
+                                <col style="width:95px;">
+                                <col style="width:95px;">
+                                <col style="width:95px;">
+                            </colgroup>
                             <thead>
                                 <!-- Floating Category Sums Row (Image 1 & 2) -->
                                 <tr id="tblBvsaVesselsSums"></tr>
                                 <tr>
                                     <th class="th-sub-blue" style="width:40px;">#</th>
                                     <th class="th-sub-blue" style="width:75px;">Month</th>
-                                    <th class="th-sub-blue" style="width:160px;min-width:130px;">Vessel Name</th>
-                                    <th class="th-sub-blue" style="width:220px;min-width:160px;resize:horizontal;overflow:auto;" title="Drag edge to resize column">Cargo</th>
-                                    <th class="th-sub-blue" style="width:230px;min-width:160px;resize:horizontal;overflow:auto;" title="Drag edge to resize column">Customer</th>
+                                    <th class="th-sub-blue th-resizable" style="width:170px;" data-col-id="colVessel" data-min-width="120" title="Drag right edge to resize column">
+                                        Vessel Name
+                                        <div class="col-resizer"></div>
+                                    </th>
+                                    <th class="th-sub-blue th-resizable" style="width:230px;" data-col-id="colCargo" data-min-width="150" title="Drag right edge to resize column">
+                                        Cargo
+                                        <div class="col-resizer"></div>
+                                    </th>
+                                    <th class="th-sub-blue th-resizable" style="width:230px;" data-col-id="colCustomer" data-min-width="150" title="Drag right edge to resize column">
+                                        Customer
+                                        <div class="col-resizer"></div>
+                                    </th>
                                     <th class="th-sub-blue" style="text-align:right;width:100px;">Quantity</th>
                                     <th class="th-sub-blue" style="text-align:right;width:90px;">Month Total</th>
                                     <th class="th-sub-blue" style="text-align:right;width:95px;">Edible Oil</th>
@@ -1424,9 +1480,9 @@
                 <tr class="${rowClass}">
                     <td class="center" style="color:#64748b;">${v.sr_no}</td>
                     <td class="center bold">${v.month}</td>
-                    <td class="bold" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${v.vessel_name}">${v.vessel_name}</td>
-                    <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${v.cargo}">${cargoColorBadges(v.cargo)}</td>
-                    <td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#334155;" title="${v.customer}">${v.customer}</td>
+                    <td class="bold td-truncate" title="${v.vessel_name}">${v.vessel_name}</td>
+                    <td class="td-truncate" title="${v.cargo}">${cargoColorBadges(v.cargo)}</td>
+                    <td class="td-truncate" style="color:#334155;" title="${v.customer}">${v.customer}</td>
                     <td class="num bold">${fmtNum3(v.quantity)}</td>
                     <td class="num" style="${mTotalStyle}">${mTotalVal}</td>
                     <td class="num">${v.edible > 0 ? fmtNum3(v.edible) : ''}</td>
@@ -1462,6 +1518,59 @@
                 </tr>
             `;
         }
+
+        initBvsaColumnResizing();
+    }
+
+    let bvsaResizersInitialized = false;
+    function initBvsaColumnResizing() {
+        if (bvsaResizersInitialized) return;
+        const table = document.getElementById('tblBvsaVessels');
+        if (!table) return;
+
+        const resizers = table.querySelectorAll('.col-resizer');
+        resizers.forEach(resizer => {
+            resizer.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const th = resizer.parentElement;
+                const colId = th.dataset.colId;
+                const colElem = colId ? document.getElementById(colId) : null;
+                const startX = e.pageX;
+                const startThWidth = th.offsetWidth;
+                const startTableWidth = table.offsetWidth;
+                const minWidth = parseInt(th.dataset.minWidth || '120', 10);
+
+                resizer.classList.add('is-resizing');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+
+                function onMouseMove(e) {
+                    const diff = e.pageX - startX;
+                    const newThWidth = Math.max(minWidth, startThWidth + diff);
+                    th.style.width = newThWidth + 'px';
+                    if (colElem) {
+                        colElem.style.width = newThWidth + 'px';
+                    }
+                    const newTableWidth = Math.max(startTableWidth + (newThWidth - startThWidth), 1250);
+                    table.style.width = newTableWidth + 'px';
+                    table.style.minWidth = newTableWidth + 'px';
+                }
+
+                function onMouseUp() {
+                    resizer.classList.remove('is-resizing');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                }
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        });
+        bvsaResizersInitialized = true;
     }
 </script>
 {% endblock %}
