@@ -473,7 +473,8 @@
         background: #ffffff;
     }
 
-    table.excel-table th, table.excel-table td {
+    table.excel-table th,
+    table.excel-table td {
         border: 1px solid #b7b7b7;
         padding: 4px 7px;
         height: 22px;
@@ -675,7 +676,8 @@
             <!-- Loading Spinner -->
             <div id="bvsaLoading" style="text-align:center;padding:40px;display:none;">
                 <div class="spinner"></div>
-                <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading BVsA Performance Data...</div>
+                <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading BVsA Performance
+                    Data...</div>
             </div>
 
             <!-- Content Area (rendered on load) -->
@@ -716,15 +718,15 @@
                                 <tr>
                                     <th class="th-sub-blue" style="width:40px;">#</th>
                                     <th class="th-sub-blue" style="width:75px;">Month</th>
-                                    <th class="th-sub-blue">Vessel Name</th>
-                                    <th class="th-sub-blue">Cargo</th>
-                                    <th class="th-sub-blue">Customer</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Quantity</th>
+                                    <th class="th-sub-blue" style="width:160px;min-width:130px;">Vessel Name</th>
+                                    <th class="th-sub-blue" style="width:220px;min-width:160px;resize:horizontal;overflow:auto;" title="Drag edge to resize column">Cargo</th>
+                                    <th class="th-sub-blue" style="width:230px;min-width:160px;resize:horizontal;overflow:auto;" title="Drag edge to resize column">Customer</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:100px;">Quantity</th>
                                     <th class="th-sub-blue" style="text-align:right;width:90px;">Month Total</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Edible Oil</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Other liquid</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Chemical</th>
-                                    <th class="th-sub-blue" style="text-align:right;">POL</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">Edible Oil</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">Other liquid</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">Chemical</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">POL</th>
                                 </tr>
                             </thead>
                             <tbody id="tblBvsaVesselsBody"></tbody>
@@ -1354,6 +1356,24 @@
         `;
     }
 
+    const CARGO_COLORS = [
+        {bg:'#eff6ff', text:'#1d4ed8', border:'#93c5fd'},  // blue
+        {bg:'#ecfdf5', text:'#047857', border:'#6ee7b7'},  // green
+        {bg:'#ffedd5', text:'#c2410c', border:'#fdba74'},  // orange
+        {bg:'#cffafe', text:'#0e7490', border:'#67e8f9'},  // cyan
+        {bg:'#fefce8', text:'#a16207', border:'#fde047'},  // yellow
+        {bg:'#f1f5f9', text:'#475569', border:'#cbd5e1'},  // slate
+    ];
+
+    function cargoColorBadges(valStr) {
+        if (!valStr || valStr === '-') return '<span style="color:#94a3b8;">-</span>';
+        const parts = valStr.split(',').map(s => s.trim()).filter(Boolean);
+        return parts.map((p, i) => {
+            const c = CARGO_COLORS[i % CARGO_COLORS.length];
+            return `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:${c.bg};color:${c.text};border:1px solid ${c.border};margin:1px 2px;white-space:nowrap;">${p}</span>`;
+        }).join('');
+    }
+
     function renderBvsaVesselsTable(vessels) {
         const tbody = document.getElementById('tblBvsaVesselsBody');
         const tfoot = document.getElementById('tblBvsaVesselsFoot');
@@ -1404,9 +1424,9 @@
                 <tr class="${rowClass}">
                     <td class="center" style="color:#64748b;">${v.sr_no}</td>
                     <td class="center bold">${v.month}</td>
-                    <td class="bold">${v.vessel_name}</td>
-                    <td>${v.cargo}</td>
-                    <td style="color:#334155;">${v.customer}</td>
+                    <td class="bold" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${v.vessel_name}">${v.vessel_name}</td>
+                    <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${v.cargo}">${cargoColorBadges(v.cargo)}</td>
+                    <td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#334155;" title="${v.customer}">${v.customer}</td>
                     <td class="num bold">${fmtNum3(v.quantity)}</td>
                     <td class="num" style="${mTotalStyle}">${mTotalVal}</td>
                     <td class="num">${v.edible > 0 ? fmtNum3(v.edible) : ''}</td>
