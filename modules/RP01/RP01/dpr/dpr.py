@@ -20,6 +20,8 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
 
 MODULE_CODE = 'RP01'
 
@@ -1223,6 +1225,352 @@ def _populate_dpr_sheet(ws, payload):
     ws.sheet_view.showGridLines = True
 
 
+from openpyxl.cell.cell import MergedCell
+
+
+def _get_budget_payload(selected_date):
+    """Build dynamic Budget & Cargo Projections payload from April up to selected/current month.
+
+    Returns:
+      tables: list of monthly table dictionaries from index 0 (April) to active_idx.
+      Each table matches the exact Cargo Projections format shown in Image 1.
+    """
+    conn = get_db()
+    cur = get_cursor(conn)
+    bvsa = _get_bvsa_payload(selected_date)
+    bvsa_months = bvsa.get('months', [])
+
+    s_yr = selected_date.year
+    s_m = selected_date.month
+    if s_m >= 4:
+        cur_fy = f"{s_yr}-{str((s_yr+1)%100).zfill(2)}"
+        prev_fy = f"{s_yr-1}-{str(s_yr%100).zfill(2)}"
+        cur_start_yr = s_yr
+        prev_start_yr = s_yr - 1
+        active_idx = s_m - 4
+    else:
+        cur_fy = f"{s_yr-1}-{str(s_yr%100).zfill(2)}"
+        prev_fy = f"{s_yr-2}-{str((s_yr-1)%100).zfill(2)}"
+        cur_start_yr = s_yr - 1
+        prev_start_yr = s_yr - 2
+        active_idx = s_m + 8
+
+    MONTH_NAMES = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar']
+
+    # 1. Targets & Outlook from financial_year_targets
+    cur.execute("SELECT targets FROM financial_year_targets WHERE financial_year = %s", (cur_fy,))
+    fy_row = cur.fetchone()
+    targets_data = []
+    if fy_row and fy_row.get('targets'):
+        t = fy_row['targets']
+        if isinstance(t, str):
+            import json
+            t = json.loads(t)
+        targets_data = t.get('targets', []) if isinstance(t, dict) else []
+
+    cat_budgets = {'edible': [0.0]*12, 'other_chem': [0.0]*12, 'pol': [0.0]*12}
+    cat_outlooks = {'edible': [0.0]*12, 'other_chem': [0.0]*12, 'pol': [0.0]*12}
+    for item in targets_data:
+        nm = (item.get('name') or '').strip().upper()
+        if 'EDIBLE' in nm or 'PALM' in nm or 'SOYA' in nm:
+            ckey = 'edible'
+        elif 'POL' in nm:
+            ckey = 'pol'
+        else:
+            ckey = 'other_chem'
+        for md in item.get('monthly_data', []):
+            m_str = (md.get('month') or '').strip()
+            if m_str in MONTH_NAMES:
+                mi = MONTH_NAMES.index(m_str)
+                b_val = float(md.get('target') or md.get('budget_quantity') or 0.0)
+                o_val = float(md.get('outlook') or 0.0)
+                cat_budgets[ckey][mi] += b_val
+                cat_outlooks[ckey][mi] += (o_val if o_val > 0 else b_val)
+
+    # 2. Previous year actuals by month from mis_history / mis_vessel_master
+    prev_months_jsw = [f"{MONTH_NAMES[i]}-{str(prev_start_yr%100).zfill(2)}" for i in range(12)]
+    cur.execute("""
+        SELECT month_jsw, cargo_name, cargo_sub_category, cargo_sub_category_2, quantity
+        FROM mis_history
+        WHERE fin_year = %s OR month_jsw = ANY(%s)
+    """, (prev_fy, prev_months_jsw))
+    prev_rows = cur.fetchall()
+
+    db_prev_m_act = {i: {'edible': 0.0, 'other_chem': 0.0, 'pol': 0.0} for i in range(12)}
+    for r in prev_rows:
+        c = _classify_bvsa_cargo(r['cargo_name'], r.get('cargo_sub_category_2'), r.get('cargo_category'), r.get('cargo_sub_category'))
+        q = float(r['quantity'] or 0.0)
+        ckey = 'edible' if c == 'edible' else ('pol' if c == 'pol' else 'other_chem')
+        mj = (r['month_jsw'] or '').strip()
+        if mj in prev_months_jsw:
+            mi = prev_months_jsw.index(mj)
+            db_prev_m_act[mi][ckey] += q
+
+    categories = [
+        ('Edible Oil', 'edible'),
+        ('Phosphoric Acid/Lube/Chemical', 'other_chem'),
+        ('POL', 'pol'),
+    ]
+
+    tables = []
+    cum_actuals = {'edible': 0.0, 'other_chem': 0.0, 'pol': 0.0}
+    cum_prev_actuals = {'edible': 0.0, 'other_chem': 0.0, 'pol': 0.0}
+
+    cur_fy_lbl = f"YTD {cur_fy[2:4]}-{cur_fy[5:7]}"
+    prev_fy_lbl = f"YTD {prev_fy[2:4]}-{prev_fy[5:7]}"
+
+    # Loop from April (0) up to active_idx - 100% dynamic from database
+    for mi in range(active_idx + 1):
+        m_yr = cur_start_yr if mi < 9 else cur_start_yr + 1
+        prev_m_yr = prev_start_yr if mi < 9 else prev_start_yr + 1
+        nxt_i = min(mi + 1, 11)
+        nxt_yr = cur_start_yr if nxt_i < 9 else cur_start_yr + 1
+
+        cur_m_lbl = f"{MONTH_NAMES[mi]}'{str(m_yr%100).zfill(2)}"
+        prev_m_lbl = f"{MONTH_NAMES[mi]}'{str(prev_m_yr%100).zfill(2)}"
+        next_m_lbl = f"{MONTH_NAMES[nxt_i]}'{str(nxt_yr%100).zfill(2)}"
+
+        # Actuals: 100% dynamic from database (mis_vessel_master for Apr-Jun, LDUD operational logs for Jul onwards)
+        b_act = bvsa_months[mi]['actual'] if mi < len(bvsa_months) else {}
+        cur_act = {
+            'edible': float(b_act.get('edible', 0.0) or 0.0),
+            'other_chem': float(b_act.get('other', 0.0) or 0.0) + float(b_act.get('chemical', 0.0) or 0.0),
+            'pol': float(b_act.get('pol', 0.0) or 0.0),
+        }
+        prev_act = db_prev_m_act[mi]
+
+        for ckey in ('edible', 'other_chem', 'pol'):
+            cum_actuals[ckey] += cur_act[ckey]
+            cum_prev_actuals[ckey] += prev_act[ckey]
+
+        rem_months = max(12 - (mi + 1), 1)
+
+        projections = []
+        tot_proj = {
+            'category': 'Total Cargo Budget',
+            'full_year_budget': 0.0,
+            'cur_month_budget': 0.0,
+            'cur_month_actual': 0.0,
+            'cur_month_var': 0.0,
+            'prev_month_actual': 0.0,
+            'ytd_budget': 0.0,
+            'ytd_actual': 0.0,
+            'prev_ytd_actual': 0.0,
+            'asking_rate': 0.0,
+            'next_month_budget': 0.0,
+            'next_month_outlook': 0.0,
+        }
+
+        for cat_name, ckey in categories:
+            fy_b = sum(cat_budgets[ckey])
+            cur_b = cat_budgets[ckey][mi]
+            cur_a = cur_act[ckey]
+            cur_var = cur_a - cur_b
+            p_m_a = prev_act[ckey]
+
+            ytd_b = sum(cat_budgets[ckey][:mi+1])
+            ytd_a = cum_actuals[ckey]
+            p_ytd_a = cum_prev_actuals[ckey]
+
+            bal = max(fy_b - ytd_a, 0.0)
+            asking = round(bal / rem_months)
+
+            nxt_b = cat_budgets[ckey][nxt_i]
+            nxt_o = cat_outlooks[ckey][nxt_i]
+
+            row = {
+                'category': cat_name,
+                'full_year_budget': fy_b,
+                'cur_month_budget': cur_b,
+                'cur_month_actual': cur_a,
+                'cur_month_var': cur_var,
+                'prev_month_actual': p_m_a,
+                'ytd_budget': ytd_b,
+                'ytd_actual': ytd_a,
+                'prev_ytd_actual': p_ytd_a,
+                'asking_rate': asking,
+                'next_month_budget': nxt_b,
+                'next_month_outlook': nxt_o,
+            }
+            projections.append(row)
+
+            for k in tot_proj:
+                if k != 'category':
+                    tot_proj[k] += row[k]
+
+        tot_proj['cur_month_var'] = tot_proj['cur_month_actual'] - tot_proj['cur_month_budget']
+
+        tables.append({
+            'month_idx': mi,
+            'cur_month_label': cur_m_lbl,
+            'prev_month_label': prev_m_lbl,
+            'cur_ytd_label': cur_fy_lbl,
+            'prev_ytd_label': prev_fy_lbl,
+            'next_month_label': next_m_lbl,
+            'projections': projections,
+            'total_projection': tot_proj,
+        })
+
+    active_table = tables[-1] if tables else {}
+    return {
+        'fy_label': cur_fy,
+        'report_date': selected_date.strftime('%Y-%m-%d'),
+        'active_month_idx': active_idx,
+        'tables': tables,
+        'cur_month_label': active_table.get('cur_month_label', ''),
+        'prev_month_label': active_table.get('prev_month_label', ''),
+        'cur_ytd_label': cur_fy_lbl,
+        'prev_ytd_label': prev_fy_lbl,
+        'next_month_label': active_table.get('next_month_label', ''),
+        'projections': active_table.get('projections', []),
+        'total_projection': active_table.get('total_projection', {}),
+    }
+
+
+def _populate_budget_sheet(ws, payload):
+    """Populate Budget sheet matching the stacked Cargo Projections layout (Image 1)."""
+    FONT = 'Calibri'
+    thin_black = Side(style='thin', color='000000')
+    border_cell = Border(left=thin_black, right=thin_black, top=thin_black, bottom=thin_black)
+    border_total = Border(left=thin_black, right=thin_black, top=thin_black, bottom=Side(style='double', color='000000'))
+
+    fill_hdr = PatternFill('solid', fgColor='B4C6E7')
+    fill_total = PatternFill('solid', fgColor='C6EFCE')
+    fill_white = PatternFill('solid', fgColor='FFFFFF')
+
+    font_hdr = Font(name=FONT, size=10, bold=True, color='000000')
+    font_bold = Font(name=FONT, size=10, bold=True, color='000000')
+    font_norm = Font(name=FONT, size=10, color='000000')
+
+    align_center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_left = Alignment(horizontal='left', vertical='center')
+    align_right = Alignment(horizontal='right', vertical='center')
+
+    NUM = '#,##0'
+
+    def set_cell(addr, value=None, font=font_norm, fill=fill_white, align=align_right, fmt=None, bdr=border_cell):
+        c = ws[addr]
+        if not isinstance(c, MergedCell):
+            c.value = value
+        c.font = font
+        c.fill = fill
+        c.alignment = align
+        c.border = bdr
+        if fmt and not isinstance(c, MergedCell):
+            c.number_format = fmt
+        return c
+
+    tables = payload.get('tables', [])
+    if not tables:
+        tables = [payload]
+
+    cur_row = 1
+    for t in tables:
+        cur_m_lbl = t.get('cur_month_label', 'Current Month')
+        prev_m_lbl = t.get('prev_month_label', 'Prev Year')
+        cur_ytd_lbl = t.get('cur_ytd_label', 'YTD')
+        prev_ytd_lbl = t.get('prev_ytd_label', 'Prev YTD')
+        next_m_lbl = t.get('next_month_label', 'Next Month')
+
+        r1 = cur_row
+        r2 = cur_row + 1
+
+        # Row 1 Headers
+        ws.merge_cells(f'A{r1}:A{r2}')
+        set_cell(f'A{r1}', 'Cargo Projections', font_hdr, fill_hdr, align_left)
+        set_cell(f'A{r2}', None, font_hdr, fill_hdr, align_left)
+
+        ws.merge_cells(f'B{r1}:B{r2}')
+        set_cell(f'B{r1}', 'Full Year\nBudget', font_hdr, fill_hdr, align_center)
+        set_cell(f'B{r2}', None, font_hdr, fill_hdr, align_center)
+
+        ws.merge_cells(f'C{r1}:E{r1}')
+        set_cell(f'C{r1}', cur_m_lbl, font_hdr, fill_hdr, align_center)
+        set_cell(f'D{r1}', None, font_hdr, fill_hdr, align_center)
+        set_cell(f'E{r1}', None, font_hdr, fill_hdr, align_center)
+
+        set_cell(f'F{r1}', prev_m_lbl, font_hdr, fill_hdr, align_center)
+
+        ws.merge_cells(f'G{r1}:H{r1}')
+        set_cell(f'G{r1}', cur_ytd_lbl, font_hdr, fill_hdr, align_center)
+        set_cell(f'H{r1}', None, font_hdr, fill_hdr, align_center)
+
+        set_cell(f'I{r1}', prev_ytd_lbl, font_hdr, fill_hdr, align_center)
+
+        ws.merge_cells(f'J{r1}:J{r2}')
+        set_cell(f'J{r1}', 'Asking Rate\nper month', font_hdr, fill_hdr, align_center)
+        set_cell(f'J{r2}', None, font_hdr, fill_hdr, align_center)
+
+        ws.merge_cells(f'K{r1}:L{r1}')
+        set_cell(f'K{r1}', next_m_lbl, font_hdr, fill_hdr, align_center)
+        set_cell(f'L{r1}', None, font_hdr, fill_hdr, align_center)
+
+        # Row 2 Subheaders
+        set_cell(f'C{r2}', 'Budget', font_hdr, fill_hdr, align_center)
+        set_cell(f'D{r2}', 'Actual', font_hdr, fill_hdr, align_center)
+        set_cell(f'E{r2}', 'Var.', font_hdr, fill_hdr, align_center)
+
+        set_cell(f'F{r2}', 'Actual', font_hdr, fill_hdr, align_center)
+
+        set_cell(f'G{r2}', 'Budget', font_hdr, fill_hdr, align_center)
+        set_cell(f'H{r2}', 'Actual', font_hdr, fill_hdr, align_center)
+
+        set_cell(f'I{r2}', 'Actual', font_hdr, fill_hdr, align_center)
+
+        set_cell(f'K{r2}', 'Budget', font_hdr, fill_hdr, align_center)
+        set_cell(f'L{r2}', 'Outlook', font_hdr, fill_hdr, align_center)
+
+        ws.row_dimensions[r1].height = 24
+        ws.row_dimensions[r2].height = 20
+
+        projections = t.get('projections', [])
+        first_data_rw = r2 + 1
+        last_data_rw = first_data_rw + len(projections) - 1
+
+        for idx, r in enumerate(projections):
+            rw = first_data_rw + idx
+            ws.row_dimensions[rw].height = 20
+            set_cell(f'A{rw}', r['category'], font_bold, fill_white, align_left)
+            set_cell(f'B{rw}', r['full_year_budget'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'C{rw}', r['cur_month_budget'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'D{rw}', r['cur_month_actual'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'E{rw}', f'=D{rw}-C{rw}', font_norm, fill_white, align_right, NUM)
+            set_cell(f'F{rw}', r['prev_month_actual'] if r['prev_month_actual'] > 0 else None, font_norm, fill_white, align_right, NUM if r['prev_month_actual'] > 0 else None)
+            set_cell(f'G{rw}', r['ytd_budget'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'H{rw}', r['ytd_actual'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'I{rw}', r['prev_ytd_actual'] if r['prev_ytd_actual'] > 0 else None, font_norm, fill_white, align_right, NUM if r['prev_ytd_actual'] > 0 else None)
+            set_cell(f'J{rw}', r['asking_rate'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'K{rw}', r['next_month_budget'], font_norm, fill_white, align_right, NUM)
+            set_cell(f'L{rw}', r['next_month_outlook'], font_norm, fill_white, align_right, NUM)
+
+        tot_rw = last_data_rw + 1
+        ws.row_dimensions[tot_rw].height = 22
+        set_cell(f'A{tot_rw}', 'Total Cargo Budget', font_bold, fill_total, align_left, bdr=border_total)
+        set_cell(f'B{tot_rw}', f'=SUM(B{first_data_rw}:B{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'C{tot_rw}', f'=SUM(C{first_data_rw}:C{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'D{tot_rw}', f'=SUM(D{first_data_rw}:D{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'E{tot_rw}', f'=D{tot_rw}-C{tot_rw}', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'F{tot_rw}', f'=SUM(F{first_data_rw}:F{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'G{tot_rw}', f'=SUM(G{first_data_rw}:G{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'H{tot_rw}', f'=SUM(H{first_data_rw}:H{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'I{tot_rw}', f'=SUM(I{first_data_rw}:I{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'J{tot_rw}', f'=SUM(J{first_data_rw}:J{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'K{tot_rw}', f'=SUM(K{first_data_rw}:K{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+        set_cell(f'L{tot_rw}', f'=SUM(L{first_data_rw}:L{last_data_rw})', font_bold, fill_total, align_right, NUM, bdr=border_total)
+
+        cur_row = tot_rw + 3
+
+    col_widths = {
+        'A': 32, 'B': 16, 'C': 12, 'D': 12, 'E': 12, 'F': 14,
+        'G': 14, 'H': 14, 'I': 14, 'J': 16, 'K': 14, 'L': 14
+    }
+    for col_l, width in col_widths.items():
+        ws.column_dimensions[col_l].width = width
+
+    ws.sheet_view.showGridLines = True
+    return ws
+
+
 @bp.route('/api/module/RP01/dpr/export')
 @login_required
 def dpr_export():
@@ -1240,6 +1588,12 @@ def dpr_export():
     # Sheet 2: BVsA FY 2027
     ws_bvsa = wb.create_sheet(title="BVsA FY 2027")
     _populate_bvsa_sheet(ws_bvsa, bvsa_payload)
+
+    # Sheet 3: Budget – dynamically calculated from the same database sources.
+    budget_payload = _get_budget_payload(selected_date)
+    ws_budget = wb.create_sheet(title="Budget")
+    _populate_budget_sheet(ws_budget, budget_payload)
+
 
     buf = BytesIO()
     wb.save(buf)
@@ -1888,6 +2242,20 @@ def _get_bvsa_payload(selected_date):
         conn.close()
 
 
+@bp.route('/api/module/RP01/dpr/budget')
+@login_required
+def dpr_budget_data():
+    """Return the dynamic Budget payload for the Budget tab."""
+    try:
+        selected_date = _parse_date(request.args.get('date'))
+        return jsonify(_get_budget_payload(selected_date))
+    except Exception as e:
+        import traceback, sys
+        tb = traceback.format_exc()
+        print(f"[DPR BUDGET ERROR] {e}\n{tb}", file=sys.stderr, flush=True)
+        return jsonify({'error': str(e), 'traceback': tb}), 500
+
+
 @bp.route('/api/module/RP01/dpr/bvsa')
 @login_required
 def dpr_bvsa_data():
@@ -2090,6 +2458,12 @@ def _populate_bvsa_sheet(ws, payload):
     set_c(f"P{cur_r}", "=P8/P6", font=Font(name=FONT_NAME, size=16, bold=True, color="00B050"), fill=fill_white, align=right, fmt="0.0%")
 
     # 2. CARGO VOLUMES BAR CHART (Anchored at X1)
+    # Matches the UI: each bar its own color, clean "90k"-style label per bar,
+    # no legend box. The abbreviated "k" label only works because Excel uses
+    # the SOURCE CELL's number format for data labels (sourceLinked) - so we
+    # write the same values into a hidden helper row formatted as "#,##0,\"k\""
+    # and point the chart at that row, instead of formatting the visible
+    # "Actual" row (which needs to keep full 3-decimal precision for the table).
     chart = BarChart()
     chart.type = "col"
     chart.style = 10
@@ -2097,15 +2471,54 @@ def _populate_bvsa_sheet(ws, payload):
     chart.y_axis.title = None
     chart.x_axis.title = None
     chart.legend = None
+    chart.varyColors = True
+    chart.visible_cells_only = False   # let the chart read the hidden helper row below
     chart.width = 16
     chart.height = 7.5
+    chart.gapWidth = 60
+
     chart.dataLabels = DataLabelList()
     chart.dataLabels.showVal = True
+    chart.dataLabels.showLegendKey = False
+    chart.dataLabels.showSerName = False
+    chart.dataLabels.showCatName = False
+    chart.dataLabels.showPercent = False
+    chart.dataLabels.showBubbleSize = False
+    chart.dataLabels.position = "outEnd"
+    # IMPORTANT: do NOT set chart.dataLabels.numFmt here - leaving it unset
+    # makes Excel fall back to "sourceLinked" (the helper cell's own format),
+    # which is what actually makes "90k" appear instead of "90,101.916".
 
-    data_ref = Reference(ws, min_col=4, min_row=act_r, max_col=15, max_row=act_r)
+    # --- Hidden helper row: same values as the "Actual" row, but formatted
+    # with Excel's thousands-scale trick ("#,##0," divides by 1000) plus a
+    # literal "k" suffix. Placed far below the visible report so it never
+    # interferes with printing or the on-screen layout.
+    helper_r = 500
+    for i, m in enumerate(payload['months']):
+        col_let = get_column_letter(4 + i)
+        val = m['actual']['total'] if m['is_past_or_current'] else None
+        hc = ws[f"{col_let}{helper_r}"]
+        hc.value = val if (val is not None and val > 0) else None
+        hc.number_format = '#,##0,"k"'
+    ws.row_dimensions[helper_r].hidden = True
+
+    data_ref = Reference(ws, min_col=4, min_row=helper_r, max_col=15, max_row=helper_r)
     cats_ref = Reference(ws, min_col=4, min_row=1, max_col=15, max_row=1)
     chart.add_data(data_ref, from_rows=True)
     chart.set_categories(cats_ref)
+
+    # --- Different color per bar/month ---
+    BAR_COLORS = [
+        "1F4E78", "2E75B6", "5B9BD5", "70AD47", "ED7D31", "FFC000",
+        "C00000", "264478", "9E480E", "636363", "7030A0", "43682B",
+    ]
+    series = chart.series[0]
+    series.varyColors = True
+    for i, m in enumerate(payload['months']):
+        dp = DataPoint(idx=i)
+        dp.graphicalProperties = GraphicalProperties(solidFill=BAR_COLORS[i % len(BAR_COLORS)])
+        series.data_points.append(dp)
+
     ws.add_chart(chart, "X1")
 
     # 3. HISTORICAL & QUARTERLY BREAKDOWN TABLE (Under Chart, Rows 12 to 25, Cols X, Y, Z)
