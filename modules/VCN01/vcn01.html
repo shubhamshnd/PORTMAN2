@@ -1199,6 +1199,19 @@
         if (s && e && e < s) return revert('End Time cannot be before Start Time.');
     }
 
+    // A parcel removed in LUEU01 stays listed here, greyed, so the vessel's full
+    // declaration is still visible — it just no longer counts.
+    function removedRowFormatter(row) {
+        const d = row.getData();
+        if (d && d.is_removed) {
+            row.getElement().style.opacity = '0.45';
+            row.getElement().style.textDecoration = 'line-through';
+            row.getElement().title = 'Removed in LUEU01'
+                + (d.removed_reason ? ' — ' + d.removed_reason : '')
+                + '. Excluded from billing, closure and cargo totals.';
+        }
+    }
+
     async function initSubTables(vcnId, operationType = 'Import') {
         const _vcnRow = table.getRows().find(r => r.getData().id === vcnId);
         const _vcnData = _vcnRow ? _vcnRow.getData() : {};
@@ -1229,6 +1242,7 @@
             ajaxURL: `/api/module/VCN01/consigners/${vcnId}`,
             columnDefaults: { headerSort: true },   // click header to sort asc/desc
             dataLoaded: function() { renderCargoQuotas(vcnId); },
+            rowFormatter: removedRowFormatter,
             cellEdited: () => markDirty('consigners'),
             columns: [
                 {title: "Parcel No", field: "parcel_no", width: 130},
@@ -1360,6 +1374,7 @@
                 height: 150,
                 ajaxURL: `/api/module/VCN01/export_cargo/${vcnId}`,
                 columnDefaults: { headerSort: false },
+                rowFormatter: removedRowFormatter,
                 cellEdited: () => markDirty('export_cargo'),
                 columns: [
                     {title: "Parcel No", field: "parcel_no", width: 130, headerSort: false},

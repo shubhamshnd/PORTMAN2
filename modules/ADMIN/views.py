@@ -665,6 +665,8 @@ def send_mail_now():
 # VCN01 and LDUD01 no longer expose send-back; this is admin-only and every
 # reopen must carry a photo as evidence, stored on the audit row itself.
 # -----------------------------------------------------------------------------
+BILLED_NO_REOPEN = ('This vessel has been billed and can never be reopened. '
+                    'Cancel the bill first.')
 _PROOF_EXTS = ('.png', '.jpg', '.jpeg')
 _PROOF_MAX_BYTES = 5 * 1024 * 1024
 
@@ -806,7 +808,8 @@ def reopen_record():
                 return jsonify({'error': 'Record not found'}), 404
             if row['doc_status'] != 'Approved':
                 return jsonify({'error': 'Only Approved records can be reopened'}), 400
-            billed = bool(_billed_vcn_ids(cur, {int(record_id)}))
+            if _billed_vcn_ids(cur, {int(record_id)}):
+                return jsonify({'error': BILLED_NO_REOPEN}), 409
             cur.execute("UPDATE vcn_header SET doc_status='Draft' WHERE id=%s", (record_id,))
             docs_removed = 0
         else:
@@ -815,7 +818,8 @@ def reopen_record():
             row = cur.fetchone()
             if not row:
                 return jsonify({'error': 'Record not found'}), 404
-            billed = bool(_billed_vcn_ids(cur, {row['vcn_id']}))
+            if _billed_vcn_ids(cur, {row['vcn_id']}):
+                return jsonify({'error': BILLED_NO_REOPEN}), 409
             # Reopening discards the proof-of-quantity documents; the UI warns first.
             cur.execute('SELECT COUNT(*) AS cnt FROM ldud_proof_documents WHERE ldud_id=%s',
                         (record_id,))
@@ -823,10 +827,8 @@ def reopen_record():
             cur.execute('DELETE FROM ldud_proof_documents WHERE ldud_id=%s', (record_id,))
             cur.execute("UPDATE ldud_header SET doc_status='Draft' WHERE id=%s", (record_id,))
 
-        # The billed lock is NOT cleared - the record stays locked against every
-        # other write path until the bill is cancelled. Kept as a distinct action
-        # so a billed reopen stays greppable in the audit trail.
-        action = 'Force Reopen (Billed)' if billed else 'Back to Draft'
+        # A billed record is refused above - there is deliberately no override.
+        action = 'Back to Draft'
         note = comment
         if docs_removed:
             note = comment + ' [' + str(docs_removed) + ' proof doc(s) deleted]'
@@ -845,7 +847,7 @@ def reopen_record():
         conn.close()
 
     _notify_reopen(module, record_id, comment, username)
-    return jsonify({'success': True, 'docs_removed': docs_removed, 'was_billed': billed})
+    return jsonify({'success': True, 'docs_removed': docs_removed})
 
 
 @bp.route('/api/approval-proof/<int:log_id>')

@@ -1,8 +1,8 @@
 """Integration checks for the finance-parity work, against the dev DB with
 throwaway rows that are always cleaned up:
 
-  * LDUD01 billed lock (409 on every write; reopen now lives in ADMIN and
-    still logs the billed override)
+  * LDUD01 billed lock (409 on every write; reopen lives in ADMIN and is
+    refused outright for a billed vessel)
   * billing customer picker counts (?with_billables=1)
   * Admin Cutover flagging, unmarking and the lock
   * seeded bill numbering
@@ -117,7 +117,8 @@ def _post_reopen(module, record_id, comment, admin=True, with_proof=True, user_i
         session['username'] = 'pytest'
         if admin:
             session['is_admin'] = True
-        return admin_views.reopen_record()
+        res = admin_views.reopen_record()
+        return res if isinstance(res, tuple) else (res, 200)
 
 
 def test_billed_vessel_locks_every_ldud_write(monkeypatch):
@@ -150,16 +151,19 @@ def test_billed_vessel_locks_every_ldud_write(monkeypatch):
         body, status = _post_reopen('LDUD01', ldud_id, 'no proof', with_proof=False)
         assert status == 400 and 'proof image is required' in body.get_json()['error']
 
-        # Admin reopen with proof: succeeds, logged as the billed override,
-        # and the proof image is stored on the audit row.
-        body = _post_reopen('LDUD01', ldud_id, 'legacy correction')
-        assert body.get_json()['success'] is True
-        assert body.get_json()['was_billed'] is True
-        log = ldud.model.get_closure_log(ldud_id)
-        assert 'Force Reopen (Billed)' in [r['action'] for r in log]
-        assert any(r['has_proof'] for r in log)
+        # A billed vessel can NEVER be reopened — there is no admin override.
+        body, status = _post_reopen('LDUD01', ldud_id, 'legacy correction')
+        assert status == 409
+        assert 'never be reopened' in body.get_json()['error']
 
-        # The override changes doc_status only — the ledger still holds the lock.
+        # Refused means refused: status untouched, nothing written to the log,
+        # and the proof documents are still there (the delete sits after the
+        # billed check, so a refusal must not destroy them).
+        conn = get_db(); cur = get_cursor(conn)
+        cur.execute('SELECT doc_status FROM ldud_header WHERE id=%s', [ldud_id])
+        assert cur.fetchone()['doc_status'] == 'Closed'
+        conn.close()
+        assert 'Back to Draft' not in [r['action'] for r in ldud.model.get_closure_log(ldud_id)]
         assert fin.is_vcn_billed(vcn_id) is True
     finally:
         conn = get_db(); cur = get_cursor(conn)

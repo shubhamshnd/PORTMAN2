@@ -113,6 +113,15 @@ def get_data(page=1, size=20, filters=None):
                            GROUP BY po.ldud_id''', ([r['id'] for r in rows],))
             shortclose = {s['ldud_id']: float(s['sc'] or 0) for s in cur.fetchall()}
 
+        # Amended (additional) quantity per LDUD — added to the displayed BL total
+        # so the grid agrees with LUEU01 and the closure screen.
+        additional = {}
+        if rows:
+            cur.execute('''SELECT ldud_id, COALESCE(SUM(additional_qty), 0) AS a
+                           FROM ldud_parcel_ops WHERE ldud_id = ANY(%s)
+                           GROUP BY ldud_id''', ([r['id'] for r in rows],))
+            additional = {a['ldud_id']: float(a['a'] or 0) for a in cur.fetchall()}
+
         vcn_cargo = {}   # vcn_id -> {cargo_names, bl_quantities}
         vcn_agents = {}  # vcn_id -> {agent_name, stevedore_name}
         vcn_meta = {}    # vcn_id -> {doc_date}
@@ -195,7 +204,8 @@ def get_data(page=1, size=20, filters=None):
             # ponytail: single total, first non-empty UOM wins (mixed UOMs are not a real case here)
             if ci['quantities']:
                 uom = next((u for u in uoms if u), '')
-                total = sum(ci['quantities']) - shortclose.get(r['id'], 0.0)
+                total = (sum(ci['quantities']) + additional.get(r['id'], 0.0)
+                         - shortclose.get(r['id'], 0.0))
                 r['bl_quantities_display'] = f"{total:.3f} {uom}".strip()
             else:
                 r['bl_quantities_display'] = ''
@@ -285,14 +295,72 @@ def _parse_ids(csv):
     return [int(x) for x in str(csv or '').split(',') if str(x).strip().isdigit()]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Parcel target resolution — THE single source of truth.
+#
+# "How much is this parcel-op supposed to handle?" was hand-rolled in four
+# places (get_closure_eligibility, LUEU01.get_started_parcels,
+# LUEU01._single_parcel_target, RP01/JJLTPL._lueu_target_qty), three of them
+# carrying comments admitting they were copies. Divergent copies of one
+# quantity is exactly what produced the MT Hodaka Galaxy double-count, so every
+# screen that shows a BL/target figure now calls these.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _qty(v):
+    """Parse a quantity that may be TEXT with thousands separators."""
+    try:
+        return float(str(v).replace(',', '')) if v not in (None, '') else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def parcel_source_table(operation_type):
+    """Which VCN table holds this operation type's parcels. Whitelisted — the
+    two literals are the only values, so callers may interpolate them."""
+    return 'vcn_export_cargo_declaration' if operation_type == 'Export' else 'vcn_consigners'
+
+
+def source_quantities(cur, tbl, ids):
+    """{parcel id: live declared quantity} from the operation-type source table.
+
+    A REMOVED parcel is present with 0.0 rather than omitted - the difference
+    matters: omitted means 'could not resolve' and triggers the op-snapshot
+    fallback in effective_target, which would resurrect the very quantity a
+    removal is meant to take away."""
+    if not ids:
+        return {}
+    cur.execute(f'SELECT id, quantity, COALESCE(is_removed, FALSE) AS is_removed '
+                f'FROM {tbl} WHERE id = ANY(%s)', [list(ids)])
+    return {r['id']: (0.0 if r['is_removed'] else _qty(r['quantity']))
+            for r in cur.fetchall()}
+
+
+def effective_target(src_qty, parcel_ids, op_qty, additional_qty=0):
+    """Target quantity for one parcel-op: the sum of its live VCN parcel
+    quantities, falling back to the op's own snapshot when they cannot be
+    resolved (deleted parcels, legacy rows), PLUS any amended additional
+    quantity recorded in LUEU01.
+
+    additional_qty exists so a vessel that discharges more than its declared BL
+    can be reconciled without editing the VCN. The declared quantity stays as
+    declared; the amendment sits on the op. Because every screen resolves the
+    target through here, the raised target reaches LUEU01, LDUD01 closure,
+    BPL01 and the reports at once."""
+    # Fall back to the op snapshot only when NOTHING resolved. A parcel that
+    # resolved to zero (removed, or genuinely zero) is an answer, not a miss -
+    # `or op_qty` would otherwise quietly undo a removal.
+    resolved = [src_qty[i] for i in parcel_ids if i in src_qty]
+    declared = sum(resolved) if resolved else _qty(op_qty)
+    return declared + _qty(additional_qty)
+
+
 def _parcel_table_for_ldud(cur, ldud_id):
     """Return the VCN parcel source table for this LDUD based on operation_type."""
     cur.execute('''SELECT h.operation_type
                    FROM ldud_header l JOIN vcn_header h ON h.id = l.vcn_id
                    WHERE l.id=%s''', [ldud_id])
     row = cur.fetchone()
-    op = (row or {}).get('operation_type') if row else None
-    return 'vcn_export_cargo_declaration' if op == 'Export' else 'vcn_consigners'
+    return parcel_source_table((row or {}).get('operation_type') if row else None)
 
 
 def get_parcel_ops(ldud_id):
@@ -332,14 +400,13 @@ def save_parcel_op(data):
     # a parcel (e.g. one parcel split over terminals) the total can't exceed it either.
     if ids and quantity is not None:
         tbl = _parcel_table_for_ldud(cur, data['ldud_id'])
-        # both source tables now use a TEXT 'quantity' column (export mirrors import)
-        cur.execute(f'SELECT quantity AS q FROM {tbl} WHERE id = ANY(%s)', (ids,))
-        cap = 0.0
-        for r in cur.fetchall():
-            try:
-                cap += float(str(r['q']).replace(',', '')) if r['q'] is not None else 0.0
-            except (ValueError, TypeError):
-                pass
+        cap = sum(source_quantities(cur, tbl, ids).values())
+        # An amended (additional) quantity raises the ceiling — that is the whole
+        # point of the amendment, so an over-discharge can be recorded without
+        # editing the VCN.
+        cur.execute('''SELECT COALESCE(SUM(additional_qty), 0) AS a
+                       FROM ldud_parcel_ops WHERE ldud_id=%s''', [data['ldud_id']])
+        cap += _qty(cur.fetchone()['a'])
         cur.execute('SELECT id, parcel_ids, quantity FROM ldud_parcel_ops WHERE ldud_id=%s', [data['ldud_id']])
         used = 0.0
         for r in cur.fetchall():
@@ -411,26 +478,14 @@ def get_closure_eligibility(ldud_id):
         missing.append('NOR Tendered (header field)')
 
     # BL total: per-op target = live source-parcel quantities, fallback op snapshot
-    cur.execute('SELECT parcel_ids, quantity AS op_qty FROM ldud_parcel_ops WHERE ldud_id=%s', [ldud_id])
+    cur.execute('''SELECT parcel_ids, quantity AS op_qty, additional_qty
+                   FROM ldud_parcel_ops WHERE ldud_id=%s''', [ldud_id])
     ops = [dict(r) for r in cur.fetchall()]
-    src_qty = {}
     all_ids = sorted({pid for o in ops for pid in _parse_ids(o['parcel_ids'])})
-    if all_ids:
-        tbl = _parcel_table_for_ldud(cur, ldud_id)
-        cur.execute(f'SELECT id, quantity FROM {tbl} WHERE id = ANY(%s)', [all_ids])
-        for r in cur.fetchall():
-            try:
-                src_qty[r['id']] = float(str(r['quantity']).replace(',', '')) if r['quantity'] is not None else 0.0
-            except (ValueError, TypeError):
-                src_qty[r['id']] = 0.0
-    bl_total = 0.0
-    for o in ops:
-        ids = _parse_ids(o['parcel_ids'])
-        try:
-            fallback = float(str(o['op_qty']).replace(',', '')) if o['op_qty'] is not None else 0.0
-        except (ValueError, TypeError):
-            fallback = 0.0
-        bl_total += sum(src_qty.get(i, 0.0) for i in ids) or fallback
+    src_qty = source_quantities(cur, _parcel_table_for_ldud(cur, ldud_id), all_ids)
+    bl_total = sum(effective_target(src_qty, _parse_ids(o['parcel_ids']), o['op_qty'],
+                                    o['additional_qty'])
+                   for o in ops)
 
     # Actual handled (LUEU01) — short-close is a write-off, NOT actual quantity
     cur.execute('''SELECT

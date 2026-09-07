@@ -10,6 +10,7 @@ from modules.FIN01 import model as fin_model
 bp = Blueprint('VCN01', __name__, template_folder='.')
 MODULE_CODE = 'VCN01'
 BILLED_LOCK_MSG = 'This vessel has been billed — the record is locked and cannot be changed.'
+APPROVED_LOCK_MSG = ('This vessel is Approved and cannot be edited. An administrator must reopen it to Draft first (Admin > Reopen to Draft).')
 
 def login_required(f):
     @wraps(f)
@@ -23,6 +24,19 @@ def _billed_locked(vcn_id):
     """Return a JSON 409 response if the VCN is billed (locked), else None."""
     if vcn_id and fin_model.is_vcn_billed(vcn_id):
         return jsonify({'error': BILLED_LOCK_MSG}), 409
+    return None
+
+
+def _approved_locked(vcn_id):
+    """Return a JSON 403 if the VCN is Approved, else None.
+
+    Approved is shut to everyone, approver included — the only way back to an
+    editable record is Admin > Reopen to Draft (which itself refuses a billed
+    vessel). The screen already hides these controls via isDraftRow(); this is
+    the server actually holding the line.
+    """
+    if vcn_id and model.get_doc_status(vcn_id) == 'Approved':
+        return jsonify({'error': APPROVED_LOCK_MSG}), 403
     return None
 
 def get_perms():
@@ -75,10 +89,6 @@ def save():
     if not is_new and not perms.get('can_edit'):
         return jsonify({'error': 'No permission to edit'}), 403
 
-    config = get_module_config('VCN01')
-    user_id = session.get('user_id')
-    is_approver = str(config.get('approver_id', '')) == str(user_id) or session.get('is_admin')
-
     if not is_new:
         locked = _billed_locked(data['id'])
         if locked:
@@ -90,13 +100,9 @@ def save():
             if model.doc_num_taken(doc_num, data['id']):
                 return jsonify({'error': f'VCN Doc {doc_num} already exists'}), 400
             data['vcn_doc_num'] = doc_num
-        current_status = model.get_doc_status(data['id'])
-        if current_status == 'Approved':
-            if not is_approver:
-                return jsonify({'error': 'Cannot edit an approved record'}), 403
-            data['doc_status'] = 'Approved'
-        else:
-            data['doc_status'] = 'Draft'
+        if model.get_doc_status(data['id']) == 'Approved':
+            return jsonify({'error': APPROVED_LOCK_MSG}), 403
+        data['doc_status'] = 'Draft'
     else:
         data['doc_status'] = 'Draft'
 
@@ -196,7 +202,8 @@ def save_consigner():
     perms = get_perms()
     if not perms.get('can_add') and not perms.get('can_edit'):
         return jsonify({'error': 'No permission'}), 403
-    locked = _billed_locked(request.json.get('vcn_id'))
+    locked = _billed_locked(request.json.get('vcn_id')) or \
+             _approved_locked(request.json.get('vcn_id'))
     if locked:
         return locked
     try:
@@ -216,7 +223,8 @@ def delete_consigner():
     # sub-table rows are deletable by anyone who can edit/add (not gated on can_delete)
     if not perms.get('can_add') and not perms.get('can_edit'):
         return jsonify({'error': 'No permission'}), 403
-    locked = _billed_locked(model.get_consigner_vcn_id(request.json.get('id')))
+    _cvcn = model.get_consigner_vcn_id(request.json.get('id'))
+    locked = _billed_locked(_cvcn) or _approved_locked(_cvcn)
     if locked:
         return locked
     vcn_id = model.delete_consigner(request.json.get('id'))
@@ -301,7 +309,8 @@ def save_export_cargo():
     perms = get_perms()
     if not perms.get('can_add') and not perms.get('can_edit'):
         return jsonify({'error': 'No permission'}), 403
-    locked = _billed_locked(request.json.get('vcn_id'))
+    locked = _billed_locked(request.json.get('vcn_id')) or \
+             _approved_locked(request.json.get('vcn_id'))
     if locked:
         return locked
     row_id = model.save_export_cargo_declaration(request.json)
@@ -318,7 +327,8 @@ def delete_export_cargo():
     # sub-table rows are deletable by anyone who can edit/add (not gated on can_delete)
     if not perms.get('can_add') and not perms.get('can_edit'):
         return jsonify({'error': 'No permission'}), 403
-    locked = _billed_locked(model.get_export_parcel_vcn_id(request.json.get('id')))
+    _evcn = model.get_export_parcel_vcn_id(request.json.get('id'))
+    locked = _billed_locked(_evcn) or _approved_locked(_evcn)
     if locked:
         return locked
     vcn_id = model.delete_export_cargo_declaration(request.json.get('id'))

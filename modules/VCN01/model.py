@@ -252,7 +252,8 @@ def _sync_header_cargo(cur, vcn_id):
     tbl = ('vcn_export_cargo_declaration'
            if (row or {}).get('operation_type') == 'Export' else 'vcn_consigners')
     cur.execute(f'SELECT DISTINCT cargo_name FROM {tbl} '
-                'WHERE vcn_id=%s AND cargo_name IS NOT NULL', [vcn_id])
+                'WHERE vcn_id=%s AND cargo_name IS NOT NULL '
+                'AND COALESCE(is_removed, FALSE) = FALSE', [vcn_id])
     names = []
     for r in cur.fetchall():
         for name in (r['cargo_name'] or '').split(','):   # consigner rows may be comma-separated
@@ -295,6 +296,58 @@ def get_parcel(row_id):
 get_consigners = get_parcels
 
 
+def _parcel_table_for_parcel(cur, row_id):
+    """Which table holds this parcel id - import consigners or export cargo."""
+    cur.execute('SELECT 1 FROM vcn_consigners WHERE id=%s', [row_id])
+    return 'vcn_consigners' if cur.fetchone() else 'vcn_export_cargo_declaration'
+
+
+def set_parcel_removed(row_id, removed, reason, username):
+    """Flag (or unflag) a VCN parcel as removed.
+
+    The row is never deleted - it stays visible (greyed) in every screen and
+    can be restored. While flagged it stops counting toward billing, closure,
+    header cargo and LUEU01 targets.
+
+    Set from LUEU01 so the operator never reopens the VCN, but stored on the
+    VCN parcel row because that is what FIN01 bills from.
+
+    Refuses a billed parcel: once invoiced the correction is a credit note,
+    not a flag."""
+    reason = (reason or '').strip()
+    if removed and not reason:
+        raise ValueError('A reason is required to remove a parcel')
+    conn = get_db()
+    cur = get_cursor(conn)
+    try:
+        tbl = _parcel_table_for_parcel(cur, row_id)
+        src = 'VCN_IMPORT' if tbl == 'vcn_consigners' else 'VCN_EXPORT'
+        cur.execute('SELECT 1 FROM parcel_charge_billed '
+                    'WHERE cargo_source_type=%s AND cargo_source_id=%s LIMIT 1',
+                    [src, row_id])
+        if removed and cur.fetchone():
+            raise ValueError('This parcel has been billed and cannot be removed - '
+                             'raise a credit note instead.')
+        if removed:
+            cur.execute(f'UPDATE {tbl} SET is_removed=TRUE, removed_reason=%s, '
+                        f'removed_by=%s, removed_date=now()::date::text WHERE id=%s',
+                        [reason, username, row_id])
+        else:
+            cur.execute(f'UPDATE {tbl} SET is_removed=FALSE, removed_reason=NULL, '
+                        f'removed_by=NULL, removed_date=NULL WHERE id=%s', [row_id])
+        if not cur.rowcount:
+            raise ValueError('Parcel not found')
+        cur.execute(f'SELECT vcn_id FROM {tbl} WHERE id=%s', [row_id])
+        _sync_header_cargo(cur, cur.fetchone()['vcn_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return True
+
+
 def _operation_type(cur, vcn_id):
     cur.execute('SELECT operation_type FROM vcn_header WHERE id=%s', [vcn_id])
     row = cur.fetchone()
@@ -310,14 +363,11 @@ def get_picker_parcels(vcn_id):
     conn = get_db()
     cur = get_cursor(conn)
     is_export = _operation_type(cur, vcn_id) == 'Export'
-    if is_export:
-        cur.execute('''SELECT id, parcel_no, cargo_name, consigner_name, quantity, unload_terminal
-                       FROM vcn_export_cargo_declaration WHERE vcn_id=%s
-                       ORDER BY parcel_seq NULLS LAST, id''', (vcn_id,))
-    else:
-        cur.execute('''SELECT id, parcel_no, cargo_name, consigner_name, quantity, unload_terminal
-                       FROM vcn_consigners WHERE vcn_id=%s
-                       ORDER BY parcel_seq NULLS LAST, id''', (vcn_id,))
+    # A removed parcel is not offered for new LDUD operations.
+    tbl = 'vcn_export_cargo_declaration' if is_export else 'vcn_consigners'
+    cur.execute(f'''SELECT id, parcel_no, cargo_name, consigner_name, quantity, unload_terminal
+                    FROM {tbl} WHERE vcn_id=%s AND COALESCE(is_removed, FALSE) = FALSE
+                    ORDER BY parcel_seq NULLS LAST, id''', (vcn_id,))
     rows = []
     for r in cur.fetchall():
         d = dict(r)
@@ -696,7 +746,8 @@ def get_approval_eligibility(vcn_id):
     tbl = 'vcn_export_cargo_declaration' if op_type == 'Export' else 'vcn_consigners'
     cur.execute(f'''SELECT parcel_no, cargo_name, quantity, consigner_name, importer_name,
                            pipeline_name, unload_terminal
-                    FROM {tbl} WHERE vcn_id=%s ORDER BY parcel_seq NULLS LAST, id''', (vcn_id,))
+                    FROM {tbl} WHERE vcn_id=%s AND COALESCE(is_removed, FALSE) = FALSE
+                    ORDER BY parcel_seq NULLS LAST, id''', (vcn_id,))
     parcels = cur.fetchall()
     conn.close()
 

@@ -125,22 +125,14 @@ def _lueu_hours(f, t):
     return mins / 60.0
 
 
-def _lueu_target_qty(cur, parcel_ids_csv, op_qty, operation_type):
-    """Current target quantity for a parcel-op: sum of its live VCN parcel
-    quantities (import or export source table), falling back to the
-    parcel-op's own snapshot quantity. Mirrors model.py::_single_parcel_target
-    / the target-resolution block in get_started_parcels."""
+def _lueu_target_qty(cur, parcel_ids_csv, op_qty, operation_type, additional_qty=0):
+    """Current target quantity for a parcel-op — shared rule, see
+    LDUD01.model.effective_target."""
+    from modules.LDUD01.model import (parcel_source_table, source_quantities,
+                                      effective_target)
     ids = _lueu_parse_ids(parcel_ids_csv)
-    tbl = 'vcn_export_cargo_declaration' if operation_type == 'Export' else 'vcn_consigners'
-    total = 0.0
-    if ids:
-        cur.execute(f'SELECT quantity FROM {tbl} WHERE id = ANY(%s)', [ids])
-        for r in cur.fetchall():
-            try:
-                total += float(str(r['quantity']).replace(',', '')) if r['quantity'] else 0.0
-            except (ValueError, TypeError):
-                pass
-    return total or float(op_qty or 0)
+    src_qty = source_quantities(cur, parcel_source_table(operation_type), ids)
+    return effective_target(src_qty, ids, op_qty, additional_qty)
 
 
 def _lueu_is_shortclose_row(r):
@@ -226,7 +218,8 @@ def _jjltpl_actual_qty_for_rows(cur, rows, label=""):
             continue
         seen_ids.add(pid)
 
-        target = _lueu_target_qty(cur, r["parcel_ids"], r["op_qty"], r["operation_type"])
+        target = _lueu_target_qty(cur, r["parcel_ids"], r["op_qty"], r["operation_type"],
+                                  r.get("additional_qty", 0))
         real_qty, hours, shortclose_qty, effective_target = _lueu_log_aggregate(cur, pid, target)
         # Actual quantity handled = what was really pumped/loaded, i.e.
         # real_qty only. Shortclose qty is NOT delivered cargo — it's a
@@ -385,6 +378,7 @@ def _jjltpl_vessels_on_berth(cur, window_start, window_end, berths):
                 TRIM(vh.cargo_type)
             ) AS cargo_type,
             po.quantity AS op_qty,
+            COALESCE(po.additional_qty, 0) AS additional_qty,
 
             NULLIF(lh.alongside_datetime,'')::timestamp AS alongside_datetime,
 
@@ -445,7 +439,8 @@ def _jjltpl_vessels_on_berth(cur, window_start, window_end, berths):
             # Same target resolution + log aggregation as the rest of the
             # report. shortclose qty reduces the effective target rather
             # than counting as delivered.
-            target = _lueu_target_qty(cur, r["parcel_ids"], r["op_qty"], r["operation_type"])
+            target = _lueu_target_qty(cur, r["parcel_ids"], r["op_qty"], r["operation_type"],
+                                  r.get("additional_qty", 0))
             real_qty, hours, shortclose_qty, effective_target = _lueu_log_aggregate(
                 cur, r["parcel_op_id"], target
             )

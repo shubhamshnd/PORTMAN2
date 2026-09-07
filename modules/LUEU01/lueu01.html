@@ -347,6 +347,15 @@
               : (p.remaining_qty > 0.01
                  ? `<button class="lueu-btn" style="background:#dc2626;color:#fff;" onclick="shortcloseParcel(${p.parcel_op_id}, ${r3(p.remaining_qty)})">Shortclose Remaining (${r3(p.remaining_qty)} MT)</button>`
                  : '')}
+            ${p.additional_qty > 0
+              ? `<button class="lueu-btn" style="background:#7c3aed;color:#fff;" onclick="clearAdditional(${p.parcel_op_id})" title="Reason: ${(p.additional_reason || '').replace(/"/g, '&quot;')}">↺ Remove Additional Qty (+${r3(p.additional_qty)} MT)</button>`
+              : `<button class="lueu-btn" style="background:#2563eb;color:#fff;" onclick="openAdditional(${p.parcel_op_id})" title="Vessel discharged more than the declared BL? Amend it here instead of editing the VCN.">+ Additional Qty</button>`}
+            ${p.is_removed
+              ? `<button class="lueu-btn" style="background:#16a34a;color:#fff;" onclick="restoreParcel(${p.parcel_op_id}, ${JSON.stringify(p.parcel_ids)})">↺ Restore Parcel</button>`
+              : `<button class="lueu-btn secondary" onclick="openRemoveParcel(${p.parcel_op_id}, ${JSON.stringify(p.parcel_ids)})" title="Cancel this parcel without editing the VCN. It stays visible and can be restored.">🚫 Remove Parcel</button>`}
+          </div>` : ''}
+          ${p.is_removed ? `<div style="background:#f1f5f9;border-left:3px solid #64748b;padding:6px 10px;margin:4px 0;font-size:11px;color:#475569;">
+            🚫 <strong>Parcel removed</strong> — excluded from billing, closure and targets. ${p.removed_reason ? 'Reason: ' + p.removed_reason : ''} Use <em>Restore Parcel</em> to bring it back.
           </div>` : ''}
           <div id="log-table-${p.parcel_op_id}"></div>
         </div></div>`;
@@ -530,6 +539,74 @@
     renderParcels();
   }
 
+  // A removed parcel is flagged, never deleted: it stays on screen greyed out,
+  // stops counting toward billing/closure/targets, and can be restored.
+  function openRemoveParcel(pid, parcelIds) {
+    const reason = prompt('Remove this parcel?\n\nIt stays visible (greyed) and can be restored, but stops counting toward billing, closure and targets.\n\nReason:');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('A reason is required.'); return; }
+    setParcelRemoved(pid, parcelIds, true, reason.trim());
+  }
+
+  function restoreParcel(pid, parcelIds) {
+    if (!confirm('Restore this parcel? It will count toward billing, closure and targets again.')) return;
+    setParcelRemoved(pid, parcelIds, false, '');
+  }
+
+  async function setParcelRemoved(pid, parcelIds, removed, reason) {
+    const res = await fetch('/api/module/LUEU01/parcel/removed', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({parcel_op_id: pid, parcel_ids: parcelIds, removed, reason})
+    });
+    const j = await res.json();
+    if (!j.success) { alert(j.error || 'Could not update the parcel'); return; }
+    await refreshInPlace();
+  }
+
+  // The extra tonnage is already logged hour by hour — it was being discarded
+  // because the target came only from the VCN declared quantity. Recording the
+  // amendment raises the target so those real rows count. The VCN is untouched.
+  function openAdditional(pid) {
+    document.getElementById('addlPid').value = pid;
+    document.getElementById('addlQty').value = '';
+    document.getElementById('addlReason').value = '';
+    document.getElementById('addlError').style.display = 'none';
+    document.getElementById('addlModal').style.display = 'flex';
+  }
+
+  function closeAdditional() {
+    document.getElementById('addlModal').style.display = 'none';
+  }
+
+  async function submitAdditional() {
+    const err = document.getElementById('addlError');
+    const show = m => { err.textContent = m; err.style.display = 'block'; };
+    const pid = document.getElementById('addlPid').value;
+    const qty = parseFloat(document.getElementById('addlQty').value);
+    const reason = document.getElementById('addlReason').value.trim();
+    if (!(qty > 0)) return show('Enter an additional quantity greater than zero.');
+    if (!reason) return show('A reason is required.');
+    const res = await fetch('/api/module/LUEU01/parcel/additional', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({parcel_op_id: pid, quantity: qty, reason})
+    });
+    const j = await res.json();
+    if (!j.success) return show(j.error || 'Could not record the additional quantity');
+    closeAdditional();
+    await refreshInPlace();
+  }
+
+  async function clearAdditional(pid) {
+    if (!confirm('Remove the additional quantity?\nThe target drops back to the declared BL, and any quantity logged above it stops counting.')) return;
+    const res = await fetch('/api/module/LUEU01/parcel/additional/clear', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({parcel_op_id: pid})
+    });
+    const j = await res.json();
+    if (!j.success) { alert(j.error || 'Could not remove it'); return; }
+    await refreshInPlace();
+  }
+
   async function shortcloseParcel(pid, remaining) {
     if (!confirm(`Short-close the remaining ${remaining} MT for this parcel?\nThis records the leftover with no time so Remaining becomes 0. It's excluded from the Avg rate and can be reverted.`)) return;
     const res = await fetch('/api/module/LUEU01/parcel/shortclose', {
@@ -564,4 +641,27 @@
     if (selected.vcn_id) await renderParcels();
   })();
 </script>
+<!-- Additional Quantity (BL amendment) Modal -->
+<div id="addlModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:24px;width:440px;max-width:94vw;">
+    <h3 style="margin:0 0 4px;font-size:16px;font-weight:600;">+ Additional Quantity</h3>
+    <p style="margin:0 0 14px;font-size:12px;color:#64748b;">
+      Use this when the vessel discharged <strong>more than the declared BL</strong>.
+      It raises this parcel's target so the quantity already logged above the BL
+      starts counting &mdash; towards Remaining, closure and billing.
+      The VCN declaration is <strong>not</strong> changed.
+    </p>
+    <input type="hidden" id="addlPid">
+    <label style="display:block;font-size:12px;font-weight:600;color:#334155;margin:0 0 4px;">Additional quantity (MT) <span style="color:#dc2626;">*</span></label>
+    <input type="number" id="addlQty" step="0.001" min="0" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;">
+    <label style="display:block;font-size:12px;font-weight:600;color:#334155;margin:14px 0 4px;">Reason <span style="color:#dc2626;">*</span></label>
+    <textarea id="addlReason" rows="3" placeholder="e.g. Shipping bill amended &mdash; vessel discharged in excess of declared quantity" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:inherit;"></textarea>
+    <p id="addlError" style="display:none;margin:10px 0 0;font-size:12px;color:#b91c1c;font-weight:600;"></p>
+    <div style="margin-top:18px;text-align:right;">
+      <button class="lueu-btn secondary" onclick="closeAdditional()">Cancel</button>
+      <button class="lueu-btn" style="background:#2563eb;color:#fff;" onclick="submitAdditional()">Record Amendment</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

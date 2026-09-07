@@ -134,6 +134,77 @@ def delete_log():
     return jsonify({'success': True, 'deleted_count': len(ids)})
 
 
+@bp.route('/api/module/LUEU01/parcel/removed', methods=['POST'])
+@login_required
+def set_parcel_removed():
+    """Remove or restore a VCN parcel without opening VCN01.
+
+    The parcel is flagged, never deleted: it stays on screen greyed out and
+    can be restored, but stops counting toward billing, closure and targets."""
+    perms = get_perms()
+    if not perms.get('can_add') and not perms.get('can_edit'):
+        return jsonify({'success': False, 'error': 'No permission'}), 403
+    data = request.json or {}
+    pid = data.get('parcel_op_id')
+    parcel_ids = data.get('parcel_ids') or []
+    removed = bool(data.get('removed'))
+    if not parcel_ids:
+        return jsonify({'success': False, 'error': 'Missing parcel_ids'}), 400
+    locked = _locked(pid)
+    if locked:
+        return locked
+    from modules.VCN01 import model as vcn_model
+    try:
+        for rid in parcel_ids:
+            vcn_model.set_parcel_removed(rid, removed, data.get('reason'),
+                                         session.get('username'))
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': True})
+
+
+@bp.route('/api/module/LUEU01/parcel/additional', methods=['POST'])
+@login_required
+def set_additional_qty():
+    """Amend the BL upward when the vessel discharged more than declared.
+    Avoids reopening and editing the VCN for an over-discharge."""
+    perms = get_perms()
+    if not perms.get('can_add') and not perms.get('can_edit'):
+        return jsonify({'success': False, 'error': 'No permission'}), 403
+    data = request.json or {}
+    pid = data.get('parcel_op_id')
+    if not pid:
+        return jsonify({'success': False, 'error': 'Missing parcel_op_id'}), 400
+    locked = _locked(pid)
+    if locked:
+        return locked
+    try:
+        qty = model.set_additional_qty(pid, data.get('quantity'),
+                                       data.get('reason'), session.get('username'))
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': True, 'additional_qty': qty})
+
+
+@bp.route('/api/module/LUEU01/parcel/additional/clear', methods=['POST'])
+@login_required
+def clear_additional_qty():
+    perms = get_perms()
+    if not perms.get('can_delete'):
+        return jsonify({'success': False, 'error': 'No permission to clear'}), 403
+    pid = (request.json or {}).get('parcel_op_id')
+    if not pid:
+        return jsonify({'success': False, 'error': 'Missing parcel_op_id'}), 400
+    locked = _locked(pid)
+    if locked:
+        return locked
+    try:
+        model.clear_additional_qty(pid, session.get('username'))
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': True})
+
+
 @bp.route('/api/module/LUEU01/parcel/shortclose', methods=['POST'])
 @login_required
 def shortclose_parcel():

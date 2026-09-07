@@ -920,6 +920,7 @@ def get_customer_billables(customer_type, customer_id):
         JOIN vcn_header h ON h.id = c.vcn_id
         LEFT JOIN ldud_latest ll ON ll.vcn_id = h.id
         WHERE c.importer_name = %s
+          AND COALESCE(c.is_removed, FALSE) = FALSE
           AND (h.doc_status = 'Approved' OR ll.doc_status = ANY(%s))
         UNION ALL
         SELECT 'VCN_EXPORT' AS src, e.id, e.parcel_no, e.cargo_name, e.quantity,
@@ -930,6 +931,7 @@ def get_customer_billables(customer_type, customer_id):
         JOIN vcn_header h ON h.id = e.vcn_id
         LEFT JOIN ldud_latest ll ON ll.vcn_id = h.id
         WHERE e.importer_name = %s
+          AND COALESCE(e.is_removed, FALSE) = FALSE
           AND (h.doc_status = 'Approved' OR ll.doc_status = ANY(%s))
         ORDER BY vcn_doc_num, parcel_no
     """, [customer_name, list(_CARGO_GATE), customer_name, list(_CARGO_GATE)])

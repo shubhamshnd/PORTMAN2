@@ -1,5 +1,9 @@
 from database import get_db, get_cursor
 from datetime import datetime
+# Target resolution lives in LDUD01 (owner of ldud_parcel_ops) so every
+# screen computes the BL/target figure the same way.
+from modules.LDUD01.model import (parcel_source_table, source_quantities,
+                                  effective_target)
 
 # parcel_ids on ldud_parcel_ops point at the VCN's parcel source table,
 # chosen by the linked VCN's operation_type (whitelisted — safe to interpolate).
@@ -55,7 +59,8 @@ def get_started_parcels(vcn_id):
     cur.execute('''
         SELECT po.id AS parcel_op_id, po.parcel_ids, po.cargo_name, po.terminal_name,
                po.quantity AS op_qty, po.start_dt, po.end_dt, po.expected_start,
-               po.expected_flow_rate, l.alongside_datetime, l.doc_status AS ldud_status
+               po.expected_flow_rate, po.additional_qty, po.additional_reason,
+               l.alongside_datetime, l.doc_status AS ldud_status
         FROM ldud_parcel_ops po
         JOIN ldud_header l ON l.id = po.ldud_id
         WHERE l.vcn_id = %s
@@ -69,29 +74,37 @@ def get_started_parcels(vcn_id):
     cur.execute('SELECT operation_type FROM vcn_header WHERE id=%s', [vcn_id])
     row = cur.fetchone()
     is_export = (row or {}).get('operation_type') == 'Export'
-    tbl = 'vcn_export_cargo_declaration' if is_export else 'vcn_consigners'
+    tbl = parcel_source_table((row or {}).get('operation_type') if row else None)
     # export parcels mirror import since jnpa35 — same columns on both tables
     all_ids = sorted({pid for p in parcels for pid in _parse_ids(p['parcel_ids'])})
     labels, src_qty, src_equip, src_pipe, src_term = {}, {}, {}, {}, {}
+    src_removed, src_rm_reason = {}, {}
     if all_ids:
         cur.execute(f'''SELECT id, parcel_no, quantity AS q, equipment_names AS equip,
-                               pipeline_name AS pipe, unload_terminal AS term
+                               pipeline_name AS pipe, unload_terminal AS term,
+                               COALESCE(is_removed, FALSE) AS is_removed,
+                               removed_reason
                         FROM {tbl} WHERE id = ANY(%s)''', [all_ids])
         for r in cur.fetchall():
+            src_removed[r['id']] = bool(r['is_removed'])
+            src_rm_reason[r['id']] = r['removed_reason'] or ''
             labels[r['id']] = r['parcel_no'] or f"#{r['id']}"
             src_equip[r['id']] = r['equip'] or ''
             src_pipe[r['id']] = r['pipe'] or ''
             src_term[r['id']] = r['term'] or ''
+            # A removed parcel contributes zero — mirrors LDUD01.source_quantities,
+            # which keeps the id present (0.0) rather than omitting it, so the
+            # op-snapshot fallback cannot resurrect the removed quantity.
             try:
-                src_qty[r['id']] = float(str(r['q']).replace(',', '')) if r['q'] is not None else 0.0
+                src_qty[r['id']] = (0.0 if r['is_removed'] else
+                                    (float(str(r['q']).replace(',', '')) if r['q'] is not None else 0.0))
             except (ValueError, TypeError):
                 src_qty[r['id']] = 0.0
 
-    # per-parcel target (current VCN parcel qty, falling back to the op snapshot)
-    targets = {}
-    for p in parcels:
-        ids = _parse_ids(p['parcel_ids'])
-        targets[p['parcel_op_id']] = sum(src_qty.get(i, 0.0) for i in ids) or float(p['op_qty'] or 0)
+    # per-parcel target — shared rule, see LDUD01.effective_target
+    targets = {p['parcel_op_id']: effective_target(src_qty, _parse_ids(p['parcel_ids']),
+                                                   p['op_qty'], p['additional_qty'])
+               for p in parcels}
 
     # logged qty + operating hours per parcel (non-deleted), for total & avg flow rate.
     # ponytail: hardcoded completion cap — once cumulative qty reaches the target,
@@ -145,6 +158,13 @@ def get_started_parcels(vcn_id):
             'op_hours': round(hours, 2),
             'avg_rate': round(logged_real / hours, 2) if hours > 0 else 0,
             'is_shortclosed': shortclosed > 1e-6,
+            'additional_qty': round(_num(p['additional_qty']) or 0, 3),
+            'additional_reason': p['additional_reason'] or '',
+            # Removed parcels stay on screen, greyed and restorable.
+            'is_removed': all(src_removed.get(i, False) for i in ids) if ids else False,
+            'removed_reason': next((src_rm_reason.get(i) for i in ids
+                                    if src_removed.get(i)), ''),
+            'parcel_ids': ids,
             'uom': 'MT',
             'equipment_names': ', '.join(equip),
             'pipeline_name': ', '.join(_distinct(src_pipe)),
@@ -169,6 +189,8 @@ EXPORT_COLS = [
     ('UOM', 'uom'), ('Expected Start', 'dt:expected_start'), ('Expected Rate (MT/Hr)', 'expected_flow_rate'),
     ('Start', 'dt:start_dt'), ('End', 'dt:end_dt'), ('Run Hours', 'op_hours'),
     ('Avg Rate (MT/Hr)', 'avg_rate'), ('Status', 'status'), ('Short-closed', 'is_shortclosed'),
+    ('Additional Qty', 'additional_qty'), ('Additional Reason', 'additional_reason'),
+    ('Removed', 'is_removed'), ('Removed Reason', 'removed_reason'),
     ('LDUD Status', 'ldud_status'),
 ]
 
@@ -291,28 +313,66 @@ def soft_delete_log(ids, username):
 
 
 def _single_parcel_target(cur, parcel_op_id):
-    """Target qty for one parcel-op: sum of its VCN parcel quantities (import or
-    export source table), falling back to the op snapshot quantity. Mirrors the
-    per-parcel target logic in get_started_parcels."""
-    cur.execute('''SELECT po.parcel_ids, po.quantity AS op_qty, l.vcn_id
-                   FROM ldud_parcel_ops po JOIN ldud_header l ON l.id = po.ldud_id
+    """Target qty for one parcel-op — same shared rule as get_started_parcels."""
+    cur.execute('''SELECT po.parcel_ids, po.quantity AS op_qty, po.additional_qty,
+                          h.operation_type
+                   FROM ldud_parcel_ops po
+                   JOIN ldud_header l ON l.id = po.ldud_id
+                   LEFT JOIN vcn_header h ON h.id = l.vcn_id
                    WHERE po.id=%s''', [parcel_op_id])
     row = cur.fetchone()
     if not row:
         return 0.0
     ids = _parse_ids(row['parcel_ids'])
-    cur.execute('SELECT operation_type FROM vcn_header WHERE id=%s', [row['vcn_id']])
-    op = cur.fetchone()
-    tbl = 'vcn_export_cargo_declaration' if (op or {}).get('operation_type') == 'Export' else 'vcn_consigners'
-    total = 0.0
-    if ids:
-        cur.execute(f'SELECT quantity FROM {tbl} WHERE id = ANY(%s)', [ids])
-        for r in cur.fetchall():
-            try:
-                total += float(str(r['quantity']).replace(',', '')) if r['quantity'] else 0.0
-            except (ValueError, TypeError):
-                pass
-    return total or float(row['op_qty'] or 0)
+    src_qty = source_quantities(cur, parcel_source_table(row['operation_type']), ids)
+    return effective_target(src_qty, ids, row['op_qty'], row['additional_qty'])
+
+
+def set_additional_qty(parcel_op_id, qty, reason, username):
+    """Amend the BL upward for one parcel-op.
+
+    The extra tonnage is already in the logbook — the operator logged it hour by
+    hour and the completion cap discarded it. This records the amendment so the
+    target rises and those real rows start counting; nothing is invented, and
+    the VCN's declared quantity is left alone.
+
+    Reversible via clear_additional_qty."""
+    qty = _num(qty)
+    if not qty or qty <= 0:
+        raise ValueError('Additional quantity must be greater than zero')
+    reason = (reason or '').strip()
+    if not reason:
+        raise ValueError('A reason is required for an additional quantity')
+    conn = get_db()
+    cur = get_cursor(conn)
+    cur.execute("""UPDATE ldud_parcel_ops
+                   SET additional_qty=%s, additional_reason=%s,
+                       additional_by=%s, additional_date=%s
+                   WHERE id=%s""",
+                [qty, reason, username, datetime.now().strftime('%Y-%m-%d'), parcel_op_id])
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    if not n:
+        raise ValueError('Parcel operation not found')
+    return qty
+
+
+def clear_additional_qty(parcel_op_id, username):
+    """Undo an additional-quantity amendment; the target drops back to the
+    declared BL and the over-logged rows go back to being ignored."""
+    conn = get_db()
+    cur = get_cursor(conn)
+    cur.execute("""UPDATE ldud_parcel_ops
+                   SET additional_qty=0, additional_reason=NULL,
+                       additional_by=NULL, additional_date=NULL
+                   WHERE id=%s AND COALESCE(additional_qty, 0) <> 0""", [parcel_op_id])
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    if not n:
+        raise ValueError('No additional quantity to clear')
+    return n
 
 
 def shortclose_parcel(parcel_op_id, username):
