@@ -508,6 +508,16 @@
         font-weight: 700;
     }
 
+    table.excel-table th.th-proj-blue {
+        background: #B4C6E7;
+        color: #000000;
+        font-weight: 700;
+        text-align: center;
+        border: 1px solid #7f7f7f;
+        vertical-align: middle;
+        padding: 5px 8px;
+    }
+
     table.excel-table td.td-cat {
         background: #DDEBF7;
         font-weight: 700;
@@ -686,10 +696,7 @@
     <div class="dpr-tabs-bar" id="dprTabsBar">
         <button class="dpr-tab-btn active" data-tab="dpr" onclick="switchDprTab('dpr')">DPR</button>
         <button class="dpr-tab-btn" data-tab="bvsa" onclick="switchDprTab('bvsa')">BvsA FY 2027</button>
-        <!-- <button class="dpr-tab-btn" data-tab="income" onclick="switchDprTab('income')">Income FY 2027</button>
         <button class="dpr-tab-btn" data-tab="budget" onclick="switchDprTab('budget')">Budget</button>
-        <button class="dpr-tab-btn" data-tab="reason" onclick="switchDprTab('reason')">Reason for handling at
-            BPCL</button> -->
     </div>
 
     <!-- Dynamic BVsA FY 2027 Tab Content (Excel Layout) -->
@@ -790,6 +797,25 @@
                         </table>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dynamic Budget Tab Content -->
+    <div id="budgetTabContent" style="display:none;" class="bvsa-container">
+        <div class="bvsa-excel-sheet">
+            <div class="bvsa-toolbar">
+                <div class="bvsa-toolbar-title">CARGO BUDGET &amp; ACTUAL – FY 2026-27</div>
+                <div class="bvsa-toolbar-actions">
+                    <button class="jjltpl-export-btn" onclick="exportExcel()" style="margin:0;">Export Budget to Excel</button>
+                </div>
+            </div>
+            <div id="budgetLoading" style="text-align:center;padding:40px;display:none;">
+                <div class="spinner"></div>
+                <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading Budget Data...</div>
+            </div>
+            <div id="budgetContentWrap" style="display:none;overflow-x:auto;">
+                <div id="budgetTablesContainer"></div>
             </div>
         </div>
     </div>
@@ -939,6 +965,15 @@
     }
 
     async function loadData() {
+        if (currentTab === 'budget') {
+            loadBudgetData();
+            return;
+        }
+        if (currentTab === 'bvsa') {
+            loadBvsaData();
+            return;
+        }
+
         const dateVal = document.getElementById('dprDate').value;
         const loadingState = document.getElementById('loadingState');
         const reportContent = document.getElementById('reportContent');
@@ -1104,17 +1139,17 @@
     }
 
     function exportExcel() {
-        if (currentTab === 'bvsa') {
-            exportBvsaExcel();
-            return;
-        }
+        const dateVal = document.getElementById('dprDate').value;
+        window.location.href = `/api/module/RP01/dpr/export?date=${dateVal}`;
+    }
+
+    function exportBvsaExcel() {
         const dateVal = document.getElementById('dprDate').value;
         window.location.href = `/api/module/RP01/dpr/export?date=${dateVal}`;
     }
 
     // ---------------------------------------------------------------
-    // TAB SWITCHING: DPR vs BVsA FY 2027
-    // Preserves first DPR tab completely intact.
+    // TAB SWITCHING: DPR / BVsA / Budget
     // ---------------------------------------------------------------
     let currentTab = 'dpr';
     let bvsaPayload = null;
@@ -1127,24 +1162,34 @@
 
         const dprPaper = document.getElementById('dprPaper');
         const bvsaContent = document.getElementById('bvsaTabContent');
+        const budgetContent = document.getElementById('budgetTabContent');
         const reportStatus = document.getElementById('reportStatus');
 
+        dprPaper.style.display = 'none';
+        bvsaContent.style.display = 'none';
+        budgetContent.style.display = 'none';
+        reportStatus.style.display = 'none';
+
         if (tabKey === 'dpr') {
-            bvsaContent.style.display = 'none';
             dprPaper.style.display = 'block';
             reportStatus.style.display = 'block';
             return;
         }
 
-        dprPaper.style.display = 'none';
-        reportStatus.style.display = 'none';
-        bvsaContent.style.display = 'flex';
-        loadBvsaData();
-    }
+        if (tabKey === 'budget') {
+            budgetContent.style.display = 'flex';
+            loadBudgetData();
+            return;
+        }
 
-    function exportBvsaExcel() {
-        const dateVal = document.getElementById('dprDate').value;
-        window.location.href = `/api/module/RP01/dpr/export-bvsa?date=${dateVal}`;
+        if (tabKey === 'bvsa') {
+            bvsaContent.style.display = 'flex';
+            loadBvsaData();
+            return;
+        }
+
+        dprPaper.style.display = 'block';
+        reportStatus.style.display = 'block';
     }
 
     function fmtPct(val) {
@@ -1158,6 +1203,112 @@
             minimumFractionDigits: 3,
             maximumFractionDigits: 3
         });
+    }
+
+    async function loadBudgetData() {
+        const dateVal = document.getElementById('dprDate').value;
+        const loading = document.getElementById('budgetLoading');
+        const wrap = document.getElementById('budgetContentWrap');
+        loading.style.display = 'block';
+        wrap.style.display = 'none';
+        try {
+            const resp = await fetch(`/api/module/RP01/dpr/budget?date=${dateVal}`);
+            const data = await resp.json();
+            if (data.error) {
+                alert('Error loading Budget data: ' + data.error);
+                loading.style.display = 'none';
+                return;
+            }
+            renderBudgetTable(data);
+            loading.style.display = 'none';
+            wrap.style.display = 'block';
+        } catch (err) {
+            console.error(err);
+            alert('Failed to connect to Budget backend service.');
+            loading.style.display = 'none';
+        }
+    }
+
+    function renderBudgetTable(data) {
+        const container = document.getElementById('budgetTablesContainer');
+        if (!container) return;
+        const tables = (data.tables && data.tables.length > 0) ? data.tables : [data];
+
+        let fullHtml = '';
+        tables.forEach((t) => {
+            const proj = t.projections || [];
+            const tot = t.total_projection || {};
+
+            let html = `
+            <div class="budget-table-box" style="margin-bottom: 28px; overflow-x: auto;">
+                <table class="excel-table" style="border: 1px solid #7f7f7f; width: 100%;">
+                    <thead>
+                        <tr>
+                            <th class="th-proj-blue" rowspan="2" style="text-align:left;min-width:210px;vertical-align:middle;">Cargo Projections</th>
+                            <th class="th-proj-blue" rowspan="2" style="min-width:110px;vertical-align:middle;">Full Year<br>Budget</th>
+                            <th class="th-proj-blue" colspan="3">${t.cur_month_label || 'Current Month'}</th>
+                            <th class="th-proj-blue" style="min-width:90px;vertical-align:middle;">${t.prev_month_label || 'Prev Year'}</th>
+                            <th class="th-proj-blue" colspan="2">${t.cur_ytd_label || 'YTD'}</th>
+                            <th class="th-proj-blue" style="min-width:95px;vertical-align:middle;">${t.prev_ytd_label || 'Prev YTD'}</th>
+                            <th class="th-proj-blue" rowspan="2" style="min-width:110px;vertical-align:middle;">Asking Rate<br>per month</th>
+                            <th class="th-proj-blue" colspan="2">${t.next_month_label || 'Next Month'}</th>
+                        </tr>
+                        <tr>
+                            <th class="th-proj-blue" style="min-width:85px;">Budget</th>
+                            <th class="th-proj-blue" style="min-width:85px;">Actual</th>
+                            <th class="th-proj-blue" style="min-width:85px;">Var.</th>
+                            <th class="th-proj-blue" style="min-width:90px;">Actual</th>
+                            <th class="th-proj-blue" style="min-width:95px;">Budget</th>
+                            <th class="th-proj-blue" style="min-width:95px;">Actual</th>
+                            <th class="th-proj-blue" style="min-width:95px;">Actual</th>
+                            <th class="th-proj-blue" style="min-width:85px;">Budget</th>
+                            <th class="th-proj-blue" style="min-width:85px;">Outlook</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+            proj.forEach(r => {
+                const isVarNeg = r.cur_month_var < 0;
+                html += `<tr>
+                    <td style="font-weight:700;text-align:left;">${r.category}</td>
+                    <td class="num">${fmtNum(Math.round(r.full_year_budget))}</td>
+                    <td class="num">${fmtNum(Math.round(r.cur_month_budget))}</td>
+                    <td class="num">${fmtNum(Math.round(r.cur_month_actual))}</td>
+                    <td class="num ${isVarNeg ? 'var-neg' : ''}">${fmtNum(Math.round(r.cur_month_var))}</td>
+                    <td class="num">${r.prev_month_actual > 0 ? fmtNum(Math.round(r.prev_month_actual)) : ''}</td>
+                    <td class="num">${fmtNum(Math.round(r.ytd_budget))}</td>
+                    <td class="num">${fmtNum(Math.round(r.ytd_actual))}</td>
+                    <td class="num">${r.prev_ytd_actual > 0 ? fmtNum(Math.round(r.prev_ytd_actual)) : (r.prev_ytd_actual === 0 ? '0' : '')}</td>
+                    <td class="num">${fmtNum(Math.round(r.asking_rate))}</td>
+                    <td class="num">${fmtNum(Math.round(r.next_month_budget))}</td>
+                    <td class="num">${fmtNum(Math.round(r.next_month_outlook))}</td>
+                </tr>`;
+            });
+
+            html += `</tbody>
+                    <tfoot>
+                        <tr class="tr-green">
+                            <td style="font-weight:700;text-align:left;">Total Cargo Budget</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.full_year_budget || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.cur_month_budget || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.cur_month_actual || 0))}</td>
+                            <td class="num bold ${tot.cur_month_var < 0 ? 'var-neg' : ''}">${fmtNum(Math.round(tot.cur_month_var || 0))}</td>
+                            <td class="num bold">${tot.prev_month_actual > 0 ? fmtNum(Math.round(tot.prev_month_actual)) : ''}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.ytd_budget || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.ytd_actual || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.prev_ytd_actual || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.asking_rate || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.next_month_budget || 0))}</td>
+                            <td class="num bold">${fmtNum(Math.round(tot.next_month_outlook || 0))}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>`;
+
+            fullHtml += html;
+        });
+
+        container.innerHTML = fullHtml;
     }
 
     async function loadBvsaData() {
