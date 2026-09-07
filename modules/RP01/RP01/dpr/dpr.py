@@ -11,6 +11,7 @@ from flask import (
 )
 from functools import wraps
 from datetime import datetime, time, timedelta
+import re
 from io import BytesIO
 from database import get_db, get_cursor, get_user_permissions
 
@@ -1407,7 +1408,20 @@ def _get_bvsa_payload(selected_date):
                 END,
                 id
         """)
-        for r in cur.fetchall():
+        hist_rows = cur.fetchall()
+
+        # Identify which vessels in mis_vessel_master are partially discharged across multiple months (e.g. Oginio Park & Nord Vanguard in Apr & May).
+        # Vessels completed within the selected month (single month, e.g. Virgo in Apr) show clean name without (carry forward).
+        hist_vessel_months = {}
+        for r in hist_rows:
+            raw_n = (r.get('vessel_name') or '').strip()
+            clean_n = re.sub(r'\(carry\s*forward\)', '', raw_n, flags=re.IGNORECASE).strip()
+            m_s = (r.get('month') or '').strip()
+            if clean_n not in hist_vessel_months:
+                hist_vessel_months[clean_n] = set()
+            hist_vessel_months[clean_n].add(m_s)
+
+        for r in hist_rows:
             m_str = (r.get('month') or '').strip()
             m_obj = next((m for m in months if m['label'].lower() == m_str.lower() or m['code'].lower() == m_str[:3].lower()), None)
             if not m_obj:
@@ -1420,10 +1434,19 @@ def _get_bvsa_payload(selected_date):
             m_obj['actual'][cat] += q
             m_obj['actual']['total'] += q
 
+            raw_n = (r.get('vessel_name') or '').strip()
+            clean_n = re.sub(r'\(carry\s*forward\)', '', raw_n, flags=re.IGNORECASE).strip()
+            # If recorded as (carry forward) in DB, retain it only if partially discharged across multiple months in this FY (e.g. Oginio Park, Nord Vanguard).
+            # If completed in the selected month (e.g. Virgo in Apr-26), show clean name as requested.
+            if '(carry forward)' in raw_n.lower() and len(hist_vessel_months.get(clean_n, set())) > 1:
+                disp_v_name = f"{clean_n} (carry forward)"
+            else:
+                disp_v_name = clean_n
+
             vessels.append({
                 'sr_no': sr,
                 'month': m_obj['label'],
-                'vessel_name': r.get('vessel_name') or '-',
+                'vessel_name': disp_v_name,
                 'cargo': c_name or '-',
                 'customer': r.get('consigner') or '-',
                 'quantity': q,
@@ -1435,6 +1458,42 @@ def _get_bvsa_payload(selected_date):
             sr += 1
 
         # 3. Actuals from Live Operational Data (Jul 1 07:00 onwards up to window_end)
+        # 7 AM to 7 AM operational month logic:
+        # Datetime before 07:00:00 belongs to the previous operational day/month.
+        def _get_op_year_month(dt):
+            if not dt:
+                return None, None
+            op_d = (dt.date() - timedelta(days=1)) if dt.hour < 7 else dt.date()
+            return op_d.year, op_d.month
+
+        # Fetch LDUD cargo names from VCN declarations to match LDUD01 head cargo display exactly
+        cur.execute("""
+            SELECT lh.id AS ldud_id, lh.vcn_id
+            FROM ldud_header lh
+            WHERE COALESCE(lh.is_deleted, FALSE) = FALSE
+        """)
+        ldud_vcn_map = {r['vcn_id']: r['ldud_id'] for r in cur.fetchall() if r.get('vcn_id')}
+        ldud_cargo_display = {}
+        if ldud_vcn_map:
+            vids = list(ldud_vcn_map.keys())
+            cur.execute('SELECT vcn_id, cargo_name FROM vcn_cargo_declaration WHERE vcn_id = ANY(%s) AND cargo_name IS NOT NULL', (vids,))
+            ic = cur.fetchall()
+            cur.execute('SELECT vcn_id, cargo_name FROM vcn_export_cargo_declaration WHERE vcn_id = ANY(%s) AND cargo_name IS NOT NULL', (vids,))
+            ec = cur.fetchall()
+            cur.execute('SELECT vcn_id, cargo_name FROM vcn_consigners WHERE vcn_id = ANY(%s) AND cargo_name IS NOT NULL', (vids,))
+            cc = cur.fetchall()
+            vcn_c_dict = {}
+            for row_list in [ic, ec, cc]:
+                for c in row_list:
+                    vid = c['vcn_id']
+                    if vid not in vcn_c_dict:
+                        vcn_c_dict[vid] = []
+                    vcn_c_dict[vid].append(c['cargo_name'])
+            for vid, cnames in vcn_c_dict.items():
+                lid = ldud_vcn_map.get(vid)
+                if lid:
+                    ldud_cargo_display[lid] = ', '.join(cnames)
+
         cur.execute("""
             WITH parcel_consignee AS (
                 SELECT 
@@ -1509,56 +1568,161 @@ def _get_bvsa_payload(selected_date):
             )
             SELECT
                 lh.id AS ldud_id,
+                lh.vcn_id,
                 lh.vessel_name,
+                lh.alongside_datetime,
                 lh.cast_off_datetime,
+                po.id AS po_id,
                 po.cargo_name,
                 pc.consignee_name AS customer,
                 vc.cargo_sub_category_2,
                 vc.cargo_category,
                 vc.cargo_type,
-                SUM(COALESCE(log.quantity, 0)) AS qty
-            FROM ldud_header lh
-            JOIN ldud_parcel_ops po ON po.ldud_id = lh.id
+                log.id AS log_id,
+                log.entry_date,
+                log.from_time,
+                log.to_time,
+                COALESCE(log.quantity, 0) AS qty
+            FROM lueu_parcel_log log
+            JOIN ldud_parcel_ops po ON po.id = log.parcel_op_id
+            JOIN ldud_header lh ON lh.id = po.ldud_id
             JOIN parcel_consignee pc ON pc.po_id = po.id
-            JOIN lueu_parcel_log log ON log.parcel_op_id = po.id
             LEFT JOIN vessel_cargo vc ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(po.cargo_name))
-            WHERE NULLIF(TRIM(lh.cast_off_datetime::text), '') IS NOT NULL
-              AND REPLACE(TRIM(lh.cast_off_datetime), 'T', ' ')::timestamp >= '2026-07-01 07:00:00'
-              AND REPLACE(TRIM(lh.cast_off_datetime), 'T', ' ')::timestamp <= %s
-              AND COALESCE(log.is_deleted, FALSE) = FALSE
+            WHERE COALESCE(log.is_deleted, FALSE) = FALSE
               AND COALESCE(log.is_shortclose, FALSE) = FALSE
               AND LOWER(COALESCE(log.remarks, '')) NOT LIKE '%%short%%'
               AND COALESCE(lh.is_deleted, FALSE) = FALSE
-            GROUP BY lh.id, lh.vessel_name, lh.cast_off_datetime, po.cargo_name, pc.consignee_name, vc.cargo_sub_category_2, vc.cargo_category, vc.cargo_type
-            ORDER BY lh.cast_off_datetime
-        """, (window_end,))
-        for r in cur.fetchall():
-            co_dt = _parse_entry_dt(r.get('cast_off_datetime'))
-            if not co_dt:
+              AND NULLIF(TRIM(log.entry_date), '') IS NOT NULL
+            ORDER BY log.entry_date, log.from_time
+        """)
+        live_rows = cur.fetchall()
+
+        # Track each vessel's all operational discharge months
+        vessel_all_months = {}
+        parsed_live_logs = []
+        for r in live_rows:
+            entry_dt = _parse_entry_dt(r['entry_date'], r.get('from_time'))
+            if not entry_dt:
+                continue
+            # Live data starts from July 1st 2026 07:00:00
+            if entry_dt < datetime(2026, 7, 1, 7, 0, 0):
                 continue
 
-            m_obj = next((m for m in months if m['month_num'] == co_dt.month and m['year'] == co_dt.year), None)
+            op_y, op_m = _get_op_year_month(entry_dt)
+            vid = r['ldud_id']
+            if vid not in vessel_all_months:
+                vessel_all_months[vid] = set()
+            vessel_all_months[vid].add((op_y, op_m))
+            parsed_live_logs.append((r, entry_dt, op_y, op_m))
+
+        # Group logs by vessel and operational month within window_end
+        live_groups = {}
+        live_order = []
+        for r, entry_dt, op_y, op_m in parsed_live_logs:
+            if entry_dt > window_end:
+                continue
+            vid = r['ldud_id']
+            key = (vid, op_y, op_m)
+            if key not in live_groups:
+                live_order.append(key)
+                live_groups[key] = {
+                    'ldud_id': vid,
+                    'op_year': op_y,
+                    'op_month': op_m,
+                    'vessel_name': r['vessel_name'] or '-',
+                    'cast_off_datetime': r['cast_off_datetime'],
+                    'alongside_datetime': r['alongside_datetime'],
+                    'cargos': [],
+                    'customers': [],
+                    'quantity': 0.0,
+                    'edible': 0.0,
+                    'other': 0.0,
+                    'chemical': 0.0,
+                    'pol': 0.0,
+                }
+            g = live_groups[key]
+            q = float(r['qty'] or 0.0)
+            c_name = r['cargo_name']
+            cat = _classify_bvsa_cargo(c_name, r.get('cargo_sub_category_2'), r.get('cargo_category'), r.get('cargo_type'))
+            g['quantity'] += q
+            if cat == 'edible':
+                g['edible'] += q
+            elif cat == 'other':
+                g['other'] += q
+            elif cat == 'chemical':
+                g['chemical'] += q
+            elif cat == 'pol':
+                g['pol'] += q
+
+            if c_name and c_name != '-' and c_name not in g['cargos']:
+                g['cargos'].append(c_name.strip())
+
+            cust = (r['customer'] or '').strip()
+            if cust and cust not in ('-', 'Live Operation'):
+                for c_part in cust.split(','):
+                    cp = c_part.strip()
+                    if cp and cp not in g['customers']:
+                        g['customers'].append(cp)
+
+        # Sort live groups chronologically by (op_year, op_month)
+        live_order.sort(key=lambda k: (k[1], k[2]))
+
+        for key in live_order:
+            g = live_groups[key]
+            vid = g['ldud_id']
+            m_obj = next((m for m in months if m['month_num'] == g['op_month'] and m['year'] == g['op_year']), None)
             if not m_obj:
                 continue
 
-            q = float(r.get('qty') or 0.0)
-            c_name = r.get('cargo_name')
-            cat = _classify_bvsa_cargo(c_name, r.get('cargo_sub_category_2'), r.get('cargo_category'), r.get('cargo_type'))
+            # Add monthly actuals for this operational month (matching 7-to-7 monthly volume)
+            m_obj['actual']['edible'] += g['edible']
+            m_obj['actual']['other'] += g['other']
+            m_obj['actual']['chemical'] += g['chemical']
+            m_obj['actual']['pol'] += g['pol']
+            m_obj['actual']['total'] += g['quantity']
 
-            m_obj['actual'][cat] += q
-            m_obj['actual']['total'] += q
+            clean_v = re.sub(r'\(carry\s*forward\)', '', g['vessel_name'], flags=re.IGNORECASE).strip()
+            months_discharged = vessel_all_months.get(vid, set())
+            is_multi_month = (len(months_discharged) > 1)
+
+            co_dt = _parse_entry_dt(g['cast_off_datetime'])
+            co_y, co_m = _get_op_year_month(co_dt)
+
+            next_m = 1 if g['op_month'] == 12 else g['op_month'] + 1
+            next_y = g['op_year'] + 1 if g['op_month'] == 12 else g['op_year']
+            m_cutoff = datetime(next_y, next_m, 1, 7, 0, 0)
+
+            # A vessel is partially discharged / carry forward if:
+            # 1. It discharged across multiple operational months (previous month qty in previous month, next month qty in next month), or
+            # 2. The operational month has ended (m_cutoff <= window_end) but the vessel had not cast off by this month's 7am cutoff.
+            # Otherwise, vessels completed within the selected month show as they are without (carry forward).
+            is_carry_fwd = False
+            if is_multi_month:
+                is_carry_fwd = True
+            elif m_cutoff <= window_end and (co_dt is None or (co_y, co_m) > (g['op_year'], g['op_month'])):
+                is_carry_fwd = True
+
+            if is_carry_fwd:
+                disp_v_name = f"{clean_v} (carry forward)"
+            else:
+                disp_v_name = clean_v
+
+            cargo_str = ldud_cargo_display.get(vid)
+            if not cargo_str:
+                cargo_str = ', '.join(g['cargos']) if g['cargos'] else '-'
+            customer_str = ', '.join(g['customers']) if g['customers'] else 'Live Operation'
 
             vessels.append({
                 'sr_no': sr,
                 'month': m_obj['label'],
-                'vessel_name': r.get('vessel_name') or '-',
-                'cargo': c_name or '-',
-                'customer': r.get('customer') or 'Live Operation',
-                'quantity': q,
-                'edible': q if cat == 'edible' else 0.0,
-                'other': q if cat == 'other' else 0.0,
-                'chemical': q if cat == 'chemical' else 0.0,
-                'pol': q if cat == 'pol' else 0.0,
+                'vessel_name': disp_v_name,
+                'cargo': cargo_str,
+                'customer': customer_str,
+                'quantity': g['quantity'],
+                'edible': g['edible'],
+                'other': g['other'],
+                'chemical': g['chemical'],
+                'pol': g['pol'],
             })
             sr += 1
 

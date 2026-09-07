@@ -153,10 +153,18 @@ def _load_live_pipeline_rows():
             p_pick = _parse_dt(r['pilot_pickup_time'])
             p_dis = _parse_dt(r['pilot_disembarked'])
 
-            # Approved Working Time definition:
-            # Working Time = Cargo Completion Date/Time - Operations Commenced Date/Time
-            ops_start = _parse_dt(r['discharge_commenced'])
-            ops_end = _parse_dt(r['discharge_completed'])
+            # Working Time for live pipeline:
+            # First parcel operation start -> Last parcel operation end
+            first_parcel_start = _parse_dt(r.get('first_parcel_start'))
+            last_parcel_end = _parse_dt(r.get('last_parcel_end'))
+
+            wt_hrs = (
+                (last_parcel_end - first_parcel_start).total_seconds() / 3600.0
+                if first_parcel_start
+                and last_parcel_end
+                and last_parcel_end > first_parcel_start
+                else 0.0
+            )
 
             # 3. Pre-Berthing Waiting Time
             # Approved formula:
@@ -164,15 +172,6 @@ def _load_live_pipeline_rows():
             pbw_hrs = (
                 (along - anchored).total_seconds() / 3600.0
                 if anchored and along and along > anchored
-                else 0.0
-            )
-
-            # 4. Working Time
-            # Approved formula:
-            # Working Time = Cargo Completion Date/Time - Operations Commenced Date/Time
-            wt_hrs = (
-                (ops_end - ops_start).total_seconds() / 3600.0
-                if ops_start and ops_end and ops_end > ops_start
                 else 0.0
             )
 
@@ -194,16 +193,11 @@ def _load_live_pipeline_rows():
                 else 0.0
             )
 
-            # Outward movement:
-            # Pilot Disembarked Date/Time -> Cast-off Date/Time
+            # Outward Movement = Cast-off - Pilot Disembarked
             outward_hrs = (
-                (p_dis - cast).total_seconds() / 3600.0
-                if p_dis and cast and p_dis > cast
-                else (
-                    (cast - p_dis).total_seconds() / 3600.0
-                    if p_dis and cast and cast > p_dis
-                    else 0.0
-                )
+                (cast - p_dis).total_seconds() / 3600.0
+                if cast and p_dis and cast > p_dis
+                else 0.0
             )
 
             live_rows.append({
@@ -225,8 +219,8 @@ def _load_live_pipeline_rows():
                 'outward_movement': outward_hrs / 24.0,
                 'overseas_coastal': 'Overseas',
                 'vcn_no': str(r['vcn_id']),
-                'ops_commenced': ops_start,
-                'cargo_completion': ops_end,
+                'ops_commenced': first_parcel_start,
+                'cargo_completion': last_parcel_end,
                 'alongside': along,
                 'cast_off': cast,
                 'pilot_pickup': p_pick,

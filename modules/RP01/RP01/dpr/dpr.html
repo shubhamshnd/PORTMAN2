@@ -473,7 +473,8 @@
         background: #ffffff;
     }
 
-    table.excel-table th, table.excel-table td {
+    table.excel-table th,
+    table.excel-table td {
         border: 1px solid #b7b7b7;
         padding: 4px 7px;
         height: 22px;
@@ -622,6 +623,40 @@
     .vessel-month-alt {
         background: #EAF2F8 !important;
     }
+
+    #tblBvsaVessels {
+        width: 100%;
+        min-width: 1250px;
+        table-layout: fixed;
+    }
+
+    .th-resizable {
+        position: relative;
+        padding-right: 14px !important;
+    }
+
+    .col-resizer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 8px;
+        cursor: col-resize;
+        user-select: none;
+        height: 100%;
+        z-index: 10;
+    }
+
+    .col-resizer:hover,
+    .col-resizer.is-resizing {
+        background-color: rgba(96, 165, 250, 0.4);
+        border-right: 2px solid #3b82f6;
+    }
+
+    .td-truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
 </style>
 
 <div class="dpr-wrapper">
@@ -675,7 +710,8 @@
             <!-- Loading Spinner -->
             <div id="bvsaLoading" style="text-align:center;padding:40px;display:none;">
                 <div class="spinner"></div>
-                <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading BVsA Performance Data...</div>
+                <div style="margin-top:10px;font-weight:600;color:var(--text-secondary);">Loading BVsA Performance
+                    Data...</div>
             </div>
 
             <!-- Content Area (rendered on load) -->
@@ -709,22 +745,44 @@
                         <h4>FY 2026-27 COMPLETED VESSEL PERFORMANCE DETAILS</h4>
                     </div>
                     <div style="overflow-x:auto;">
-                        <table class="excel-table" id="tblBvsaVessels" style="width:100%;">
+                        <table class="excel-table" id="tblBvsaVessels">
+                            <colgroup>
+                                <col style="width:40px;">
+                                <col style="width:75px;">
+                                <col style="width:170px;" id="colVessel">
+                                <col style="width:230px;" id="colCargo">
+                                <col style="width:230px;" id="colCustomer">
+                                <col style="width:100px;">
+                                <col style="width:90px;">
+                                <col style="width:95px;">
+                                <col style="width:95px;">
+                                <col style="width:95px;">
+                                <col style="width:95px;">
+                            </colgroup>
                             <thead>
                                 <!-- Floating Category Sums Row (Image 1 & 2) -->
                                 <tr id="tblBvsaVesselsSums"></tr>
                                 <tr>
                                     <th class="th-sub-blue" style="width:40px;">#</th>
                                     <th class="th-sub-blue" style="width:75px;">Month</th>
-                                    <th class="th-sub-blue">Vessel Name</th>
-                                    <th class="th-sub-blue">Cargo</th>
-                                    <th class="th-sub-blue">Customer</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Quantity</th>
+                                    <th class="th-sub-blue th-resizable" style="width:170px;" data-col-id="colVessel" data-min-width="120" title="Drag right edge to resize column">
+                                        Vessel Name
+                                        <div class="col-resizer"></div>
+                                    </th>
+                                    <th class="th-sub-blue th-resizable" style="width:230px;" data-col-id="colCargo" data-min-width="150" title="Drag right edge to resize column">
+                                        Cargo
+                                        <div class="col-resizer"></div>
+                                    </th>
+                                    <th class="th-sub-blue th-resizable" style="width:230px;" data-col-id="colCustomer" data-min-width="150" title="Drag right edge to resize column">
+                                        Customer
+                                        <div class="col-resizer"></div>
+                                    </th>
+                                    <th class="th-sub-blue" style="text-align:right;width:100px;">Quantity</th>
                                     <th class="th-sub-blue" style="text-align:right;width:90px;">Month Total</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Edible Oil</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Other liquid</th>
-                                    <th class="th-sub-blue" style="text-align:right;">Chemical</th>
-                                    <th class="th-sub-blue" style="text-align:right;">POL</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">Edible Oil</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">Other liquid</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">Chemical</th>
+                                    <th class="th-sub-blue" style="text-align:right;width:95px;">POL</th>
                                 </tr>
                             </thead>
                             <tbody id="tblBvsaVesselsBody"></tbody>
@@ -1354,6 +1412,24 @@
         `;
     }
 
+    const CARGO_COLORS = [
+        {bg:'#eff6ff', text:'#1d4ed8', border:'#93c5fd'},  // blue
+        {bg:'#ecfdf5', text:'#047857', border:'#6ee7b7'},  // green
+        {bg:'#ffedd5', text:'#c2410c', border:'#fdba74'},  // orange
+        {bg:'#cffafe', text:'#0e7490', border:'#67e8f9'},  // cyan
+        {bg:'#fefce8', text:'#a16207', border:'#fde047'},  // yellow
+        {bg:'#f1f5f9', text:'#475569', border:'#cbd5e1'},  // slate
+    ];
+
+    function cargoColorBadges(valStr) {
+        if (!valStr || valStr === '-') return '<span style="color:#94a3b8;">-</span>';
+        const parts = valStr.split(',').map(s => s.trim()).filter(Boolean);
+        return parts.map((p, i) => {
+            const c = CARGO_COLORS[i % CARGO_COLORS.length];
+            return `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:${c.bg};color:${c.text};border:1px solid ${c.border};margin:1px 2px;white-space:nowrap;">${p}</span>`;
+        }).join('');
+    }
+
     function renderBvsaVesselsTable(vessels) {
         const tbody = document.getElementById('tblBvsaVesselsBody');
         const tfoot = document.getElementById('tblBvsaVesselsFoot');
@@ -1404,9 +1480,9 @@
                 <tr class="${rowClass}">
                     <td class="center" style="color:#64748b;">${v.sr_no}</td>
                     <td class="center bold">${v.month}</td>
-                    <td class="bold">${v.vessel_name}</td>
-                    <td>${v.cargo}</td>
-                    <td style="color:#334155;">${v.customer}</td>
+                    <td class="bold td-truncate" title="${v.vessel_name}">${v.vessel_name}</td>
+                    <td class="td-truncate" title="${v.cargo}">${cargoColorBadges(v.cargo)}</td>
+                    <td class="td-truncate" style="color:#334155;" title="${v.customer}">${v.customer}</td>
                     <td class="num bold">${fmtNum3(v.quantity)}</td>
                     <td class="num" style="${mTotalStyle}">${mTotalVal}</td>
                     <td class="num">${v.edible > 0 ? fmtNum3(v.edible) : ''}</td>
@@ -1442,6 +1518,59 @@
                 </tr>
             `;
         }
+
+        initBvsaColumnResizing();
+    }
+
+    let bvsaResizersInitialized = false;
+    function initBvsaColumnResizing() {
+        if (bvsaResizersInitialized) return;
+        const table = document.getElementById('tblBvsaVessels');
+        if (!table) return;
+
+        const resizers = table.querySelectorAll('.col-resizer');
+        resizers.forEach(resizer => {
+            resizer.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const th = resizer.parentElement;
+                const colId = th.dataset.colId;
+                const colElem = colId ? document.getElementById(colId) : null;
+                const startX = e.pageX;
+                const startThWidth = th.offsetWidth;
+                const startTableWidth = table.offsetWidth;
+                const minWidth = parseInt(th.dataset.minWidth || '120', 10);
+
+                resizer.classList.add('is-resizing');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+
+                function onMouseMove(e) {
+                    const diff = e.pageX - startX;
+                    const newThWidth = Math.max(minWidth, startThWidth + diff);
+                    th.style.width = newThWidth + 'px';
+                    if (colElem) {
+                        colElem.style.width = newThWidth + 'px';
+                    }
+                    const newTableWidth = Math.max(startTableWidth + (newThWidth - startThWidth), 1250);
+                    table.style.width = newTableWidth + 'px';
+                    table.style.minWidth = newTableWidth + 'px';
+                }
+
+                function onMouseUp() {
+                    resizer.classList.remove('is-resizing');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                }
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        });
+        bvsaResizersInitialized = true;
     }
 </script>
 {% endblock %}
