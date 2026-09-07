@@ -27,29 +27,6 @@ def _get_user_email_by_id(user_id):
     conn.close()
     return (row['email'], row['username']) if row else (None, None)
 
-def _get_closer_email(record_id):
-    """Return (email, username) of the last user who closed this LDUD record."""
-    from database import get_db, get_cursor
-    conn = get_db()
-    cur = get_cursor(conn)
-    cur.execute("""
-        SELECT actioned_by FROM approval_log
-        WHERE module_code='LDUD01' AND record_id=%s
-          AND action IN ('Closed','Partial Close')
-        ORDER BY actioned_at DESC LIMIT 1
-    """, [record_id])
-    row = cur.fetchone()
-    conn.close()
-    if not row:
-        return None, None
-    closer_username = row['actioned_by']
-    conn = get_db()
-    cur = get_cursor(conn)
-    cur.execute('SELECT email, username FROM users WHERE username=%s', [closer_username])
-    row2 = cur.fetchone()
-    conn.close()
-    return (row2['email'], row2['username']) if row2 else (None, closer_username)
-
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -286,55 +263,6 @@ def close():
     except Exception:
         pass
     return jsonify({'doc_status': close_type})
-
-
-@bp.route('/api/module/LDUD01/reopen', methods=['POST'])
-@login_required
-def reopen():
-    config = get_module_config('LDUD01')
-    is_approver = str(config.get('approver_id', '')) == str(session.get('user_id')) or session.get('is_admin')
-    if not is_approver:
-        return jsonify({'error': 'No permission to reopen'}), 403
-    data = request.json
-    record_id = data.get('id')
-    comment = (data.get('comment') or '').strip()
-    if not record_id:
-        return jsonify({'error': 'Missing id'}), 400
-    if not comment:
-        return jsonify({'error': 'A reason is required when sending back to Draft'}), 400
-
-    locked = _billed_locked(record_id)
-    if locked:
-        # Admins may force it with a reason. The ledger is NOT cleared — the
-        # vessel stays locked against every other write path until the bill is
-        # actually cancelled or the cutover flag unmarked.
-        if not session.get('is_admin'):
-            return locked
-        model.log_closure_action(record_id, 'Force Reopen (Billed)', comment,
-                                 session.get('username'))
-
-    model.reopen_record(record_id, comment, session.get('username'))
-    # Queue notification to the operator who last closed this record
-    try:
-        closer_email, closer_name = _get_closer_email(record_id)
-        if closer_email:
-            _queue_mail(
-                to_email=closer_email,
-                to_name=closer_name,
-                subject=f"[PORTMAN] LDUD01 Record #{record_id} — Sent Back to Draft",
-                body_html=f"""<p>Hello {closer_name or ''},</p>
-<p>LDUD01 record <strong>#{record_id}</strong> has been <strong>sent back to Draft</strong>
-by <strong>{session.get('username')}</strong>.</p>
-<p><strong>Reason:</strong> {comment}</p>
-<p>Please review and resubmit in PORTMAN.</p>
-<hr><p style="color:#888;font-size:11px;">Automated notification from PORTMAN.</p>""",
-                module_code='LDUD01',
-                ref_id=record_id,
-            )
-            _trigger_mail_processing()
-    except Exception:
-        pass
-    return jsonify({'doc_status': 'Draft'})
 
 
 @bp.route('/api/module/LDUD01/closure-log/<int:record_id>')

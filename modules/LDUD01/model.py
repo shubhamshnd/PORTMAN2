@@ -119,10 +119,12 @@ def get_data(page=1, size=20, filters=None):
 
         if vcn_ids:
             # Fetch doc_date for display
-            cur.execute('SELECT id, doc_date, doc_status, vcn_doc_num FROM vcn_header WHERE id = ANY(%s)', (vcn_ids,))
+            cur.execute('''SELECT id, doc_date, doc_status, vcn_doc_num, operation_type
+                           FROM vcn_header WHERE id = ANY(%s)''', (vcn_ids,))
             for v in cur.fetchall():
                 vcn_meta[v['id']] = {'doc_date': v['doc_date'] or '', 'doc_status': v['doc_status'] or '',
-                                     'vcn_doc_num': v['vcn_doc_num']}
+                                     'vcn_doc_num': v['vcn_doc_num'],
+                                     'operation_type': v['operation_type'] or ''}
 
             # Cargo names, BL quantities and UOM from VCN cargo declarations (Import + Export)
             cur.execute('''SELECT vcn_id, cargo_name, bl_quantity, quantity_uom FROM vcn_cargo_declaration
@@ -150,11 +152,23 @@ def get_data(page=1, size=20, filters=None):
                     qty = 0.0
                 consigner_cargo.append({'vcn_id': c['vcn_id'], 'cargo_name': c['cargo_name'],
                                         'bl_quantity': qty, 'quantity_uom': 'MT'})
+            # Legacy vcn_cargo_declaration is historic data only — once a VCN has
+            # consigner (IGM line) parcels those are the truth, so drop the legacy
+            # rows for it rather than counting both.
+            _with_consigners = {c['vcn_id'] for c in consigner_cargo}
+            import_cargo = [c for c in import_cargo if c['vcn_id'] not in _with_consigners]
             # One entry per parcel/cargo line — do NOT sum same-named cargo
             # (e.g. two EDIBLE OIL parcels stay as two separate lines).
-            for row_list in [import_cargo, export_cargo, consigner_cargo]:
+            # Import and export parcels live in different tables and a VCN owns
+            # exactly one side; flipping operation_type leaves the old side's rows
+            # behind, so summing both double-counts. operation_type decides.
+            for row_list, side in ((import_cargo, 'Import'), (consigner_cargo, 'Import'),
+                                   (export_cargo, 'Export')):
                 for c in row_list:
                     vid = c['vcn_id']
+                    own_side = 'Export' if vcn_meta.get(vid, {}).get('operation_type') == 'Export' else 'Import'
+                    if side != own_side:
+                        continue
                     if vid not in vcn_cargo:
                         vcn_cargo[vid] = {'names': [], 'quantities': [], 'uoms': []}
                     vcn_cargo[vid]['names'].append(c['cargo_name'])
@@ -455,32 +469,13 @@ def close_record(record_id, close_type, username):
     conn.close()
 
 
-def log_closure_action(record_id, action, comment, username):
-    """Write one approval_log row so the action shows in the closure log."""
-    conn = get_db()
-    cur = get_cursor(conn)
-    cur.execute("""INSERT INTO approval_log (module_code, record_id, action, comment, actioned_by)
-                   VALUES ('LDUD01', %s, %s, %s, %s)""", (record_id, action, comment, username))
-    conn.commit()
-    conn.close()
-
-
-def reopen_record(record_id, comment, username):
-    """Send record back to Draft with a logged reason."""
-    conn = get_db()
-    cur = get_cursor(conn)
-    cur.execute("UPDATE ldud_header SET doc_status='Draft' WHERE id=%s", (record_id,))
-    cur.execute("""INSERT INTO approval_log (module_code, record_id, action, comment, actioned_by)
-                   VALUES ('LDUD01', %s, 'Back to Draft', %s, %s)""", (record_id, comment, username))
-    conn.commit()
-    conn.close()
-
-
 def get_closure_log(record_id):
     conn = get_db()
     cur = get_cursor(conn)
-    cur.execute("""SELECT action, comment, actioned_by,
-                          to_char(actioned_at, 'DD-MM-YYYY HH24:MI') AS actioned_at
+    # explicit columns only: proof_bytes is BYTEA and must never reach JSON
+    cur.execute("""SELECT id, action, comment, actioned_by,
+                          to_char(actioned_at, 'DD-MM-YYYY HH24:MI') AS actioned_at,
+                          (proof_bytes IS NOT NULL) AS has_proof
                    FROM approval_log WHERE module_code='LDUD01' AND record_id=%s
                    ORDER BY actioned_at DESC""", (record_id,))
     rows = cur.fetchall()

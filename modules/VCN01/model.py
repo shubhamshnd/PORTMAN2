@@ -241,15 +241,18 @@ def _parcel_no(cur, vcn_id, seq):
 
 def _sync_header_cargo(cur, vcn_id):
     """Keep vcn_header.cargo_type in sync with the parcels' cargo names.
-    Recomputes it from the distinct cargo names across import consigners and
-    export declarations, so editing a parcel's cargo reflects on the header."""
+    Recomputes it from the distinct cargo names on the side the VCN actually
+    operates — import consigners or export declarations, never both. Flipping
+    operation_type leaves the old side's rows behind, so a UNION here would show
+    cargo the vessel is not carrying."""
     if not vcn_id:
         return
-    cur.execute('''
-        SELECT cargo_name FROM vcn_consigners WHERE vcn_id=%s AND cargo_name IS NOT NULL
-        UNION
-        SELECT cargo_name FROM vcn_export_cargo_declaration WHERE vcn_id=%s AND cargo_name IS NOT NULL
-    ''', (vcn_id, vcn_id))
+    cur.execute('SELECT operation_type FROM vcn_header WHERE id=%s', [vcn_id])
+    row = cur.fetchone()
+    tbl = ('vcn_export_cargo_declaration'
+           if (row or {}).get('operation_type') == 'Export' else 'vcn_consigners')
+    cur.execute(f'SELECT DISTINCT cargo_name FROM {tbl} '
+                'WHERE vcn_id=%s AND cargo_name IS NOT NULL', [vcn_id])
     names = []
     for r in cur.fetchall():
         for name in (r['cargo_name'] or '').split(','):   # consigner rows may be comma-separated
@@ -725,21 +728,13 @@ def approve_record(record_id, username):
     conn.close()
 
 
-def send_back_to_draft(record_id, comment, username):
-    conn = get_db()
-    cur = get_cursor(conn)
-    cur.execute("UPDATE vcn_header SET doc_status='Draft' WHERE id=%s", (record_id,))
-    cur.execute("""INSERT INTO approval_log (module_code, record_id, action, comment, actioned_by)
-                   VALUES ('VCN01', %s, 'Back to Draft', %s, %s)""", (record_id, comment, username))
-    conn.commit()
-    conn.close()
-
-
 def get_approval_log(record_id):
     conn = get_db()
     cur = get_cursor(conn)
-    cur.execute("""SELECT action, comment, actioned_by,
-                          to_char(actioned_at, 'DD-MM-YYYY HH24:MI') AS actioned_at
+    # explicit columns only: proof_bytes is BYTEA and must never reach JSON
+    cur.execute("""SELECT id, action, comment, actioned_by,
+                          to_char(actioned_at, 'DD-MM-YYYY HH24:MI') AS actioned_at,
+                          (proof_bytes IS NOT NULL) AS has_proof
                    FROM approval_log WHERE module_code='VCN01' AND record_id=%s
                    ORDER BY actioned_at DESC""", (record_id,))
     rows = cur.fetchall()

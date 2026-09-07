@@ -1,4 +1,7 @@
-from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
+import io
+import psycopg2
+from flask import (Blueprint, render_template, request, jsonify, session,
+                   redirect, url_for, send_file)
 from functools import wraps
 from database import get_db, get_cursor, get_module_config, save_module_config
 import json
@@ -594,11 +597,11 @@ def test_smtp_config():
         return jsonify({'error': 'Recipient email is required.'}), 400
     try:
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = 'PORTMAN SMTP Test'
-        msg['From'] = f"{data.get('from_name') or 'PORTMAN'} <{data.get('from_email')}>"
+        msg['Subject'] = 'Portbird JNPA SMTP Test'
+        msg['From'] = f"{data.get('from_name') or 'Portbird JNPA'} <{data.get('from_email')}>"
         msg['To'] = to_email
         msg.attach(MIMEText(
-            f"This is a test email from PORTMAN sent by {session.get('username')}. "
+            f"This is a test email from Portbird JNPA sent by {session.get('username')}. "
             "If you received this, SMTP is configured correctly.", 'plain'))
 
         server = smtplib.SMTP(data.get('host'), int(data.get('port') or 587), timeout=15)
@@ -657,44 +660,211 @@ def send_mail_now():
 
 # ── LDUD Vessel Closure Admin ─────────────────────────────────────────────────
 
-@bp.route('/api/ldud/vessels')
+# -----------------------------------------------------------------------------
+# Reopen to Draft - the ONLY path back to Draft for an approved/closed record.
+# VCN01 and LDUD01 no longer expose send-back; this is admin-only and every
+# reopen must carry a photo as evidence, stored on the audit row itself.
+# -----------------------------------------------------------------------------
+_PROOF_EXTS = ('.png', '.jpg', '.jpeg')
+_PROOF_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _billed_vcn_ids(cur, vcn_ids):
+    """Batched is_vcn_billed - one query instead of a connection per row."""
+    ids = [v for v in vcn_ids if v]
+    if not ids:
+        return set()
+    cur.execute("""SELECT DISTINCT v.vcn_id FROM (
+            SELECT vcn_id, id, 'VCN_IMPORT' AS t FROM vcn_consigners WHERE vcn_id = ANY(%s)
+            UNION ALL
+            SELECT vcn_id, id, 'VCN_EXPORT' FROM vcn_export_cargo_declaration WHERE vcn_id = ANY(%s)
+        ) v JOIN parcel_charge_billed pcb
+          ON pcb.cargo_source_type = v.t AND pcb.cargo_source_id = v.id""", (ids, ids))
+    return {r['vcn_id'] for r in cur.fetchall()}
+
+
+@bp.route('/api/reopen/pending')
 @admin_required
-def get_ldud_vessels():
+def reopen_pending():
+    """Approved VCN01 records and Closed/Partial/Approved LDUD01 records."""
     conn = get_db()
     cur = get_cursor(conn)
-    cur.execute('''
-        SELECT id, doc_num, vessel_name, vcn_doc_num, operation_type, doc_status, created_by
-        FROM ldud_header
-        WHERE doc_status IN ('Closed', 'Partial Close') AND is_deleted IS NOT TRUE
-        ORDER BY id DESC
-    ''')
-    rows = cur.fetchall()
+    rows = []
+
+    cur.execute("""SELECT id, vcn_doc_num AS doc_num, vessel_name, vcn_doc_num,
+                          operation_type, doc_status, created_by, id AS vcn_id
+                   FROM vcn_header WHERE doc_status = 'Approved' ORDER BY id DESC""")
+    for r in cur.fetchall():
+        d = dict(r)
+        d['module'] = 'VCN01'
+        d['proof_docs'] = 0
+        rows.append(d)
+
+    cur.execute("""SELECT l.id, l.doc_num, l.vessel_name,
+                          COALESCE(h.vcn_doc_num, l.vcn_doc_num) AS vcn_doc_num,
+                          h.operation_type, l.doc_status, l.created_by, l.vcn_id,
+                          (SELECT COUNT(*) FROM ldud_proof_documents d
+                           WHERE d.ldud_id = l.id) AS proof_docs
+                   FROM ldud_header l LEFT JOIN vcn_header h ON h.id = l.vcn_id
+                   WHERE l.doc_status IN ('Closed', 'Partial Close', 'Approved')
+                     AND l.is_deleted IS NOT TRUE
+                   ORDER BY l.id DESC""")
+    for r in cur.fetchall():
+        d = dict(r)
+        d['module'] = 'LDUD01'
+        rows.append(d)
+
+    billed = _billed_vcn_ids(cur, {r.get('vcn_id') for r in rows})
+    for r in rows:
+        r['is_billed'] = r.get('vcn_id') in billed
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(rows)
 
 
-@bp.route('/api/ldud/open_vessel', methods=['POST'])
+def _read_proof(files):
+    """(bytes, filename, None) or (None, None, error). Image proof is mandatory."""
+    f = files.get('file')
+    if not f or not f.filename:
+        return None, None, 'A proof image is required to reopen a record.'
+    name = f.filename
+    if not name.lower().endswith(_PROOF_EXTS):
+        return None, None, 'Proof must be a PNG or JPG image.'
+    if not (f.mimetype or '').startswith('image/'):
+        return None, None, 'Proof must be an image file.'
+    blob = f.read()
+    if not blob:
+        return None, None, 'The uploaded proof image is empty.'
+    if len(blob) > _PROOF_MAX_BYTES:
+        return None, None, 'Proof image must be 5 MB or smaller.'
+    return blob, name, None
+
+
+def _notify_reopen(module, record_id, comment, username):
+    """Tell whoever owns the record that it went back to Draft. Never fatal."""
+    try:
+        from mail_service import queue_mail, trigger_mail_processing
+        conn = get_db()
+        cur = get_cursor(conn)
+        if module == 'LDUD01':
+            cur.execute("""SELECT actioned_by FROM approval_log
+                           WHERE module_code='LDUD01' AND record_id=%s
+                             AND action IN ('Closed','Partial Close')
+                           ORDER BY actioned_at DESC LIMIT 1""", [record_id])
+        else:
+            cur.execute('SELECT created_by AS actioned_by FROM vcn_header WHERE id=%s', [record_id])
+        row = cur.fetchone()
+        owner = row['actioned_by'] if row else None
+        if not owner:
+            conn.close()
+            return
+        cur.execute('SELECT email, username FROM users WHERE username=%s', [owner])
+        u = cur.fetchone()
+        conn.close()
+        if not u or not u['email']:
+            return
+        body = ('<p>Hello ' + (u['username'] or '') + ',</p>'
+                '<p>' + module + ' record <strong>#' + str(record_id) + '</strong> has been '
+                '<strong>sent back to Draft</strong> by <strong>' + str(username) + '</strong>.</p>'
+                '<p><strong>Reason:</strong> ' + comment + '</p>'
+                '<p>Please review and resubmit in Portbird JNPA.</p>'
+                '<hr><p style="color:#888;font-size:11px;">'
+                'Automated notification from Portbird JNPA.</p>')
+        queue_mail(u['email'], u['username'],
+                   '[Portbird JNPA] ' + module + ' Record #' + str(record_id) +
+                   ' - Sent Back to Draft',
+                   body, module, record_id)
+        trigger_mail_processing()
+    except Exception:
+        pass
+
+
+@bp.route('/api/reopen', methods=['POST'])
 @admin_required
-def open_vessel():
-    data = request.json
-    ldud_id = data.get('id')
-    if not ldud_id:
+def reopen_record():
+    """Reopen one VCN01/LDUD01 record to Draft. Multipart: module, id, comment, file."""
+    module = (request.form.get('module') or '').strip()
+    record_id = request.form.get('id')
+    comment = (request.form.get('comment') or '').strip()
+    if module not in ('VCN01', 'LDUD01'):
+        return jsonify({'error': 'Unknown module'}), 400
+    if not record_id:
         return jsonify({'error': 'Missing id'}), 400
+    if not comment:
+        return jsonify({'error': 'A reason is required when sending back to Draft'}), 400
+    blob, filename, err = _read_proof(request.files)
+    if err:
+        return jsonify({'error': err}), 400
+
+    username = session.get('username')
     conn = get_db()
     cur = get_cursor(conn)
+    try:
+        if module == 'VCN01':
+            cur.execute('SELECT doc_status FROM vcn_header WHERE id=%s', (record_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'error': 'Record not found'}), 404
+            if row['doc_status'] != 'Approved':
+                return jsonify({'error': 'Only Approved records can be reopened'}), 400
+            billed = bool(_billed_vcn_ids(cur, {int(record_id)}))
+            cur.execute("UPDATE vcn_header SET doc_status='Draft' WHERE id=%s", (record_id,))
+            docs_removed = 0
+        else:
+            cur.execute("""SELECT doc_status, vcn_id FROM ldud_header
+                           WHERE id=%s AND is_deleted IS NOT TRUE""", (record_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'error': 'Record not found'}), 404
+            billed = bool(_billed_vcn_ids(cur, {row['vcn_id']}))
+            # Reopening discards the proof-of-quantity documents; the UI warns first.
+            cur.execute('SELECT COUNT(*) AS cnt FROM ldud_proof_documents WHERE ldud_id=%s',
+                        (record_id,))
+            docs_removed = cur.fetchone()['cnt']
+            cur.execute('DELETE FROM ldud_proof_documents WHERE ldud_id=%s', (record_id,))
+            cur.execute("UPDATE ldud_header SET doc_status='Draft' WHERE id=%s", (record_id,))
 
-    cur.execute("SELECT COUNT(*) AS cnt FROM ldud_proof_documents WHERE ldud_id=%s", (ldud_id,))
-    doc_count = cur.fetchone()['cnt']
-    cur.execute("DELETE FROM ldud_proof_documents WHERE ldud_id=%s", (ldud_id,))
+        # The billed lock is NOT cleared - the record stays locked against every
+        # other write path until the bill is cancelled. Kept as a distinct action
+        # so a billed reopen stays greppable in the audit trail.
+        action = 'Force Reopen (Billed)' if billed else 'Back to Draft'
+        note = comment
+        if docs_removed:
+            note = comment + ' [' + str(docs_removed) + ' proof doc(s) deleted]'
+        mime = 'image/png' if filename.lower().endswith('.png') else 'image/jpeg'
+        cur.execute("""INSERT INTO approval_log
+                       (module_code, record_id, action, comment, actioned_by,
+                        proof_bytes, proof_filename, proof_mime)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (module, record_id, action, note, username,
+                     psycopg2.Binary(blob), filename, mime))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
-    cur.execute("UPDATE ldud_header SET doc_status='Draft' WHERE id=%s", (ldud_id,))
-    cur.execute("""INSERT INTO approval_log (module_code, record_id, action, comment, actioned_by)
-                   VALUES ('LDUD01', %s, 'Reopened by Admin', 'Manually reopened via Admin panel; %s proof doc(s) removed', %s)""",
-                (ldud_id, doc_count, session.get('username')))
-    conn.commit()
+    _notify_reopen(module, record_id, comment, username)
+    return jsonify({'success': True, 'docs_removed': docs_removed, 'was_billed': billed})
+
+
+@bp.route('/api/approval-proof/<int:log_id>')
+@login_required
+def approval_proof(log_id):
+    """Serve a reopen proof image. Login-only, not admin - an audit trail only
+    its author can inspect is not an audit trail."""
+    conn = get_db()
+    cur = get_cursor(conn)
+    cur.execute('SELECT proof_bytes, proof_filename, proof_mime FROM approval_log WHERE id=%s',
+                (log_id,))
+    row = cur.fetchone()
     conn.close()
-    return jsonify({'success': True, 'docs_removed': doc_count})
-
+    if not row or not row['proof_bytes']:
+        return jsonify({'error': 'No proof image on this entry'}), 404
+    return send_file(io.BytesIO(bytes(row['proof_bytes'])),
+                     mimetype=row['proof_mime'] or 'image/jpeg',
+                     as_attachment=False,
+                     download_name=row['proof_filename'] or ('proof-%d.jpg' % log_id))
 
 
 @bp.route('/api/aud-config')

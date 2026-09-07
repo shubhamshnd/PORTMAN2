@@ -127,27 +127,6 @@ def approve():
     return jsonify({'doc_status': 'Approved'})
 
 
-@bp.route('/api/module/VCN01/send_back', methods=['POST'])
-@login_required
-def send_back():
-    config = get_module_config('VCN01')
-    is_approver = str(config.get('approver_id', '')) == str(session.get('user_id')) or session.get('is_admin')
-    if not is_approver:
-        return jsonify({'error': 'No permission'}), 403
-    data = request.json
-    record_id = data.get('id')
-    comment = (data.get('comment') or '').strip()
-    if not record_id:
-        return jsonify({'error': 'Missing id'}), 400
-    if not comment:
-        return jsonify({'error': 'A reason is required when sending back to Draft'}), 400
-    locked = _billed_locked(record_id)
-    if locked:
-        return locked
-    model.send_back_to_draft(record_id, comment, session.get('username'))
-    return jsonify({'doc_status': 'Draft'})
-
-
 @bp.route('/api/module/VCN01/send_to_expected', methods=['POST'])
 @login_required
 def send_to_expected():
@@ -162,7 +141,7 @@ def send_to_expected():
     if locked:
         return locked
     if model.get_doc_status(record_id) == 'Approved':
-        return jsonify({'error': 'Approved records cannot be sent back to Expected — send back to Draft first'}), 400
+        return jsonify({'error': 'Approved records cannot be sent back to Expected — an admin must reopen it first via Admin > Reopen to Draft'}), 400
     try:
         model.send_back_to_expected(record_id, session.get('username'))
     except ValueError as e:

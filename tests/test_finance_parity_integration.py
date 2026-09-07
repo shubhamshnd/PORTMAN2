@@ -1,7 +1,8 @@
 """Integration checks for the finance-parity work, against the dev DB with
 throwaway rows that are always cleaned up:
 
-  * LDUD01 billed lock (409 on every write, admin override on reopen only)
+  * LDUD01 billed lock (409 on every write; reopen now lives in ADMIN and
+    still logs the billed override)
   * billing customer picker counts (?with_billables=1)
   * Admin Cutover flagging, unmarking and the lock
   * seeded bill numbering
@@ -16,6 +17,7 @@ from modules.ADMIN import cutover
 from modules.FIN01 import model as fin
 from modules.FSAP01 import views as fsap
 from modules.LDUD01 import views as ldud
+from modules.ADMIN import views as admin_views
 
 _app = Flask(__name__)
 _app.secret_key = 'pytest-secret'
@@ -97,6 +99,27 @@ def _post(view, payload, admin=False, user_id=1):
         return view()
 
 
+# 1x1 PNG - the reopen endpoint requires a real image, not just a filename.
+_PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+        b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01'
+        b'\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82')
+
+
+def _post_reopen(module, record_id, comment, admin=True, with_proof=True, user_id=1):
+    """Reopen through ADMIN - multipart, admin-only, proof image mandatory."""
+    import io as _io
+    data = {'module': module, 'id': str(record_id), 'comment': comment}
+    if with_proof:
+        data['file'] = (_io.BytesIO(_PNG), 'proof.png', 'image/png')
+    with _app.test_request_context('/', method='POST', data=data,
+                                   content_type='multipart/form-data'):
+        session['user_id'] = user_id
+        session['username'] = 'pytest'
+        if admin:
+            session['is_admin'] = True
+        return admin_views.reopen_record()
+
+
 def test_billed_vessel_locks_every_ldud_write(monkeypatch):
     vcn_id, parcel_id, ldud_id = _mk_vessel('PARITY LOCK CO', ldud_status='Closed')
     try:
@@ -110,11 +133,8 @@ def test_billed_vessel_locks_every_ldud_write(monkeypatch):
         conn.commit(); conn.close()
         _bill_parcel(parcel_id, bill_id=bill_id)
 
-        # Approver, not admin: reopen is refused and names the blocking bill.
-        monkeypatch.setattr(ldud, 'get_module_config', lambda code: {'approver_id': 1})
-        body, status = _post(ldud.reopen, {'id': ldud_id, 'comment': 'need to fix'})
-        assert status == 409
-        assert 'BILL-PARITY-1' in body.get_json()['error']
+        # Reopen no longer exists in LDUD01 - it moved to ADMIN, admin-only.
+        assert not hasattr(ldud, 'reopen')
 
         # Admin does not get a bypass on the other four write paths.
         for view, payload in (
@@ -126,11 +146,18 @@ def test_billed_vessel_locks_every_ldud_write(monkeypatch):
             body, status = _post(view, payload, admin=True)
             assert status == 409, (view.__name__, status)
 
-        # Admin override on reopen: succeeds, with the reason in the closure log.
-        body = _post(ldud.reopen, {'id': ldud_id, 'comment': 'legacy correction'}, admin=True)
-        assert body.get_json()['doc_status'] == 'Draft'
-        actions = [r['action'] for r in ldud.model.get_closure_log(ldud_id)]
-        assert 'Force Reopen (Billed)' in actions
+        # A reopen without a proof image is refused outright.
+        body, status = _post_reopen('LDUD01', ldud_id, 'no proof', with_proof=False)
+        assert status == 400 and 'proof image is required' in body.get_json()['error']
+
+        # Admin reopen with proof: succeeds, logged as the billed override,
+        # and the proof image is stored on the audit row.
+        body = _post_reopen('LDUD01', ldud_id, 'legacy correction')
+        assert body.get_json()['success'] is True
+        assert body.get_json()['was_billed'] is True
+        log = ldud.model.get_closure_log(ldud_id)
+        assert 'Force Reopen (Billed)' in [r['action'] for r in log]
+        assert any(r['has_proof'] for r in log)
 
         # The override changes doc_status only — the ledger still holds the lock.
         assert fin.is_vcn_billed(vcn_id) is True

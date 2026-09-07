@@ -249,7 +249,7 @@ def get_customer_options(customer_type):
 
 @bp.route('/api/module/SRV01/source-options/<source_type>')
 def get_source_options(source_type):
-    """Get optional VCN/MBC reference options"""
+    """Get optional VCN reference options"""
     if 'user_id' not in session:
         return jsonify({'error': 'Not logged in'}), 401
 

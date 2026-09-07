@@ -437,6 +437,19 @@
             </div>
             <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Confirm your password <span style="color:#e53e3e">*</span></label>
             <input type="password" id="closurePassword" placeholder="Enter your login password…" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-bottom:14px;">
+            <div style="background:#fff5f5;border:1px solid #fc8181;border-left:4px solid #c53030;border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+                <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#822727;">&#9888; This action is final</p>
+                <ul style="margin:0 0 10px;padding-left:18px;font-size:12px;color:#742a2a;line-height:1.55;">
+                    <li>The quantities recorded here are <strong>final</strong> and are carried straight through to <strong>billing and invoicing</strong>.</li>
+                    <li>Once closed, this vessel <strong>cannot be reopened by you</strong>. Only an administrator can reopen it, and only with a documented reason and photographic proof.</li>
+                    <li>Any correction after this point requires an audited admin reversal, and a billed vessel stays locked even then.</li>
+                </ul>
+                <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#742a2a;cursor:pointer;font-weight:600;">
+                    <input type="checkbox" id="closureAckChk" onchange="toggleClosureBtns()" style="margin-top:2px;flex-shrink:0;">
+                    <span>I confirm I have checked every quantity and detail on this vessel, that the values are correct and final,
+                    that I understand they will impact billing, and that this record cannot be reopened without administrator approval.</span>
+                </label>
+            </div>
             <div style="display:flex;gap:8px;">
                 <button id="btnCloseVessel" onclick="confirmClose('Closed')" style="flex:1;padding:8px;background:#1a4f8b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">✓ Close Vessel</button>
                 <button id="btnPartialClose" onclick="confirmClose('Partial Close')" style="flex:1;padding:8px;background:#c05621;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">⚡ Partial Close</button>
@@ -444,18 +457,6 @@
         </div>
         <div style="display:flex;justify-content:flex-end;margin-top:14px;">
             <button onclick="closeClosureModal()" style="padding:6px 18px;border:1px solid #cbd5e0;background:white;border-radius:4px;cursor:pointer;font-size:13px;">Cancel</button>
-        </div>
-    </div>
-</div>
-<!-- Reopen (Back to Draft) Modal -->
-<div id="reopenModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;align-items:center;justify-content:center;">
-    <div style="background:white;border-radius:8px;padding:24px;max-width:420px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
-        <h3 style="margin:0 0 14px;font-size:16px;font-weight:600;">↩ Send Back to Draft</h3>
-        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Reason <span style="color:#e53e3e">*</span></label>
-        <textarea id="reopenComment" rows="4" placeholder="Enter reason for reopening…" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;resize:vertical;"></textarea>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-            <button onclick="closeReopenModal()" style="padding:6px 18px;border:1px solid #cbd5e0;background:white;border-radius:4px;cursor:pointer;font-size:13px;">Cancel</button>
-            <button onclick="confirmReopen()" style="padding:6px 18px;background:#c05621;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">Send to Draft</button>
         </div>
     </div>
 </div>
@@ -804,9 +805,9 @@
                     if (!data.id) return '';
                     const status = data.doc_status || 'Draft';
                     if (isApprover || isAdmin) {
-                        if (status === 'Closed') {
-                            return `<button class="btn-reopen" onclick="reopenRow(${data.id})">↩ Draft</button>`;
-                        }
+                        // Closed is final here — reopening is admin-only, via
+                        // Admin ▸ Reopen to Draft, and requires a proof image.
+                        if (status === 'Closed') return '';
                         return `<button class="btn-closure" onclick="openClosureModal(${data.id})">🔒 Close</button>`;
                     }
                     // Non-approver: info button only
@@ -1564,7 +1565,6 @@
 
     // ── Closure functions ────────────────────────────────────────────────────
     let closureTargetId = null;
-    let reopenTargetId = null;
     let closureUploadedDocs = [];  // [{id, original_filename}]
 
     async function openClosureModal(id) {
@@ -1576,6 +1576,8 @@
         document.getElementById('closureDocsUploading').style.display = 'none';
         document.getElementById('closureMissingSection').style.display = 'none';
         document.getElementById('closureEligibleSection').style.display = 'none';
+        document.getElementById('closureAckChk').checked = false;
+        toggleClosureBtns();
         document.getElementById('closureModal').style.display = 'flex';
 
         const res = await fetch(`/api/module/LDUD01/closure_check/${id}`);
@@ -1609,6 +1611,18 @@
         } else {
             alert('Requirements not yet met:\n\n• ' + check.missing.join('\n• '));
         }
+    }
+
+    // Both close buttons stay disabled until the finality acknowledgement is ticked.
+    function toggleClosureBtns() {
+        const ok = document.getElementById('closureAckChk').checked;
+        [['btnCloseVessel', '#1a4f8b'], ['btnPartialClose', '#c05621']].forEach(([id, colour]) => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            btn.disabled = !ok;
+            btn.style.background = ok ? colour : '#a0aec0';
+            btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+        });
     }
 
     function closeClosureModal() {
@@ -1648,6 +1662,10 @@
     }
 
     async function confirmClose(closeType) {
+        if (!document.getElementById('closureAckChk').checked) {
+            alert('Please tick the acknowledgement before closing this vessel.');
+            return;
+        }
         if (closureUploadedDocs.length === 0) {
             alert('Please upload at least one Proof of Quantity document before closing.');
             return;
@@ -1665,38 +1683,22 @@
         closeClosureModal();
     }
 
-    function reopenRow(id) {
-        reopenTargetId = id;
-        document.getElementById('reopenComment').value = '';
-        document.getElementById('reopenModal').style.display = 'flex';
-    }
-
-    function closeReopenModal() {
-        document.getElementById('reopenModal').style.display = 'none';
-        reopenTargetId = null;
-    }
-
-    async function confirmReopen() {
-        const comment = document.getElementById('reopenComment').value.trim();
-        if (!comment) { alert('Please enter a reason.'); return; }
-        const res = await fetch('/api/module/LDUD01/reopen', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id: reopenTargetId, comment: comment})
-        });
-        const data = await res.json();
-        if (data.error) { alert(data.error); return; }
-        const row = table.getRows().find(r => r.getData().id === reopenTargetId);
-        if (row) { row.update({doc_status: 'Draft'}); row.reformat(); }
-        closeReopenModal();
-    }
-
     async function showClosureLog(id, event) {
         event.stopPropagation();
         const res = await fetch(`/api/module/LDUD01/closure-log/${id}`);
         const log = await res.json();
         if (!log.length) { alert('No closure history yet.'); return; }
-        const lines = log.map(e => `${e.actioned_at}  ${e.action} by ${e.actioned_by}${e.comment ? '\n  Reason: ' + e.comment : ''}`);
-        alert('Closure History:\n\n' + lines.join('\n\n'));
+        // Reopens carry a mandatory proof image on the audit row; an alert cannot
+        // hold a link, so offer to open them after showing the history.
+        const lines = log.map(e => `${e.actioned_at}  ${e.action} by ${e.actioned_by}`
+            + (e.comment ? '\n  Reason: ' + e.comment : '')
+            + (e.has_proof ? '\n  [proof image attached]' : ''));
+        const proofs = log.filter(e => e.has_proof);
+        const text = 'Closure History:\n\n' + lines.join('\n\n');
+        if (!proofs.length) { alert(text); return; }
+        if (confirm(text + `\n\nOpen ${proofs.length} proof image(s)?`)) {
+            proofs.forEach(e => window.open(`/admin/api/approval-proof/${e.id}`, '_blank'));
+        }
     }
 
     // ── Filter panel ──────────────────────────────────────────────────────────

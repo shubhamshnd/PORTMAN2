@@ -40,7 +40,7 @@ _SKIP_PREFIXES = ('/static/', '/favicon')
 
 _MODULE_NAMES = {
     'VC01': 'Vessel Creation', 'VCN01': 'Vessel Call Number',
-    'LDUD01': 'Loading Unloading', 'MBC01': 'MBC Operation',
+    'LDUD01': 'Loading Unloading',
     'LUEU01': 'Load/Unload Equip Utilization', 'SRV01': 'Service Recording',
     'FIN01': 'Billing', 'FINV01': 'Invoicing', 'FCAM01': 'Customer Agreements',
     'FSTM01': 'Service Type Master', 'FGRM01': 'GST Rate Master',
@@ -52,11 +52,10 @@ _MODULE_NAMES = {
     'PDM01': 'Port Delay Master', 'VCG01': 'Cargo Master',
     'VQM01': 'Quantity UOM',
     'VEM01': 'Equipment Master', 'VBM01': 'Barge Master',
-    'MBCM01': 'MBC Master',
     'PBM01': 'Port Berth Master', 'PPL01': 'Port Payloader Master',
     'CRM01': 'Conveyor Route Master', 'VANM01': 'Anchorage Master',
     'VPM01': 'Port Master', 'TM01': 'Tide Master',
-    'VCDS01': 'VCN Doc Series', 'MBCDS01': 'MBC Doc Series',
+    'VCDS01': 'VCN Doc Series',
     'INVDS01': 'Invoice Doc Series', 'GSTCFG': 'GST API Config',
     'PSM01': 'PSM', 'PSMM01': 'PSMM', 'PSOM01': 'PSOM',
     'RP01': 'Reports', 'AUD01': 'Audit Logs', 'ADMIN': 'Admin Panel',

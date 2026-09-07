@@ -12,8 +12,7 @@
     <button class="tab-btn active" onclick="showTab('users')">User Management</button>
     <button class="tab-btn" onclick="showTab('permissions')">Module Permissions</button>
     <button class="tab-btn" onclick="showTab('config')">Module Config</button>
-    <button class="tab-btn" onclick="showTab('vessels')">Vessel Closure</button>
-    <button class="tab-btn" onclick="showTab('mbc')">MBC Approval</button>
+    <button class="tab-btn" onclick="showTab('vessels')">Reopen to Draft</button>
     <button class="tab-btn" onclick="showTab('gst')">GST Config</button>
     <button class="tab-btn" onclick="showTab('services')">Services</button>
     <button class="tab-btn" onclick="showTab('sap')">SAP Config</button>
@@ -126,17 +125,22 @@
     </div>
 </div>
 
-<!-- Vessel Closure Tab -->
+<!-- Reopen to Draft Tab -->
 <div id="vessels-tab" class="tab-content">
     <div class="admin-section">
-        <h3>Vessel Closure Management</h3>
-        <p style="font-size:13px;color:#718096;margin:0 0 12px;">Shows all Closed and Partial Close vessels from LDUD01. Use "Open Vessel" to reset a record back to Draft.</p>
+        <h3>Reopen to Draft</h3>
+        <p style="font-size:13px;color:#718096;margin:0 0 12px;">
+            The only way back to Draft for an Approved VCN or a Closed / Partial Close LDUD.
+            VCN01 and LDUD01 no longer offer send-back. Every reopen needs a reason and a
+            photo as proof, both stored permanently in the approval log.
+        </p>
         <div class="toolbar">
-            <button class="btn btn-save" onclick="loadLdudVessels()">↻ Refresh</button>
+            <button class="btn btn-save" onclick="loadReopenList()">&#8635; Refresh</button>
         </div>
-        <table class="admin-table" id="ldudVesselsTable">
+        <table class="admin-table" id="reopenTable">
             <thead>
                 <tr>
+                    <th>Module</th>
                     <th>Doc Num</th>
                     <th>Vessel Name</th>
                     <th>VCN Doc</th>
@@ -146,34 +150,29 @@
                     <th>Action</th>
                 </tr>
             </thead>
-            <tbody id="ldudVesselsBody"></tbody>
+            <tbody id="reopenBody"></tbody>
         </table>
     </div>
 </div>
 
-<!-- MBC Approval Tab -->
-<div id="mbc-tab" class="tab-content">
-    <div class="admin-section">
-        <h3>MBC Approval Reset</h3>
-        <p style="font-size:13px;color:#718096;margin:0 0 12px;">Shows all Approved MBC records from MBC01. Use "Reset Approval" to move a record back to Draft.</p>
-        <div class="toolbar">
-            <button class="btn btn-save" onclick="loadMbcApprovals()">↻ Refresh</button>
-        </div>
-        <table class="admin-table" id="mbcApprovalsTable">
-            <thead>
-                <tr>
-                    <th>Doc Num</th>
-                    <th>MBC Name</th>
-                    <th>Operation</th>
-                    <th>Cargo Name</th>
-                    <th>Status</th>
-                    <th>Created By</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody id="mbcApprovalsBody"></tbody>
-        </table>
+<!-- Reopen to Draft Modal -->
+<div id="reopenModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:24px;width:460px;max-width:94vw;max-height:90vh;overflow:auto;">
+    <h3 style="margin:0 0 4px;font-size:16px;font-weight:600;">&#8617; Send Back to Draft</h3>
+    <p id="reopenTarget" style="margin:0 0 14px;font-size:12px;color:#718096;"></p>
+    <div id="reopenWarnings" style="margin:0 0 14px;"></div>
+    <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin:0 0 4px;">Reason <span style="color:#e53e3e;">*</span></label>
+    <textarea id="reopenComment" rows="3" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:6px;font-size:13px;font-family:inherit;" placeholder="Why is this record being reopened?"></textarea>
+    <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin:14px 0 4px;">Proof image <span style="color:#e53e3e;">*</span></label>
+    <input type="file" id="reopenFile" accept="image/png,image/jpeg" onchange="previewReopenProof()" style="font-size:12px;">
+    <p style="margin:4px 0 0;font-size:11px;color:#a0aec0;">PNG or JPG, up to 5 MB. Stored in the approval log as evidence.</p>
+    <img id="reopenPreview" style="display:none;max-width:100%;margin-top:10px;border-radius:6px;border:1px solid #e2e8f0;">
+    <p id="reopenError" style="display:none;margin:10px 0 0;font-size:12px;color:#c53030;font-weight:600;"></p>
+    <div style="margin-top:18px;text-align:right;">
+      <button class="btn" onclick="closeReopenModal()">Cancel</button>
+      <button class="btn btn-danger" id="reopenSubmitBtn" onclick="submitReopen()">Send Back to Draft</button>
     </div>
+  </div>
 </div>
 
 <!-- GST Config Tab -->
@@ -774,8 +773,7 @@ function showTab(tab) {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     document.querySelector(`[onclick*="showTab('${tab}')"]`).classList.add('active');
     document.getElementById(`${tab}-tab`).classList.add('active');
-    if (tab === 'vessels') loadLdudVessels();
-    if (tab === 'mbc') loadMbcApprovals();
+    if (tab === 'vessels') loadReopenList();
     if (tab === 'gst') loadGstConfig();
     if (tab === 'services') loadServiceConfig();
     if (tab === 'sap') loadSapConfig();
@@ -1458,77 +1456,100 @@ async function testSapConnection() {
     }
 }
 
-// ── Vessel Closure ───────────────────────────────────────────────────────────
-async function loadLdudVessels() {
-    const res = await fetch('/admin/api/ldud/vessels');
-    const vessels = await res.json();
-    const tbody = document.getElementById('ldudVesselsBody');
-    if (!vessels.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:16px;">No closed or partial-closed vessels found.</td></tr>';
-        return;
-    }
-    tbody.innerHTML = vessels.map(v => {
-        const statusColor = v.doc_status === 'Closed' ? '#276749' : '#c05621';
-        const statusBg   = v.doc_status === 'Closed' ? '#c6f6d5' : '#feebc8';
-        return `<tr>
-            <td>${v.doc_num || ''}</td>
-            <td>${v.vessel_name || ''}</td>
-            <td>${v.vcn_doc_num || ''}</td>
-            <td>${v.operation_type || ''}</td>
-            <td><span style="background:${statusBg};color:${statusColor};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${v.doc_status}</span></td>
-            <td>${v.created_by || ''}</td>
-            <td><button class="btn btn-danger" onclick="openVessel(${v.id}, '${(v.doc_num||'').replace(/'/g,"\\'")}')">Open Vessel</button></td>
-        </tr>`;
-    }).join('');
-}
+// ── Reopen to Draft ──────────────────────────────────────────────────────────
+let reopenTargetRow = null;
 
-async function openVessel(id, docNum) {
-    if (!confirm(`Reset "${docNum}" back to Draft?\n\nThis will also permanently delete all Proof of Quantity documents uploaded for this vessel.`)) return;
-    const res = await fetch('/admin/api/ldud/open_vessel', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id})
-    });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    const removed = data.docs_removed || 0;
-    if (removed > 0) alert(`Vessel reset to Draft. ${removed} proof document(s) deleted.`);
-    loadLdudVessels();
-}
-
-async function loadMbcApprovals() {
-    const res = await fetch('/admin/api/mbc/approvals');
+async function loadReopenList() {
+    const res = await fetch('/admin/api/reopen/pending');
     const rows = await res.json();
-    const tbody = document.getElementById('mbcApprovalsBody');
+    const tbody = document.getElementById('reopenBody');
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:16px;">No approved MBC records found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#718096;padding:16px;">Nothing is currently Approved or Closed.</td></tr>';
         return;
     }
-    tbody.innerHTML = rows.map(r => `
+    window._reopenRows = rows;
+    tbody.innerHTML = rows.map((r, i) => `
         <tr>
+            <td><span style="background:${r.module === 'VCN01' ? '#bee3f8' : '#e9d8fd'};color:#2a4365;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${r.module}</span></td>
             <td>${r.doc_num || ''}</td>
-            <td>${r.mbc_name || ''}</td>
+            <td>${r.vessel_name || ''}</td>
+            <td>${r.vcn_doc_num || ''}</td>
             <td>${r.operation_type || ''}</td>
-            <td>${r.cargo_name || ''}</td>
-            <td><span style="background:#c6f6d5;color:#276749;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${r.doc_status || 'Approved'}</span></td>
+            <td>
+                <span style="background:#c6f6d5;color:#276749;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${r.doc_status || ''}</span>
+                ${r.is_billed ? '<span style="background:#fed7d7;color:#822727;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:4px;">BILLED</span>' : ''}
+            </td>
             <td>${r.created_by || ''}</td>
-            <td><button class="btn btn-danger" onclick="resetMbcApproval(${r.id}, '${(r.doc_num||'').replace(/'/g,"\\'")}')">Reset Approval</button></td>
+            <td><button class="btn btn-danger" onclick="openReopenModal(${i})">Send Back to Draft</button></td>
         </tr>
     `).join('');
 }
 
-async function resetMbcApproval(id, docNum) {
-    if (!confirm(`Reset "${docNum}" back to Draft?\n\nThis will also permanently delete all Proof of Quantity documents uploaded for this MBC record.`)) return;
-    const res = await fetch('/admin/api/mbc/reset_approval', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id})
-    });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    const removed = data.docs_removed || 0;
-    if (removed > 0) alert(`MBC reset to Draft. ${removed} proof document(s) deleted.`);
-    loadMbcApprovals();
+function openReopenModal(idx) {
+    const r = window._reopenRows[idx];
+    reopenTargetRow = r;
+    document.getElementById('reopenTarget').textContent =
+        `${r.module} ${r.doc_num || '#' + r.id} - ${r.vessel_name || ''} (${r.doc_status})`;
+
+    // Surface the side effects this action performs, before it happens.
+    let warn = '';
+    if (r.proof_docs > 0) {
+        warn += `<div style="background:#fffaf0;border-left:3px solid #dd6b20;padding:8px 10px;font-size:12px;color:#7b341e;margin-bottom:6px;">
+            &#9888; <strong>${r.proof_docs}</strong> Proof of Quantity document(s) will be <strong>permanently deleted</strong>.</div>`;
+    }
+    if (r.is_billed) {
+        warn += `<div style="background:#fff5f5;border-left:3px solid #c53030;padding:8px 10px;font-size:12px;color:#822727;margin-bottom:6px;">
+            &#9888; This vessel is <strong>billed</strong>. The billing lock stays in force and the record remains locked against edits until the bill is cancelled. Logged as <em>Force Reopen (Billed)</em>.</div>`;
+    }
+    document.getElementById('reopenWarnings').innerHTML = warn;
+
+    document.getElementById('reopenComment').value = '';
+    document.getElementById('reopenFile').value = '';
+    document.getElementById('reopenPreview').style.display = 'none';
+    document.getElementById('reopenError').style.display = 'none';
+    document.getElementById('reopenModal').style.display = 'flex';
+}
+
+function closeReopenModal() {
+    document.getElementById('reopenModal').style.display = 'none';
+    reopenTargetRow = null;
+}
+
+function previewReopenProof() {
+    const f = document.getElementById('reopenFile').files[0];
+    const img = document.getElementById('reopenPreview');
+    if (!f) { img.style.display = 'none'; return; }
+    img.src = URL.createObjectURL(f);
+    img.style.display = 'block';
+}
+
+async function submitReopen() {
+    const err = document.getElementById('reopenError');
+    const comment = document.getElementById('reopenComment').value.trim();
+    const file = document.getElementById('reopenFile').files[0];
+    const show = m => { err.textContent = m; err.style.display = 'block'; };
+    if (!comment) return show('A reason is required.');
+    if (!file) return show('A proof image is required.');
+
+    const fd = new FormData();
+    fd.append('module', reopenTargetRow.module);
+    fd.append('id', reopenTargetRow.id);
+    fd.append('comment', comment);
+    fd.append('file', file);
+
+    const btn = document.getElementById('reopenSubmitBtn');
+    btn.disabled = true; btn.textContent = 'Sending...';
+    try {
+        const res = await fetch('/admin/api/reopen', {method: 'POST', body: fd});
+        const data = await res.json();
+        if (data.error) return show(data.error);
+        closeReopenModal();
+        const removed = data.docs_removed || 0;
+        alert(`Record sent back to Draft.${removed ? ` ${removed} proof document(s) deleted.` : ''}`);
+        loadReopenList();
+    } finally {
+        btn.disabled = false; btn.textContent = 'Send Back to Draft';
+    }
 }
 
 // ── Mail Tab ─────────────────────────────────────────────────────────────────
@@ -1541,7 +1562,7 @@ async function loadSmtpConfig() {
     document.getElementById('smtpUsername').value    = cfg.username || '';
     document.getElementById('smtpPassword').value    = cfg.password || '';
     document.getElementById('smtpFromEmail').value   = cfg.from_email || '';
-    document.getElementById('smtpFromName').value    = cfg.from_name || 'PORTMAN';
+    document.getElementById('smtpFromName').value    = cfg.from_name || 'Portbird JNPA';
     document.getElementById('smtpUseTls').checked    = cfg.use_tls !== false;
     document.getElementById('smtpSchedule').value    = cfg.schedule_minutes || 5;
 }
@@ -1555,7 +1576,7 @@ async function saveSmtpConfig() {
         username:         document.getElementById('smtpUsername').value.trim(),
         password:         document.getElementById('smtpPassword').value,
         from_email:       document.getElementById('smtpFromEmail').value.trim(),
-        from_name:        document.getElementById('smtpFromName').value.trim() || 'PORTMAN',
+        from_name:        document.getElementById('smtpFromName').value.trim() || 'Portbird JNPA',
         use_tls:          document.getElementById('smtpUseTls').checked,
         is_enabled:       document.getElementById('smtpEnabled').checked,
         schedule_minutes: parseInt(document.getElementById('smtpSchedule').value) || 5,
@@ -1579,7 +1600,7 @@ async function sendTestMail() {
         username:   document.getElementById('smtpUsername').value.trim(),
         password:   document.getElementById('smtpPassword').value,
         from_email: document.getElementById('smtpFromEmail').value.trim(),
-        from_name:  document.getElementById('smtpFromName').value.trim() || 'PORTMAN',
+        from_name:  document.getElementById('smtpFromName').value.trim() || 'Portbird JNPA',
         use_tls:    document.getElementById('smtpUseTls').checked,
     };
     const res = await fetch('/admin/api/smtp-config/test', {

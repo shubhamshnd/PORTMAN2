@@ -407,25 +407,28 @@
     <div style="background:white;border-radius:8px;padding:24px;max-width:460px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
         <h3 style="margin:0 0 14px;font-size:16px;font-weight:600;">Approval Checklist</h3>
         <div id="approvalInfoBody" style="font-size:13px;margin-bottom:16px;"></div>
+        <div id="approvalFinalityBlock" style="display:none;">
+            <div style="background:#fff5f5;border:1px solid #fc8181;border-left:4px solid #c53030;border-radius:6px;padding:12px 14px;margin-bottom:12px;">
+                <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#822727;">&#9888; This action is final</p>
+                <ul style="margin:0 0 10px;padding-left:18px;font-size:12px;color:#742a2a;line-height:1.55;">
+                    <li>The quantities recorded here are <strong>final</strong> and are carried straight through to <strong>billing and invoicing</strong>.</li>
+                    <li>Once approved, this vessel <strong>cannot be reopened by you</strong>. Only an administrator can reopen it, and only with a documented reason and photographic proof.</li>
+                    <li>Any correction after this point requires an audited admin reversal, and a billed vessel stays locked even then.</li>
+                </ul>
+                <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#742a2a;cursor:pointer;font-weight:600;">
+                    <input type="checkbox" id="approvalAckChk" onchange="toggleApproveBtn()" style="margin-top:2px;flex-shrink:0;">
+                    <span>I confirm I have checked every quantity and detail on this vessel, that the values are correct and final,
+                    that I understand they will impact billing, and that this record cannot be reopened without administrator approval.</span>
+                </label>
+            </div>
+        </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;">
             <button onclick="closeApprovalInfoModal()" style="padding:6px 18px;border:1px solid #cbd5e0;background:white;border-radius:4px;cursor:pointer;font-size:13px;">Close</button>
-            <button id="approvalInfoApproveBtn" style="display:none;padding:6px 18px;background:#38a169;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;" onclick="confirmApprove()">✓ Approve</button>
+            <button id="approvalInfoApproveBtn" disabled style="display:none;padding:6px 18px;background:#a0aec0;color:white;border:none;border-radius:4px;cursor:not-allowed;font-size:13px;font-weight:600;" onclick="confirmApprove()">✓ Approve</button>
         </div>
     </div>
 </div>
 
-<!-- Send Back to Draft Modal -->
-<div id="sendBackModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;align-items:center;justify-content:center;">
-    <div style="background:white;border-radius:8px;padding:24px;max-width:420px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
-        <h3 style="margin:0 0 14px;font-size:16px;font-weight:600;">Send Back to Draft</h3>
-        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Reason <span style="color:#e53e3e">*</span></label>
-        <textarea id="sendBackComment" rows="4" placeholder="Enter reason for sending back to Draft..." style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;resize:vertical;"></textarea>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-            <button onclick="closeSendBackModal()" style="padding:6px 18px;border:1px solid #cbd5e0;background:white;border-radius:4px;cursor:pointer;font-size:13px;">Cancel</button>
-            <button onclick="confirmSendBack()" style="padding:6px 18px;background:#744210;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">↩ Send Back</button>
-        </div>
-    </div>
-</div>
 <!-- Unsaved Changes Warning Modal -->
 <div id="unsavedModal" class="unsaved-modal-overlay">
     <div class="unsaved-modal-box">
@@ -912,12 +915,9 @@
                 formatter: function(cell) {
                     const data = cell.getRow().getData();
                     if (!data.id) return '';
-                    if (data.doc_status === 'Approved') {
-                        if (isApprover) {
-                            return `<button class="btn-back-draft" onclick="openSendBackModal(${data.id})">↩ Draft</button>`;
-                        }
-                        return '';
-                    }
+                    // Approved is final here — reopening is admin-only, via
+                    // Admin ▸ Reopen to Draft, and requires a proof image.
+                    if (data.doc_status === 'Approved') return '';
                     return `<button class="btn-info-approval" onclick="openApprovalInfoModal(${data.id})">ℹ️ Info</button>`;
                 }
             },
@@ -1674,7 +1674,6 @@
 
     // Approval functions
     let approvalTargetId = null;
-    let sendBackTargetId = null;
 
     async function openApprovalInfoModal(id) {
         approvalTargetId = id;
@@ -1682,6 +1681,9 @@
         const approveBtn = document.getElementById('approvalInfoApproveBtn');
         body.innerHTML = '<em style="color:#718096;">Checking requirements...</em>';
         approveBtn.style.display = 'none';
+        document.getElementById('approvalAckChk').checked = false;
+        document.getElementById('approvalFinalityBlock').style.display = 'none';
+        toggleApproveBtn();
         document.getElementById('approvalInfoModal').style.display = 'flex';
 
         const res = await fetch(`/api/module/VCN01/approval_check/${id}`);
@@ -1691,11 +1693,23 @@
             body.innerHTML = '<div style="color:#276749;font-weight:600;margin-bottom:8px;">✅ All requirements met.</div>' +
                 (isApprover ? '<p style="color:#4a5568;font-size:12px;margin:0;">Click Approve to approve this record.</p>' :
                  '<p style="color:#4a5568;font-size:12px;margin:0;">Waiting for approver to approve.</p>');
-            if (isApprover) approveBtn.style.display = 'inline-block';
+            if (isApprover) {
+                approveBtn.style.display = 'inline-block';
+                document.getElementById('approvalFinalityBlock').style.display = 'block';
+            }
         } else {
             const items = data.missing.map(m => `<li style="margin:4px 0;">❌ ${m}</li>`).join('');
             body.innerHTML = `<p style="margin:0 0 8px;font-weight:600;color:#744210;">The following must be completed before approval:</p><ul style="margin:0;padding-left:18px;">${items}</ul>`;
         }
+    }
+
+    // Approve stays disabled until the finality acknowledgement is ticked.
+    function toggleApproveBtn() {
+        const ok = document.getElementById('approvalAckChk').checked;
+        const btn = document.getElementById('approvalInfoApproveBtn');
+        btn.disabled = !ok;
+        btn.style.background = ok ? '#38a169' : '#a0aec0';
+        btn.style.cursor = ok ? 'pointer' : 'not-allowed';
     }
 
     function closeApprovalInfoModal() {
@@ -1704,6 +1718,10 @@
     }
 
     async function confirmApprove() {
+        if (!document.getElementById('approvalAckChk').checked) {
+            alert('Please tick the acknowledgement before approving.');
+            return;
+        }
         const res = await fetch('/api/module/VCN01/approve', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({id: approvalTargetId})
@@ -1713,31 +1731,6 @@
         const row = table.getRows().find(r => r.getData().id === approvalTargetId);
         if (row) { row.update({doc_status: 'Approved'}); row.reformat(); }
         closeApprovalInfoModal();
-    }
-
-    function openSendBackModal(id) {
-        sendBackTargetId = id;
-        document.getElementById('sendBackComment').value = '';
-        document.getElementById('sendBackModal').style.display = 'flex';
-    }
-
-    function closeSendBackModal() {
-        document.getElementById('sendBackModal').style.display = 'none';
-        sendBackTargetId = null;
-    }
-
-    async function confirmSendBack() {
-        const comment = document.getElementById('sendBackComment').value.trim();
-        if (!comment) { alert('Please enter a reason.'); return; }
-        const res = await fetch('/api/module/VCN01/send_back', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id: sendBackTargetId, comment: comment})
-        });
-        const data = await res.json();
-        if (data.error) { alert(data.error); return; }
-        const row = table.getRows().find(r => r.getData().id === sendBackTargetId);
-        if (row) { row.update({doc_status: 'Draft'}); row.reformat(); }
-        closeSendBackModal();
     }
 
     async function sendToExpected(id) {
@@ -1757,8 +1750,17 @@
         const res = await fetch(`/api/module/VCN01/approval-log/${id}`);
         const log = await res.json();
         if (!log.length) { alert('No approval history yet.'); return; }
-        const lines = log.map(e => `${e.actioned_at}  ${e.action} by ${e.actioned_by}${e.comment ? '\n  Reason: ' + e.comment : ''}`);
-        alert('Approval History:\n\n' + lines.join('\n\n'));
+        // Reopens carry a mandatory proof image on the audit row; an alert cannot
+        // hold a link, so offer to open them after showing the history.
+        const lines = log.map(e => `${e.actioned_at}  ${e.action} by ${e.actioned_by}`
+            + (e.comment ? '\n  Reason: ' + e.comment : '')
+            + (e.has_proof ? '\n  [proof image attached]' : ''));
+        const proofs = log.filter(e => e.has_proof);
+        const text = 'Approval History:\n\n' + lines.join('\n\n');
+        if (!proofs.length) { alert(text); return; }
+        if (confirm(text + `\n\nOpen ${proofs.length} proof image(s)?`)) {
+            proofs.forEach(e => window.open(`/admin/api/approval-proof/${e.id}`, '_blank'));
+        }
     }
 
     document.addEventListener('keydown', function(e) {
