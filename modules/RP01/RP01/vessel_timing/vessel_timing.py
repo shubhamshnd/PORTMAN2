@@ -242,8 +242,8 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
             "pilot_disembarked": _format_datetime(r["pilot_disembarked"]),
         })
 
-    # Available months list for dropdown
-    month_options = [{"idx": i, "label": MONTH_LABELS[i]} for i in range(12)]
+    # Available months list for dropdown (including ALL)
+    month_options = [{"idx": "ALL", "label": "ALL"}] + [{"idx": i, "label": MONTH_LABELS[i]} for i in range(12)]
 
     return {
         "available_years": avail_years,
