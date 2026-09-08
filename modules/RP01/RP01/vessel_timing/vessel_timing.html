@@ -204,10 +204,10 @@
     <!-- Toolbar matching Report-13 Screenshot -->
     <div class="jjltpl-toolbar">
         <label for="yearSelect">YEAR</label>
-        <select id="yearSelect"></select>
+        <select id="yearSelect" onchange="loadData()"></select>
 
         <label for="monthSelect">MONTH</label>
-        <select id="monthSelect"></select>
+        <select id="monthSelect" onchange="loadData()"></select>
 
         <button class="jjltpl-load-btn" onclick="loadData()">Load</button>
         <button class="jjltpl-export-btn" onclick="downloadExcel()">📊 Download Excel</button>
@@ -285,9 +285,13 @@
             yearSelect.value = availableYears[0];
         }
 
-        // Populate Months (Full names: April, May, June, July, August...)
-        monthSelect.innerHTML = months.map(m => `<option value="${m.idx}">${m.label}</option>`).join("");
-    
+        // Populate Months (ALL + April, May, June...)
+        let opts = [];
+        if (!months.some(m => String(m.idx) === "ALL")) {
+            opts.push(`<option value="ALL">ALL</option>`);
+        }
+        opts = opts.concat(months.map(m => `<option value="${m.idx}">${m.label}</option>`));
+        monthSelect.innerHTML = opts.join("");
 
         // By default, select CURRENT MONTH
         if (defaultMonthIdx !== undefined && defaultMonthIdx !== null) {
@@ -330,7 +334,8 @@
 
             renderTable(data.rows);
 
-            const monthLabel = month === 'ALL' ? 'All Months' : (data.months && data.months[Number(month)] ? data.months[Number(month)].label : month);
+            const monthObj = data.months ? data.months.find(m => String(m.idx) === String(month)) : null;
+            const monthLabel = (month === 'ALL' || (monthObj && monthObj.idx === 'ALL')) ? 'All Months' : (monthObj ? monthObj.label : month);
             statusEl.textContent = `Showing ${data.rows.length} vessel records for ${monthLabel} (${year}).`;
             statusEl.style.color = '#16A34A';
         } catch (err) {
