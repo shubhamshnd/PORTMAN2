@@ -94,12 +94,13 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
     try:
         cur = get_cursor(conn)
 
-        # Available financial years from ldud_header dates
+        # Available financial years from ldud_header cast_off_datetime
         cur.execute("""
-            SELECT DISTINCT COALESCE(alongside_datetime, cast_off_datetime, created_date) AS ref_date
+            SELECT DISTINCT cast_off_datetime AS ref_date
             FROM ldud_header
             WHERE is_deleted IS NOT TRUE
-              AND COALESCE(alongside_datetime, cast_off_datetime, created_date) IS NOT NULL
+              AND cast_off_datetime IS NOT NULL
+              AND NULLIF(TRIM(cast_off_datetime), '') IS NOT NULL
         """)
         fys = set()
         recorded_months_by_fy = {}
@@ -113,33 +114,67 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
         fys.add(curr_fy)
         avail_years = sorted(list(fys), reverse=True)
 
-        # Main query joining ldud_header, parcel_ops, and parcel_log
+        # Main query: resolve each parcel's timing and quantity (with short close deducted),
+        # then aggregate across all parcels for the vessel to get first parcel start to last parcel end
         query = """
-            WITH parcel_logs_agg AS (
+            WITH parcel_logs_per_op AS (
                 SELECT 
-                    po.ldud_id,
-                    MIN(l.entry_date || ' ' || l.from_time) AS log_first_start,
-                    MAX(l.entry_date || ' ' || l.to_time) AS log_last_end,
-                    SUM(l.quantity) AS total_log_qty
+                    l.parcel_op_id,
+                    MIN(l.entry_date || ' ' || l.from_time) AS log_start,
+                    MAX(CASE 
+                        WHEN COALESCE(l.is_shortclose, FALSE) = FALSE 
+                         AND LOWER(COALESCE(l.remarks, '')) NOT LIKE '%short%' 
+                        THEN l.entry_date || ' ' || l.to_time 
+                    END) AS log_end,
+                    SUM(CASE 
+                        WHEN COALESCE(l.is_shortclose, FALSE) = FALSE 
+                         AND LOWER(COALESCE(l.remarks, '')) NOT LIKE '%short%' 
+                        THEN l.quantity 
+                        ELSE 0 
+                    END) AS log_actual_qty,
+                    SUM(CASE 
+                        WHEN COALESCE(l.is_shortclose, FALSE) = TRUE 
+                          OR LOWER(COALESCE(l.remarks, '')) LIKE '%short%' 
+                        THEN l.quantity 
+                        ELSE 0 
+                    END) AS log_short_qty
                 FROM lueu_parcel_log l
-                JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
-                WHERE l.is_deleted IS NOT TRUE 
-                  AND COALESCE(l.is_shortclose, FALSE) = FALSE
-                GROUP BY po.ldud_id
+                WHERE l.is_deleted IS NOT TRUE
+                GROUP BY l.parcel_op_id
             ),
-            parcel_ops_agg AS (
+            resolved_parcels AS (
                 SELECT 
+                    po.id,
                     po.ldud_id,
-                    MIN(po.start_dt) AS ops_first_start,
-                    MAX(po.end_dt) AS ops_last_end,
-                    SUM(po.quantity) AS total_ops_qty
+                    po.quantity AS po_qty,
+                    COALESCE(pl.log_short_qty, 0) AS short_qty,
+                    COALESCE(NULLIF(REPLACE(po.start_dt, 'T', ' '), ''), pl.log_start) AS parcel_start,
+                    COALESCE(NULLIF(REPLACE(po.end_dt, 'T', ' '), ''), pl.log_end) AS parcel_end,
+                    pl.log_actual_qty
                 FROM ldud_parcel_ops po
-                GROUP BY po.ldud_id
+                LEFT JOIN parcel_logs_per_op pl ON pl.parcel_op_id = po.id
+            ),
+            vessel_parcels_agg AS (
+                SELECT 
+                    rp.ldud_id,
+                    MIN(rp.parcel_start) AS first_parcel_start,
+                    MAX(rp.parcel_end) AS last_parcel_end,
+                    SUM(rp.po_qty) AS total_po_qty,
+                    SUM(rp.short_qty) AS total_short_qty,
+                    SUM(rp.log_actual_qty) AS total_log_actual_qty
+                FROM resolved_parcels rp
+                GROUP BY rp.ldud_id
             )
             SELECT 
                 ld.id,
                 ld.vessel_name,
-                COALESCE(poa.total_ops_qty, pla.total_log_qty, ld.initial_draft_survey_quantity, 0) AS quantity,
+                CASE 
+                    WHEN vpa.total_po_qty IS NOT NULL 
+                        THEN GREATEST(0, vpa.total_po_qty - COALESCE(vpa.total_short_qty, 0))
+                    WHEN vpa.total_log_actual_qty IS NOT NULL 
+                        THEN vpa.total_log_actual_qty
+                    ELSE GREATEST(0, COALESCE(ld.initial_draft_survey_quantity, 0) - COALESCE(vpa.total_short_qty, 0))
+                END AS quantity,
                 COALESCE(ld.arrival_inner_anchorage, ld.anchored_datetime, ld.arrival_outer_anchorage) AS arrival,
                 ld.nor_tendered,
                 ld.nor_accepted,
@@ -148,17 +183,18 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
                 ld.alongside_datetime,
                 ld.custom_clearance,
                 ld.agent_stevedore_onboard,
-                COALESCE(poa.ops_first_start, pla.log_first_start, ld.discharge_commenced) AS cargo_commenced,
-                COALESCE(poa.ops_last_end, pla.log_last_end, ld.discharge_completed) AS cargo_completed,
+                COALESCE(vpa.first_parcel_start, ld.discharge_commenced) AS cargo_commenced,
+                COALESCE(vpa.last_parcel_end, ld.discharge_completed) AS cargo_completed,
                 ld.pilot_board_departure,
                 ld.cast_off_datetime,
                 ld.pilot_disembarked,
-                COALESCE(ld.alongside_datetime, ld.cast_off_datetime, ld.created_date) AS ref_date
+                ld.cast_off_datetime AS ref_date
             FROM ldud_header ld
-            LEFT JOIN parcel_ops_agg poa ON poa.ldud_id = ld.id
-            LEFT JOIN parcel_logs_agg pla ON pla.ldud_id = ld.id
+            LEFT JOIN vessel_parcels_agg vpa ON vpa.ldud_id = ld.id
             WHERE ld.is_deleted IS NOT TRUE
-            ORDER BY ld.id DESC
+              AND ld.cast_off_datetime IS NOT NULL
+              AND NULLIF(TRIM(ld.cast_off_datetime), '') IS NOT NULL
+            ORDER BY ld.cast_off_datetime ASC, ld.id ASC
         """
         cur.execute(query)
         raw_rows = cur.fetchall()
@@ -282,7 +318,7 @@ def vessel_timing_export():
             ws.cell(row=1, column=col_idx).border = cell_border
             ws.cell(row=1, column=col_idx).fill = header_fill
 
-        # Row 2: 15 Column Headers matching Image 1
+        # Row 2: 15 Column Headers
         headers = [
             ("Vessel Name", "vessel_name", left_align),
             ("Qty", "quantity", right_align),
@@ -293,12 +329,12 @@ def vessel_timing_export():
             ("First line", "first_line", center_align),
             ("Along side", "alongside", center_align),
             ("Customs clearance", "customs_clearance", center_align),
-            ("Agent clerance", "agent_clearance", center_align),
-            ("Cargo comment time", "cargo_commenced", center_align),
+            ("Agent clearance", "agent_clearance", center_align),
+            ("Cargo commence time", "cargo_commenced", center_align),
             ("Cargo complete time", "cargo_completed", center_align),
             ("Pilot board departure", "pilot_board_departure", center_align),
-            ("cast of time", "cast_off", center_align),
-            ("Pilot disemberd", "pilot_disembarked", center_align),
+            ("Cast off time", "cast_off", center_align),
+            ("Pilot disembarked", "pilot_disembarked", center_align),
         ]
 
         ws.row_dimensions[1].height = 24
