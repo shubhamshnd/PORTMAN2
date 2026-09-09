@@ -221,9 +221,10 @@
             <table class="vt-table" id="vtTable">
                 <thead>
                     <tr class="title-row">
-                        <th colspan="15">Vessel timing details</th>
+                        <th colspan="16">Vessel timing details</th>
                     </tr>
                     <tr class="header-row">
+                        <th style="width: 50px;">Sr No</th>
                         <th>Vessel Name</th>
                         <th>Qty</th>
                         <th>Arrival</th>
@@ -243,7 +244,7 @@
                 </thead>
                 <tbody id="vtTbody">
                     <tr>
-                        <td colspan="15" class="empty-state">Loading vessel timing data...</td>
+                        <td colspan="16" class="empty-state">Loading vessel timing data...</td>
                     </tr>
                 </tbody>
             </table>
@@ -309,7 +310,7 @@
 
         const { finYear: curFY, monthIdx: curMIdx } = getCurrentFinYearAndMonthIdx();
         const year = yearSelect.value || curFY;
-        const month = monthSelect.value || String(curMIdx);
+        const month = monthSelect.value !== undefined && monthSelect.value !== '' ? monthSelect.value : String(curMIdx);
 
         statusEl.textContent = 'Loading data...';
         statusEl.style.color = '#2F6FED';
@@ -327,7 +328,7 @@
                 initFilters(
                     data.available_years || [curFY],
                     data.months || [],
-                    data.current_fin_year || curFY,
+                    data.selected_year || curFY,
                     data.current_month_idx !== undefined ? data.current_month_idx : curMIdx
                 );
             }
@@ -342,7 +343,7 @@
             console.error(err);
             statusEl.textContent = 'Error: ' + (err.message || 'Could not load data');
             statusEl.style.color = '#c62828';
-            tbody.innerHTML = `<tr><td colspan="15" class="empty-state" style="color:#c62828;">Failed to load data.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="16" class="empty-state" style="color:#c62828;">Failed to load data.</td></tr>`;
         }
     }
 
@@ -351,15 +352,17 @@
         tbody.innerHTML = '';
 
         if (!rows || rows.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="15" class="empty-state">No vessels found for the selected period.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="16" class="empty-state">No vessels found for the selected period.</td></tr>`;
             return;
         }
 
-        rows.forEach(r => {
+        rows.forEach((r, index) => {
             const tr = document.createElement('tr');
             const qtyFormatted = r.quantity ? Number(r.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+            const srNo = r.sr_no !== undefined ? r.sr_no : (index + 1);
 
             tr.innerHTML = `
+                <td class="center" style="font-weight: 500;">${srNo}</td>
                 <td class="vsl-name">${r.vessel_name || '-'}</td>
                 <td class="right">${qtyFormatted}</td>
                 <td class="center">${r.arrival || '-'}</td>
@@ -386,7 +389,7 @@
         const { finYear: curFY, monthIdx: curMIdx } = getCurrentFinYearAndMonthIdx();
 
         const year = yearSelect.value || curFY;
-        const month = monthSelect.value || String(curMIdx);
+        const month = monthSelect.value !== undefined && monthSelect.value !== '' ? monthSelect.value : String(curMIdx);
 
         window.location.href = `/api/module/RP01/vessel-timing/export?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`;
     }
