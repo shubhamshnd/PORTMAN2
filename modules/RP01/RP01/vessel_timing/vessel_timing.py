@@ -32,6 +32,11 @@ MONTH_LABELS = [
     "October", "November", "December", "January", "February", "March"
 ]
 
+MONTH_MAP = {
+    "apr": 0, "may": 1, "jun": 2, "jul": 3, "aug": 4, "sep": 5,
+    "oct": 6, "nov": 7, "dec": 8, "jan": 9, "feb": 10, "mar": 11
+}
+
 
 def _format_datetime(val):
     if not val:
@@ -82,19 +87,21 @@ def _current_fin_year_and_idx():
     return _date_to_fin_year_and_idx(datetime.now())
 
 
-def fetch_vessel_timing_data(year_filter=None, month_filter=None):
+def fetch_vessel_timing_data(year_filter=None, month_filter=None, vessel_filter=None):
     curr_fy, curr_m_idx = _current_fin_year_and_idx()
 
     if year_filter is None:
         year_filter = curr_fy
     if month_filter is None:
         month_filter = str(curr_m_idx)
+    if vessel_filter is None:
+        vessel_filter = "ALL"
 
     conn = get_db()
     try:
         cur = get_cursor(conn)
 
-        # Available financial years from ldud_header cast_off_datetime
+        # Available financial years from ldud_header AND mis_vessel_master
         cur.execute("""
             SELECT DISTINCT cast_off_datetime AS ref_date
             FROM ldud_header
@@ -103,20 +110,60 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
               AND NULLIF(TRIM(cast_off_datetime), '') IS NOT NULL
         """)
         fys = set()
-        recorded_months_by_fy = {}
         for r in cur.fetchall():
             d = _parse_filter_date(r['ref_date'])
             if d:
-                fy, m_idx = _date_to_fin_year_and_idx(d)
+                fy, _ = _date_to_fin_year_and_idx(d)
                 fys.add(fy)
-                recorded_months_by_fy.setdefault(fy, set()).add(m_idx)
+
+        cur.execute("""
+            SELECT DISTINCT fin_year
+            FROM mis_vessel_master
+            WHERE fin_year IS NOT NULL AND TRIM(fin_year) != ''
+        """)
+        for r in cur.fetchall():
+            if r['fin_year']:
+                fys.add(r['fin_year'].strip())
 
         fys.add(curr_fy)
         avail_years = sorted(list(fys), reverse=True)
 
-        # Main query: resolve each parcel's timing and quantity (with short close deducted),
-        # then aggregate across all parcels for the vessel to get first parcel start to last parcel end
-        query = """
+        # 1. Query legacy table (mis_vessel_master) for data before July 2026:
+        # For 2026-27: April, May, June. For prior FYs (< 2026-27): all months.
+        mis_query = """
+            SELECT 
+                id,
+                fin_year,
+                month,
+                vessel_name,
+                quantity,
+                anchorage_time AS arrival,
+                nor,
+                NULL AS nor_accepted,
+                pilot_pickup,
+                first_line,
+                alongside,
+                NULL AS customs_clearance,
+                NULL AS agent_clearance,
+                ops_commenced AS cargo_commenced,
+                cargo_completion AS cargo_completed,
+                pilot_board_departure,
+                COALESCE(cast_off, sail_cast_off) AS cast_off,
+                pilot_disembarked,
+                COALESCE(cast_off, sail_cast_off, ops_commenced, alongside, nor, anchorage_time) AS ref_date
+            FROM mis_vessel_master
+            WHERE (%(year_filter)s = 'ALL' OR fin_year = %(year_filter)s)
+              AND (
+                  fin_year < '2026-27'
+                  OR (fin_year = '2026-27' AND (month ILIKE 'Apr%%' OR month ILIKE 'May%%' OR month ILIKE 'Jun%%'))
+              )
+            ORDER BY id ASC
+        """
+        cur.execute(mis_query, {"year_filter": year_filter})
+        mis_raw_rows = cur.fetchall()
+
+        # 2. Query live operational tables (ldud_header / parcel_ops / parcel_log) for July 2026 onwards:
+        ldud_query = """
             WITH parcel_logs_per_op AS (
                 SELECT 
                     l.parcel_op_id,
@@ -176,17 +223,17 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
                     ELSE GREATEST(0, COALESCE(ld.initial_draft_survey_quantity, 0) - COALESCE(vpa.total_short_qty, 0))
                 END AS quantity,
                 COALESCE(ld.arrival_inner_anchorage, ld.anchored_datetime, ld.arrival_outer_anchorage) AS arrival,
-                ld.nor_tendered,
+                ld.nor_tendered AS nor,
                 ld.nor_accepted,
-                ld.pilot_pickup_time,
+                ld.pilot_pickup_time AS pilot_pickup,
                 ld.first_line,
-                ld.alongside_datetime,
-                ld.custom_clearance,
-                ld.agent_stevedore_onboard,
+                ld.alongside_datetime AS alongside,
+                ld.custom_clearance AS customs_clearance,
+                ld.agent_stevedore_onboard AS agent_clearance,
                 COALESCE(vpa.first_parcel_start, ld.discharge_commenced) AS cargo_commenced,
                 COALESCE(vpa.last_parcel_end, ld.discharge_completed) AS cargo_completed,
                 ld.pilot_board_departure,
-                ld.cast_off_datetime,
+                ld.cast_off_datetime AS cast_off,
                 ld.pilot_disembarked,
                 ld.cast_off_datetime AS ref_date
             FROM ldud_header ld
@@ -196,50 +243,133 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
               AND NULLIF(TRIM(ld.cast_off_datetime), '') IS NOT NULL
             ORDER BY ld.cast_off_datetime ASC, ld.id ASC
         """
-        cur.execute(query)
-        raw_rows = cur.fetchall()
+        cur.execute(ldud_query)
+        ldud_raw_rows = cur.fetchall()
     finally:
         conn.close()
 
-    filtered_rows = []
-    for r in raw_rows:
+    all_rows = []
+
+    # Process mis_vessel_master records (April - June 2026, or earlier financial years)
+    for r in mis_raw_rows:
         ref_dt = _parse_filter_date(r['ref_date'])
-        row_fy, row_m_idx = _date_to_fin_year_and_idx(ref_dt) if ref_dt else (None, None)
+        abbrev = str(r['month'] or '').split('-')[0].strip().lower()
+        row_m_idx = MONTH_MAP.get(abbrev)
+        if row_m_idx is None and ref_dt:
+            _, row_m_idx = _date_to_fin_year_and_idx(ref_dt)
+        row_fy = (r['fin_year'] or '').strip()
+        if not row_fy and ref_dt:
+            row_fy, _ = _date_to_fin_year_and_idx(ref_dt)
 
-        # Apply Year filter
-        if year_filter and year_filter != "ALL":
-            if row_fy != year_filter and (not ref_dt or str(ref_dt.year) != str(year_filter)):
-                continue
-
-        # Apply Month filter
-        if month_filter and month_filter != "ALL":
-            if row_m_idx is None:
-                continue
-            if str(month_filter).isdigit():
-                if row_m_idx != int(month_filter):
-                    continue
-            else:
-                m_name = MONTH_LABELS[row_m_idx] if row_m_idx is not None else ""
-                if m_name.lower() != str(month_filter).strip().lower():
-                    continue
-
-        filtered_rows.append({
-            "id": r["id"],
-            "vessel_name": r["vessel_name"] or "",
+        all_rows.append({
+            "source": "mis",
+            "id": f"mis_{r['id']}",
+            "vessel_name": (r["vessel_name"] or "").strip(),
             "quantity": float(r["quantity"]) if r["quantity"] is not None else 0.0,
             "arrival": _format_datetime(r["arrival"]),
-            "nor": _format_datetime(r["nor_tendered"]),
+            "nor": _format_datetime(r["nor"]),
             "nor_accepted": _format_datetime(r["nor_accepted"]),
-            "pilot_pickup": _format_datetime(r["pilot_pickup_time"]),
+            "pilot_pickup": _format_datetime(r["pilot_pickup"]),
             "first_line": _format_datetime(r["first_line"]),
-            "alongside": _format_datetime(r["alongside_datetime"]),
-            "customs_clearance": _format_datetime(r["custom_clearance"]),
-            "agent_clearance": _format_datetime(r["agent_stevedore_onboard"]),
+            "alongside": _format_datetime(r["alongside"]),
+            "customs_clearance": _format_datetime(r["customs_clearance"]),
+            "agent_clearance": _format_datetime(r["agent_clearance"]),
             "cargo_commenced": _format_datetime(r["cargo_commenced"]),
             "cargo_completed": _format_datetime(r["cargo_completed"]),
             "pilot_board_departure": _format_datetime(r["pilot_board_departure"]),
-            "cast_off": _format_datetime(r["cast_off_datetime"]),
+            "cast_off": _format_datetime(r["cast_off"]),
             "pilot_disembarked": _format_datetime(r["pilot_disembarked"]),
+            "ref_dt": ref_dt,
+            "row_fy": row_fy,
+            "row_m_idx": row_m_idx,
+            "sort_key": (row_m_idx if row_m_idx is not None else 99, ref_dt or datetime.min),
+        })
+
+    # Process ldud_header records (July 2026 onwards)
+    for r in ldud_raw_rows:
+        ref_dt = _parse_filter_date(r['ref_date'])
+        row_fy, row_m_idx = _date_to_fin_year_and_idx(ref_dt) if ref_dt else (None, None)
+
+        all_rows.append({
+            "source": "ldud",
+            "id": r["id"],
+            "vessel_name": (r["vessel_name"] or "").strip(),
+            "quantity": float(r["quantity"]) if r["quantity"] is not None else 0.0,
+            "arrival": _format_datetime(r["arrival"]),
+            "nor": _format_datetime(r["nor"]),
+            "nor_accepted": _format_datetime(r["nor_accepted"]),
+            "pilot_pickup": _format_datetime(r["pilot_pickup"]),
+            "first_line": _format_datetime(r["first_line"]),
+            "alongside": _format_datetime(r["alongside"]),
+            "customs_clearance": _format_datetime(r["customs_clearance"]),
+            "agent_clearance": _format_datetime(r["agent_clearance"]),
+            "cargo_commenced": _format_datetime(r["cargo_commenced"]),
+            "cargo_completed": _format_datetime(r["cargo_completed"]),
+            "pilot_board_departure": _format_datetime(r["pilot_board_departure"]),
+            "cast_off": _format_datetime(r["cast_off"]),
+            "pilot_disembarked": _format_datetime(r["pilot_disembarked"]),
+            "ref_dt": ref_dt,
+            "row_fy": row_fy,
+            "row_m_idx": row_m_idx,
+            "sort_key": (row_m_idx if row_m_idx is not None else 99, ref_dt or datetime.min),
+        })
+
+    # Filter by Year first to determine all available vessels in that year
+    year_matched_rows = []
+    for r in all_rows:
+        if year_filter and year_filter != "ALL":
+            if r["row_fy"] != year_filter:
+                continue
+        year_matched_rows.append(r)
+
+    # Distinct vessel list for the selected year
+    avail_vessels = sorted(list(set(r["vessel_name"] for r in year_matched_rows if r["vessel_name"])))
+
+    # Apply Month and Vessel filters
+    filtered_rows = []
+    for r in year_matched_rows:
+        # Apply Month filter
+        if month_filter and month_filter != "ALL":
+            if r["row_m_idx"] is None:
+                continue
+            if str(month_filter).isdigit():
+                if r["row_m_idx"] != int(month_filter):
+                    continue
+            else:
+                m_name = MONTH_LABELS[r["row_m_idx"]] if r["row_m_idx"] is not None else ""
+                if m_name.lower() != str(month_filter).strip().lower():
+                    continue
+
+        # Apply Vessel filter
+        if vessel_filter and vessel_filter != "ALL":
+            if r["vessel_name"].strip().lower() != str(vessel_filter).strip().lower():
+                continue
+
+        filtered_rows.append(r)
+
+    # Sort chronologically by month index and timestamp
+    filtered_rows.sort(key=lambda x: x["sort_key"])
+
+    clean_rows = []
+    for idx, r in enumerate(filtered_rows, start=1):
+        clean_rows.append({
+            "sr_no": idx,
+            "id": r["id"],
+            "vessel_name": r["vessel_name"],
+            "quantity": r["quantity"],
+            "arrival": r["arrival"],
+            "nor": r["nor"],
+            "nor_accepted": r["nor_accepted"],
+            "pilot_pickup": r["pilot_pickup"],
+            "first_line": r["first_line"],
+            "alongside": r["alongside"],
+            "customs_clearance": r["customs_clearance"],
+            "agent_clearance": r["agent_clearance"],
+            "cargo_commenced": r["cargo_commenced"],
+            "cargo_completed": r["cargo_completed"],
+            "pilot_board_departure": r["pilot_board_departure"],
+            "cast_off": r["cast_off"],
+            "pilot_disembarked": r["pilot_disembarked"],
         })
 
     # Available months list for dropdown (including ALL)
@@ -247,14 +377,16 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None):
 
     return {
         "available_years": avail_years,
+        "available_vessels": ["ALL"] + avail_vessels,
         "months": month_options,
         "current_fin_year": curr_fy,
         "current_month_idx": curr_m_idx,
         "current_month_label": MONTH_LABELS[curr_m_idx],
         "selected_year": year_filter,
         "selected_month": month_filter,
-        "rows": filtered_rows,
-        "total_count": len(filtered_rows)
+        "selected_vessel": vessel_filter,
+        "rows": clean_rows,
+        "total_count": len(clean_rows)
     }
 
 
@@ -272,8 +404,9 @@ def vessel_timing_data():
     curr_fy, curr_m_idx = _current_fin_year_and_idx()
     year = request.args.get('year', curr_fy).strip()
     month = request.args.get('month', str(curr_m_idx)).strip()
+    vessel = request.args.get('vessel', 'ALL').strip()
     try:
-        data = fetch_vessel_timing_data(year, month)
+        data = fetch_vessel_timing_data(year, month, vessel)
         return jsonify(data)
     except Exception as e:
         traceback.print_exc()
@@ -286,8 +419,9 @@ def vessel_timing_export():
     curr_fy, curr_m_idx = _current_fin_year_and_idx()
     year = request.args.get('year', curr_fy).strip()
     month = request.args.get('month', str(curr_m_idx)).strip()
+    vessel = request.args.get('vessel', 'ALL').strip()
     try:
-        data = fetch_vessel_timing_data(year, month)
+        data = fetch_vessel_timing_data(year, month, vessel)
         rows = data["rows"]
 
         wb = Workbook()
@@ -308,18 +442,19 @@ def vessel_timing_export():
         right_align = Alignment(horizontal='right', vertical='center')
 
         # Row 1: Merged Title Block matching Image 1
-        ws.merge_cells("A1:O1")
+        ws.merge_cells("A1:P1")
         title_cell = ws["A1"]
         title_cell.value = "Vessel timing details"
         title_cell.font = title_font
         title_cell.alignment = center_align
         title_cell.fill = header_fill
-        for col_idx in range(1, 16):
+        for col_idx in range(1, 17):
             ws.cell(row=1, column=col_idx).border = cell_border
             ws.cell(row=1, column=col_idx).fill = header_fill
 
-        # Row 2: 15 Column Headers
+        # Row 2: 16 Column Headers
         headers = [
+            ("Sr No", "sr_no", center_align),
             ("Vessel Name", "vessel_name", left_align),
             ("Qty", "quantity", right_align),
             ("Arrival", "arrival", center_align),
@@ -358,7 +493,9 @@ def vessel_timing_export():
                 cell.alignment = align
                 cell.border = cell_border
 
-                if key == "quantity":
+                if key == "sr_no":
+                    cell.value = curr_row - 2
+                elif key == "quantity":
                     cell.value = float(val) if val else 0.0
                     cell.number_format = "#,##0.00"
                 else:
@@ -366,18 +503,24 @@ def vessel_timing_export():
             curr_row += 1
 
         # Auto-adjust column widths
-        for col_idx in range(1, 16):
+        for col_idx in range(1, 17):
             col_letter = get_column_letter(col_idx)
             max_len = max(len(str(ws.cell(row=r, column=col_idx).value or '')) for r in range(2, max(curr_row, 3)))
             ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
-        ws.column_dimensions["A"].width = 22  # Vessel Name wider
+        ws.column_dimensions["A"].width = 8   # Sr No narrower
+        ws.column_dimensions["B"].width = 24  # Vessel Name wider
 
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
 
         month_label = MONTH_LABELS[int(month)] if str(month).isdigit() and int(month) < len(MONTH_LABELS) else month
-        filename = f"Vessel_Timing_Details_{year}_{month_label}.xlsx"
+        if vessel and vessel != "ALL":
+            clean_vsl = "".join(c for c in vessel if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
+            filename = f"Vessel_Timing_Details_{year}_{month_label}_{clean_vsl}.xlsx"
+        else:
+            filename = f"Vessel_Timing_Details_{year}_{month_label}.xlsx"
+
         return send_file(
             buf,
             as_attachment=True,
