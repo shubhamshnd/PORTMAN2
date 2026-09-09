@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+
+{% block title %}Vessel Delay Report — RP01{% endblock %}
+
+{% block head %}
+<style>
+    :root {
+        --rp-blue: #2F6FED;
+        --rp-blue-dark: #1D4FB8;
+        --rp-orange: #0f3ccf;
+        --rp-orange-dark: #c2410c;
+        --rp-green: #16A34A;
+        --rp-green-dark: #0F7C38;
+        --rp-ink: #1F2937;
+        --rp-muted: #6B7280;
+        --rp-border: #DDE3EA;
+        --rp-bg: #F6F8FA;
+        --rp-card: #FFFFFF;
+        --rp-header-bg: #E2E8F0;
+        --rp-table-border: #CBD5E1;
+    }
+
+    .vd-wrap * { box-sizing: border-box; }
+    .vd-wrap { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding-bottom: 30px; }
+
+    /* Module Header */
+    .module-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--rp-border);
+    }
+    .module-header h2 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--rp-ink);
+    }
+    .module-header .rp-badge {
+        background: var(--rp-orange);
+        color: #fff;
+        padding: 4px 10px;
+        border-radius: 16px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+    }
+    .module-header .rp-back {
+        margin-left: auto;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--rp-blue);
+        text-decoration: none;
+    }
+    .module-header .rp-back:hover { text-decoration: underline; }
+
+    /* Filter Toolbar */
+    .vd-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    .vd-toolbar .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .vd-toolbar label {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--rp-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+    }
+
+    .vd-toolbar select {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--rp-ink);
+        background: var(--rp-bg);
+        border: 1px solid var(--rp-border);
+        border-radius: 6px;
+        padding: 6px 12px;
+        cursor: pointer;
+        outline: none;
+        min-width: 120px;
+    }
+
+    .vd-toolbar select:focus {
+        border-color: var(--rp-blue);
+    }
+
+    .btn-export {
+        background: #107C41;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 7px 16px;
+        cursor: pointer;
+        border: none;
+        transition: all 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+    }
+    .btn-export:hover { background: #0b5e31; }
+
+    .counter-badge {
+        background: #F1F5F9;
+        color: var(--rp-ink);
+        padding: 5px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid var(--rp-border);
+    }
+
+    /* Table Container */
+    .table-container {
+        background: var(--rp-card);
+        border: 1px solid var(--rp-table-border);
+        border-radius: 8px;
+        overflow-x: auto;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    /* Native Table Styling */
+    .vd-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        color: var(--rp-ink);
+        text-align: left;
+    }
+
+    .vd-table thead th {
+        background: #F8FAFC;
+        border-bottom: 2px solid var(--rp-table-border);
+        border-right: 1px solid #E2E8F0;
+        padding: 10px 10px;
+        font-weight: 700;
+        color: #334155;
+        white-space: nowrap;
+    }
+
+    .vd-table thead th:last-child {
+        border-right: none;
+    }
+
+    .vd-table tbody td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #E2E8F0;
+        border-right: 1px solid #F1F5F9;
+        vertical-align: middle;
+    }
+
+    .vd-table tbody td:last-child {
+        border-right: none;
+    }
+
+    .vd-table tbody tr:nth-child(even) {
+        background-color: #FAFAFB;
+    }
+
+    .vd-table tbody tr:hover {
+        background-color: #EFF6FF;
+    }
+
+    .text-center { text-align: center !important; }
+    .text-right { text-align: right !important; }
+
+    .badge-delay-type {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #EEF2FF;
+        color: #4F46E5;
+        border: 1px solid #E0E7FF;
+    }
+
+    .badge-account {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #F0FDF4;
+        color: #166534;
+        border: 1px solid #DCFCE7;
+    }
+
+    .hours-text {
+        font-weight: 700;
+        color: #0F7C38;
+    }
+
+    .no-data-msg {
+        text-align: center;
+        padding: 40px 16px;
+        color: var(--rp-muted);
+        font-size: 13px;
+    }
+
+    .spinner-row {
+        text-align: center;
+        padding: 30px;
+        color: var(--rp-muted);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vd-wrap">
+    <!-- Header -->
+    <div class="module-header">
+        <h2>Vessel Delay Report</h2>
+        <span class="rp-badge">RP01 &bull; DELAYS</span>
+        <a href="/module/RP01/" class="rp-back">&larr; Back to Reports</a>
+    </div>
+
+    <!-- Toolbar: Year, Month, Delay, and Export -->
+    <div class="vd-toolbar">
+        <!-- Year Filter -->
+        <div class="filter-group">
+            <label for="sel-year">Year:</label>
+            <select id="sel-year">
+                <option value="2026-27" selected>2026-27</option>
+                <option value="2025-26">2025-26</option>
+                <option value="2024-25">2024-25</option>
+                <option value="ALL">ALL</option>
+            </select>
+        </div>
+
+        <!-- Month Filter -->
+        <div class="filter-group">
+            <label for="sel-month">Month:</label>
+            <select id="sel-month">
+                <option value="ALL">ALL</option>
+                <option value="0">April</option>
+                <option value="1">May</option>
+                <option value="2">June</option>
+                <option value="3">July</option>
+                <option value="4">August</option>
+                <option value="5" selected>September</option>
+                <option value="6">October</option>
+                <option value="7">November</option>
+                <option value="8">December</option>
+                <option value="9">January</option>
+                <option value="10">February</option>
+                <option value="11">March</option>
+            </select>
+        </div>
+
+        <!-- Total Count Badge -->
+        <div class="counter-badge" id="counter-badge">
+            Rows: <strong>...</strong>
+        </div>
+
+        <!-- Export Excel Button -->
+        <button class="btn-export" id="btn-export" title="Export current filtered data to Excel">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export to Excel
+        </button>
+    </div>
+
+    <!-- Data Table Container -->
+    <div class="table-container">
+        <table class="vd-table" id="delay-table">
+            <thead>
+                <tr>
+                    <th class="text-center" style="width: 55px;">Sr No</th>
+                    <th class="text-center" style="width: 125px;">VCN No</th>
+                    <th style="min-width: 180px;">vessel Name</th>
+                    <th class="text-center" style="width: 90px;">Month</th>
+                    <th style="min-width: 220px;">Delay name</th>
+                    <th class="text-center" style="width: 110px;">Delay type</th>
+                    <th class="text-center" style="width: 115px;">Delay account</th>
+                    <th class="text-center" style="width: 145px;">Start time</th>
+                    <th class="text-center" style="width: 145px;">End time</th>
+                    <th class="text-right" style="width: 85px;">Hours</th>
+                </tr>
+            </thead>
+            <tbody id="delay-tbody">
+                <tr>
+                    <td colspan="10" class="spinner-row">Loading delay data...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    const selYear = document.getElementById('sel-year');
+    const selMonth = document.getElementById('sel-month');
+    const btnExport = document.getElementById('btn-export');
+    const counterBadge = document.getElementById('counter-badge');
+    const delayTbody = document.getElementById('delay-tbody');
+
+    let initialLoaded = false;
+
+    // Helper to calculate current Indian Financial Year and Month Index
+    function getFinancialDefaults() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth(); // 0-indexed (0 = Jan, 8 = Sep)
+        let fy = '';
+        let mIdx = 0;
+        if (month >= 3) { // Apr-Dec
+            fy = `${year}-${String(year + 1).slice(-2)}`;
+            mIdx = month - 3; // Apr=0, Sep=5
+        } else { // Jan-Mar
+            fy = `${year - 1}-${String(year).slice(-2)}`;
+            mIdx = month + 9; // Jan=9, Mar=11
+        }
+        return { fy, mIdx: String(mIdx) };
+    }
+
+    async function loadData() {
+        delayTbody.innerHTML = '<tr><td colspan="10" class="spinner-row">Loading delay data...</td></tr>';
+        counterBadge.innerHTML = 'Rows: <strong>...</strong>';
+
+        try {
+            const year = selYear.value || '2026-27';
+            const month = selMonth.value || '';
+
+            const params = new URLSearchParams();
+            if (year) params.append('year', year);
+            if (month) params.append('month', month);
+
+            const res = await fetch(`/api/module/RP01/vessel-delay/data?${params.toString()}`);
+            if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+            const data = await res.json();
+
+            // Populate options from backend on first load if available
+            if (!initialLoaded) {
+                if (data.available_years && data.available_years.length > 0) {
+                    const currentYearVal = selYear.value;
+                    selYear.innerHTML = '<option value="ALL">ALL</option>';
+                    data.available_years.forEach(y => {
+                        const opt = document.createElement('option');
+                        opt.value = y;
+                        opt.textContent = y;
+                        if (y === currentYearVal || y === data.current_fin_year) opt.selected = true;
+                        selYear.appendChild(opt);
+                    });
+                }
+                initialLoaded = true;
+            }
+
+            const rows = data.rows || [];
+            counterBadge.innerHTML = `Rows: <strong>${rows.length}</strong>`;
+
+            if (rows.length === 0) {
+                const monthText = selMonth.options[selMonth.selectedIndex]?.text || '';
+                const yearText = selYear.value || '';
+                delayTbody.innerHTML = `
+                    <tr>
+                        <td colspan="10" class="no-data-msg">
+                            No delay records found for <strong>${monthText}</strong> (${yearText}).
+                            <br><span style="font-size:12px;color:#94a3b8;margin-top:4px;display:inline-block;">Select "ALL" in Month or another month to view records.</span>
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            let html = '';
+            rows.forEach((r, idx) => {
+                const delayTypeBadge = r.delay_type ? `<span class="badge-delay-type">${r.delay_type}</span>` : '';
+                const delayAccountBadge = `<span class="badge-account">${r.delay_account || 'Port'}</span>`;
+                const hoursVal = r.hours ? `<span class="hours-text">${r.hours}</span>` : '';
+
+                html += `
+                    <tr>
+                        <td class="text-center" style="color:#64748b;font-weight:500;">${r.sr_no || (idx + 1)}</td>
+                        <td class="text-center" style="font-weight:600;color:#1e293b;">${r.vcn_no || '-'}</td>
+                        <td style="font-weight:500;">${r.vessel_name || '-'}</td>
+                        <td class="text-center">${r.month || '-'}</td>
+                        <td style="font-weight:500;">${r.delay_name || '-'}</td>
+                        <td class="text-center">${delayTypeBadge}</td>
+                        <td class="text-center">${delayAccountBadge}</td>
+                        <td class="text-center" style="color:#334155;">${r.start_time || '-'}</td>
+                        <td class="text-center" style="color:#334155;">${r.end_time || '-'}</td>
+                        <td class="text-right">${hoursVal}</td>
+                    </tr>
+                `;
+            });
+
+            delayTbody.innerHTML = html;
+
+        } catch (err) {
+            console.error("Failed to load delay data:", err);
+            counterBadge.innerHTML = `Rows: <strong style="color:#dc2626;">Error</strong>`;
+            delayTbody.innerHTML = `
+                <tr>
+                    <td colspan="10" class="no-data-msg" style="color:#dc2626;">
+                        <strong>Unable to load delay records:</strong> ${err.message}.
+                        <br><span style="font-size:12px;color:#64748b;">Please check your connection and reload the page.</span>
+                    </td>
+                </tr>`;
+        }
+    }
+
+    // Export handler
+    btnExport.addEventListener('click', () => {
+        const year = selYear.value || '2026-27';
+        const month = selMonth.value || '';
+
+        const params = new URLSearchParams();
+        if (year) params.append('year', year);
+        if (month) params.append('month', month);
+
+        window.location.href = `/api/module/RP01/vessel-delay/export?${params.toString()}`;
+    });
+
+    // Filter change handlers
+    selYear.addEventListener('change', () => loadData());
+    selMonth.addEventListener('change', () => loadData());
+
+    // Initial load on page ready
+    document.addEventListener('DOMContentLoaded', () => {
+        const defs = getFinancialDefaults();
+        if (defs.fy) selYear.value = defs.fy;
+        if (defs.mIdx) selMonth.value = defs.mIdx;
+        loadData();
+    });
+</script>
+{% endblock %}
