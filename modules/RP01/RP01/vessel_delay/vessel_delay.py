@@ -1,7 +1,7 @@
 """
 Vessel Delay Report - RP01
-Displays operational vessel delay records completely dynamic from the database.
-Columns: VCN No, vessel Name, Month, Delay name, Delay type, Delay account, Start time, End time, Hours
+Displays operational vessel delay records based on Vessel Cast Off Date Time.
+Columns: VCN No, vessel Name, Month, Cast Off Time, Delay name, Delay type, Delay account, Start time, End time, Hours
 """
 
 import io
@@ -42,12 +42,13 @@ def _parse_datetime(val):
     if isinstance(val, date):
         return datetime(val.year, val.month, val.day)
     s = str(val).strip().replace('T', ' ')
-    for length in (19, 16, 10):
+    for length in (19, 16, 10, 8):
         sub = s[:length]
         for fmt in (
             "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
             "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M", "%d-%m-%Y",
-            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y"
+            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
+            "%d%m%Y %H:%M:%S", "%d%m%Y %H:%M", "%d%m%Y"
         ):
             try:
                 return datetime.strptime(sub, fmt)
@@ -100,13 +101,25 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
     try:
         cur = get_cursor(conn)
 
-        # 1. Discover available financial years dynamically from vessel delay records
+        # 1. Discover available financial years dynamically strictly from cast_off_datetime
         cur.execute("""
-            SELECT DISTINCT ref_date FROM (
-                SELECT vd.delay_start AS ref_date FROM vcn_delays vd WHERE vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) != ''
-                UNION
-                SELECT vh.doc_date AS ref_date FROM vcn_header vh WHERE vh.doc_date IS NOT NULL AND TRIM(vh.doc_date) != ''
-            ) t
+            SELECT DISTINCT lh.cast_off_datetime AS ref_date
+            FROM ldud_header lh
+            LEFT JOIN vcn_header vh ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
+            LEFT JOIN vcn_delays vd ON vd.vcn_id = vh.id
+            WHERE lh.cast_off_datetime IS NOT NULL
+              AND TRIM(lh.cast_off_datetime) != ''
+              AND lh.is_deleted IS NOT TRUE
+              AND (
+                  (vd.delay_name IS NOT NULL AND TRIM(vd.delay_name) != '')
+                  OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) != '')
+                  OR ((COALESCE(NULLIF(TRIM(lh.anchored_datetime), ''), NULLIF(TRIM(lh.nor_tendered), '')) IS NOT NULL)
+                      AND (NULLIF(TRIM(lh.pilot_pickup_time), '') IS NOT NULL))
+                  OR ((NULLIF(TRIM(lh.pilot_pickup_time), '') IS NOT NULL)
+                      AND (NULLIF(TRIM(lh.alongside_datetime), '') IS NOT NULL))
+                  OR ((NULLIF(TRIM(lh.cast_off_datetime), '') IS NOT NULL)
+                      AND (NULLIF(TRIM(lh.pilot_disembarked), '') IS NOT NULL))
+              )
         """)
         fys = set()
         fys.add(curr_fy)
@@ -121,33 +134,42 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
         raw_rows = []
 
         # =========================================================================
-        # 2. DYNAMIC QUERY: vcn_delays joined with vcn_header and delay master tables
+        # 2a. ORIGINAL DELAYS from vcn_delays (shown first)
         # =========================================================================
         cur.execute("""
             SELECT
                 vd.id,
                 vd.vcn_id,
-                COALESCE(vh.vcn_doc_num, vh.via_number, '') AS vcn_no,
-                COALESCE(vh.vessel_name, '') AS vessel_name,
-                vh.doc_date,
-                vh.created_date,
+                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
+                COALESCE(vh.vessel_name, lh.vessel_name, '') AS vessel_name,
+                lh.cast_off_datetime,
                 vd.delay_name,
                 vd.delay_start,
                 vd.delay_end,
                 COALESCE(vdt.type, pdt.delay_type, pdt.type, '') AS delay_type,
                 COALESCE(NULLIF(TRIM(pdt.responsibility), ''), 'Port') AS delay_account
             FROM vcn_delays vd
-            LEFT JOIN vcn_header vh ON vd.vcn_id = vh.id
+            JOIN vcn_header vh ON vd.vcn_id = vh.id
+            JOIN ldud_header lh ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
+                 AND lh.is_deleted IS NOT TRUE
+                 AND lh.cast_off_datetime IS NOT NULL
+                 AND TRIM(lh.cast_off_datetime) != ''
             LEFT JOIN vessel_delay_types vdt ON LOWER(TRIM(vd.delay_name)) = LOWER(TRIM(vdt.name))
             LEFT JOIN port_delay_types pdt ON LOWER(TRIM(vd.delay_name)) = LOWER(TRIM(pdt.name))
-            WHERE (vd.delay_name IS NOT NULL AND TRIM(vd.delay_name) != '')
-               OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) != '')
+            WHERE ((vd.delay_name IS NOT NULL AND TRIM(vd.delay_name) != '')
+               OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) != ''))
             ORDER BY vd.id ASC
         """)
         for r in cur.fetchall():
+            d_cast_off = _parse_datetime(r['cast_off_datetime'])
+            if not d_cast_off:
+                continue
+
             d_start = _parse_datetime(r['delay_start'])
             d_end = _parse_datetime(r['delay_end'])
-            ref_dt = d_start or _parse_datetime(r['doc_date']) or _parse_datetime(r['created_date'])
+
+            # Report basis: Strictly Vessel Cast Off Date Time
+            ref_dt = d_cast_off
 
             if not ref_dt:
                 continue
@@ -162,6 +184,8 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
 
             raw_rows.append({
                 "sort_dt": ref_dt,
+                "delay_dt": d_start or ref_dt,
+                "source_priority": 1,
                 "fin_year": fy,
                 "month_idx": m_idx,
                 "vcn_no": r['vcn_no'] or (f"VCN-{r['vcn_id']}" if r['vcn_id'] else ""),
@@ -176,10 +200,127 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
             })
 
         # =========================================================================
-        # 3. FILTERING: Dynamic filtering by selected Year and Month
+        # 2b. MILESTONE DELAYS from ldud_header (shown after original delays)
+        #     - Berth Not availeb: Anchorage/NOR -> Pilot Pickup
+        #     - Pilot pick up- along side: Pilot Pickup -> Alongside
+        #     - cast of time - Pilot disemberd: Cast Off -> Pilot Disembarked
+        # =========================================================================
+        cur.execute("""
+            SELECT
+                lh.id AS ldud_id,
+                lh.vcn_id,
+                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
+                COALESCE(vh.vessel_name, lh.vessel_name, '') AS vessel_name,
+                lh.cast_off_datetime,
+                lh.anchored_datetime,
+                lh.nor_tendered,
+                lh.pilot_pickup_time,
+                lh.alongside_datetime,
+                lh.pilot_disembarked
+            FROM ldud_header lh
+            LEFT JOIN vcn_header vh ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
+            WHERE lh.is_deleted IS NOT TRUE
+              AND lh.cast_off_datetime IS NOT NULL
+              AND TRIM(lh.cast_off_datetime) != ''
+            ORDER BY lh.id ASC
+        """)
+        for r in cur.fetchall():
+            d_cast_off = _parse_datetime(r['cast_off_datetime'])
+            if not d_cast_off:
+                continue
+
+            ref_dt = d_cast_off
+            fy, m_idx = _date_to_fin_year_and_idx(ref_dt)
+            m_str = ref_dt.strftime("%b-%y")
+            v_vcn = r['vcn_no'] or (f"VCN-{r['vcn_id']}" if r['vcn_id'] else "")
+            v_vessel = r['vessel_name'] or ""
+
+            d_anchored = _parse_datetime(r['anchored_datetime']) or _parse_datetime(r['nor_tendered'])
+            d_pilot = _parse_datetime(r['pilot_pickup_time'])
+            d_alongside = _parse_datetime(r['alongside_datetime'])
+            d_pilot_dis = _parse_datetime(r['pilot_disembarked'])
+
+            # 1) Berth Not availeb (Anchorage / NOR -> Pilot Pickup)
+            if d_anchored and d_pilot:
+                diff_sec = (d_pilot - d_anchored).total_seconds()
+                if diff_sec > 0:
+                    hrs_val = round(diff_sec / 3600.0, 2)
+                    raw_rows.append({
+                        "sort_dt": ref_dt,
+                        "delay_dt": d_anchored,
+                        "source_priority": 2,
+                        "fin_year": fy,
+                        "month_idx": m_idx,
+                        "vcn_no": v_vcn,
+                        "vessel_name": v_vessel,
+                        "month": m_str,
+                        "delay_name": "Berth Not availeb",
+                        "delay_type": "Port",
+                        "delay_account": "Port",
+                        "start_time": _format_datetime(d_anchored),
+                        "end_time": _format_datetime(d_pilot),
+                        "hours": f"{hrs_val:.2f}"
+                    })
+
+            # 2) Pilot pick up- along side (Pilot Pickup -> Alongside)
+            if d_pilot and d_alongside:
+                diff_sec = (d_alongside - d_pilot).total_seconds()
+                if diff_sec > 0:
+                    hrs_val = round(diff_sec / 3600.0, 2)
+                    raw_rows.append({
+                        "sort_dt": ref_dt,
+                        "delay_dt": d_pilot,
+                        "source_priority": 3,
+                        "fin_year": fy,
+                        "month_idx": m_idx,
+                        "vcn_no": v_vcn,
+                        "vessel_name": v_vessel,
+                        "month": m_str,
+                        "delay_name": "Pilot pick up- along side",
+                        "delay_type": "Pilot",
+                        "delay_account": "Port",
+                        "start_time": _format_datetime(d_pilot),
+                        "end_time": _format_datetime(d_alongside),
+                        "hours": f"{hrs_val:.2f}"
+                    })
+
+            # 3) cast of time - Pilot disemberd (Cast Off -> Pilot Disembarked)
+            if d_cast_off and d_pilot_dis:
+                diff_sec = (d_pilot_dis - d_cast_off).total_seconds()
+                if diff_sec > 0:
+                    hrs_val = round(diff_sec / 3600.0, 2)
+                    raw_rows.append({
+                        "sort_dt": ref_dt,
+                        "delay_dt": d_cast_off,
+                        "source_priority": 4,
+                        "fin_year": fy,
+                        "month_idx": m_idx,
+                        "vcn_no": v_vcn,
+                        "vessel_name": v_vessel,
+                        "month": m_str,
+                        "delay_name": "cast of time - Pilot disemberd",
+                        "delay_type": "Pilot",
+                        "delay_account": "Port",
+                        "start_time": _format_datetime(d_cast_off),
+                        "end_time": _format_datetime(d_pilot_dis),
+                        "hours": f"{hrs_val:.2f}"
+                    })
+
+        # Deduplicate identical records if any
+        seen_entries = set()
+        deduped_rows = []
+        for row in raw_rows:
+            entry_key = (row["vcn_no"], row["start_time"], row["end_time"], row["delay_name"])
+            if entry_key in seen_entries:
+                continue
+            seen_entries.add(entry_key)
+            deduped_rows.append(row)
+
+        # =========================================================================
+        # 3. FILTERING: Dynamic filtering by selected Year and Month (based on Cast Off)
         # =========================================================================
         filtered_rows = []
-        for row in raw_rows:
+        for row in deduped_rows:
             # Year filter
             if year_filter and year_filter != "ALL":
                 if row["fin_year"] != year_filter:
@@ -195,8 +336,15 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
 
             filtered_rows.append(row)
 
-        # Sort chronologically by sort_dt
-        filtered_rows.sort(key=lambda x: (x["sort_dt"] or datetime.min, x["vcn_no"]))
+        # Sort: Original delays first (source_priority=1), followed by milestone delays (2, 3, 4)
+        filtered_rows.sort(
+            key=lambda x: (
+                x["sort_dt"] or datetime.min,
+                x["vcn_no"],
+                x.get("source_priority", 1),
+                x.get("delay_dt") or datetime.min
+            )
+        )
 
         clean_rows = []
         for idx, r in enumerate(filtered_rows, start=1):
@@ -292,7 +440,7 @@ def vessel_delay_export():
         title_cell.font = font_title
         title_cell.alignment = center_align
 
-        # Columns layout matching user mockup (Image 2)
+        # Columns layout
         headers = [
             ("VCN No", "vcn_no", center_align),
             ("vessel Name", "vessel_name", left_align),
