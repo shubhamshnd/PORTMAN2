@@ -75,6 +75,28 @@ def _format_month(dt):
     return parsed.strftime("%b-%y") if parsed else ""
 
 
+def _format_duration_hh_mm(start_or_sec, end_dt=None):
+    if start_or_sec is None:
+        return ""
+    if end_dt is not None:
+        if not start_or_sec:
+            return ""
+        diff_sec = (end_dt - start_or_sec).total_seconds()
+        if diff_sec < 0:
+            return ""
+    else:
+        try:
+            diff_sec = float(start_or_sec)
+            if diff_sec < 0:
+                return ""
+        except (ValueError, TypeError):
+            return ""
+    total_minutes = int(round(diff_sec / 60.0))
+    hours = total_minutes // 60
+    mins = total_minutes % 60
+    return f"{hours:02d}:{mins:02d}"
+
+
 def _date_to_fin_year_and_idx(dt):
     if dt.month >= 4:
         fy = f"{dt.year}-{str(dt.year + 1)[-2:]}"
@@ -177,10 +199,9 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
             fy, m_idx = _date_to_fin_year_and_idx(ref_dt)
             m_str = ref_dt.strftime("%b-%y")
 
-            hrs_val = None
+            hrs_val = ""
             if d_start and d_end:
-                diff_sec = (d_end - d_start).total_seconds()
-                hrs_val = round(max(diff_sec / 3600.0, 0.0), 2)
+                hrs_val = _format_duration_hh_mm(d_start, d_end)
 
             raw_rows.append({
                 "sort_dt": ref_dt,
@@ -196,7 +217,7 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
                 "delay_account": (r['delay_account'] or 'Port').strip(),
                 "start_time": _format_datetime(d_start),
                 "end_time": _format_datetime(d_end),
-                "hours": f"{hrs_val:.2f}" if hrs_val is not None else ""
+                "hours": hrs_val
             })
 
         # =========================================================================
@@ -244,7 +265,6 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
             if d_anchored and d_pilot:
                 diff_sec = (d_pilot - d_anchored).total_seconds()
                 if diff_sec > 0:
-                    hrs_val = round(diff_sec / 3600.0, 2)
                     raw_rows.append({
                         "sort_dt": ref_dt,
                         "delay_dt": d_anchored,
@@ -259,14 +279,13 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
                         "delay_account": "Port",
                         "start_time": _format_datetime(d_anchored),
                         "end_time": _format_datetime(d_pilot),
-                        "hours": f"{hrs_val:.2f}"
+                        "hours": _format_duration_hh_mm(diff_sec)
                     })
 
             # 2) Pilot pick up- along side (Pilot Pickup -> Alongside)
             if d_pilot and d_alongside:
                 diff_sec = (d_alongside - d_pilot).total_seconds()
                 if diff_sec > 0:
-                    hrs_val = round(diff_sec / 3600.0, 2)
                     raw_rows.append({
                         "sort_dt": ref_dt,
                         "delay_dt": d_pilot,
@@ -281,14 +300,13 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
                         "delay_account": "Port",
                         "start_time": _format_datetime(d_pilot),
                         "end_time": _format_datetime(d_alongside),
-                        "hours": f"{hrs_val:.2f}"
+                        "hours": _format_duration_hh_mm(diff_sec)
                     })
 
             # 3) cast of time - Pilot disemberd (Cast Off -> Pilot Disembarked)
             if d_cast_off and d_pilot_dis:
                 diff_sec = (d_pilot_dis - d_cast_off).total_seconds()
                 if diff_sec > 0:
-                    hrs_val = round(diff_sec / 3600.0, 2)
                     raw_rows.append({
                         "sort_dt": ref_dt,
                         "delay_dt": d_cast_off,
@@ -303,7 +321,7 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
                         "delay_account": "Port",
                         "start_time": _format_datetime(d_cast_off),
                         "end_time": _format_datetime(d_pilot_dis),
-                        "hours": f"{hrs_val:.2f}"
+                        "hours": _format_duration_hh_mm(diff_sec)
                     })
 
         # Deduplicate identical records if any
@@ -476,11 +494,8 @@ def vessel_delay_export():
 
                 if key == "hours":
                     if val != "" and val is not None:
-                        try:
-                            cell.value = float(val)
-                            cell.number_format = "0.00"
-                        except ValueError:
-                            cell.value = val
+                        cell.value = str(val)
+                        cell.number_format = "@"
                     else:
                         cell.value = ""
                 else:
