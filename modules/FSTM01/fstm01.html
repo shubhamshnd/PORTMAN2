@@ -305,10 +305,13 @@ function addRow() {
 async function saveAll() {
     const rows = document.querySelectorAll('#tableBody tr');
     let saved = 0;
+    let skipped = 0;
 
     for (let row of rows) {
-        // Skip system rows for non-admins
-        if (row.dataset.system === '1' && !IS_ADMIN) continue;
+        // System rows are admin-only. Skipping them SILENTLY made a GST Rate
+        // change on one look saved when it had been thrown away — count them
+        // and say so instead.
+        if (row.dataset.system === '1' && !IS_ADMIN) { skipped++; continue; }
 
         const id = row.getAttribute('data-id') || '';
         const isTds = row.querySelector('[name="is_tds[]"]').value;
@@ -369,10 +372,13 @@ async function saveAll() {
         }
     }
 
-    if (saved > 0) {
+    if (skipped > 0) {
+        alert(`Saved ${saved} row(s). ${skipped} SYSTEM row(s) were NOT saved — ` +
+              `only an admin can change those, including their GST Rate.`);
+    } else if (saved > 0) {
         alert(`Saved ${saved} row(s)`);
-        location.reload();
     }
+    if (saved > 0) location.reload();
 }
 
 async function deleteRow() {

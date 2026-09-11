@@ -156,9 +156,26 @@
 <!-- Sticky Total Bar -->
 <div class="total-bar" id="totalBar" style="display:none;">
     <div class="total-item">
-        <span class="total-label">Selected Total</span>
-        <span class="total-value highlight" id="selectedTotal">₹0.00</span>
+        <span class="total-label">Taxable</span>
+        <span class="total-value" id="selectedTotal">₹0.00</span>
     </div>
+    <div class="total-item" id="cgstItem">
+        <span class="total-label">CGST</span>
+        <span class="total-value" id="selectedCgst">₹0.00</span>
+    </div>
+    <div class="total-item" id="sgstItem">
+        <span class="total-label">SGST</span>
+        <span class="total-value" id="selectedSgst">₹0.00</span>
+    </div>
+    <div class="total-item" id="igstItem">
+        <span class="total-label">IGST</span>
+        <span class="total-value" id="selectedIgst">₹0.00</span>
+    </div>
+    <div class="total-item">
+        <span class="total-label">Grand Total</span>
+        <span class="total-value highlight" id="selectedGrand">₹0.00</span>
+    </div>
+    <span id="gstWarn" style="color:#c0392b;font-size:11px;font-weight:600;"></span>
     <div class="spacer"></div>
     <button class="btn btn-success" onclick="generateBill()" style="font-size: 12px; padding: 8px 20px;">
         Generate Bill
@@ -167,8 +184,9 @@
 
 <script>
 let billableData = null;
-let gstRatesMap = {};
 let customerData = null;
+// Port GST state code, from FIN01 config — decides CGST+SGST vs IGST on screen.
+const PORT_STATE_CODE = "{{ port_state_code or '' }}";
 
 function formatDateDMY(value) {
     if (!value) return '';
@@ -227,6 +245,8 @@ async function onCustomerSelected() {
     if (agreements.length === 1) {
         agreementSel.value = agreements[0].id;
     }
+    // A different party can flip intra-state to inter-state — retotal the GST.
+    if (window._vessels) recalcSel();
 }
 
 async function loadBillables() {
@@ -330,17 +350,59 @@ function clampQty(inp, max) {
     let v = parseFloat(inp.value)||0; if (v > max) inp.value = max; if (v < 0) inp.value = 0;
 }
 
+// Same rule the server applies in save_bill_line: same state -> CGST+SGST,
+// different state -> IGST, and intra-state when the state cannot be determined.
+function isIntraState() {
+    const opt = document.getElementById('customerId').selectedOptions[0];
+    const state = (opt ? (opt.dataset.stateCode || '').trim() : '');
+    const gstin = (opt ? (opt.dataset.gstin || '').trim() : '');
+    if (!PORT_STATE_CODE) return true;
+    if (state) return state === PORT_STATE_CODE;
+    if (gstin) return gstin.slice(0, 2) === PORT_STATE_CODE;
+    return true;
+}
+
 function recalcSel() {
-    let sel = 0;
+    const vessels = window._vessels || [];
+    const intra = isIntraState();
+    let sel = 0, cgst = 0, sgst = 0, igst = 0;
+    const missing = new Set();
+
     document.querySelectorAll('.bl-chk').forEach(chk => {
         const vi = chk.dataset.vi, li = chk.dataset.li;
         const qty = parseFloat(document.querySelector(`.bl-qty[data-vi="${vi}"][data-li="${li}"]`).value)||0;
         const rate = parseFloat(document.querySelector(`.bl-rate[data-vi="${vi}"][data-li="${li}"]`).value)||0;
         const amt = Math.round(qty*rate*100)/100;
         document.getElementById(`amt-${vi}-${li}`).textContent = '₹'+amt.toFixed(2);
-        if (chk.checked) sel += amt;
+        if (!chk.checked) return;
+        sel += amt;
+
+        const l = ((vessels[+vi] || {}).lines || [])[+li] || {};
+        // null (not 0) means the service has no usable GST rate — say so rather
+        // than quietly totalling zero tax, which is what used to happen.
+        if (l.igst_rate === null || l.igst_rate === undefined) {
+            missing.add(l.service_code || 'service');
+            return;
+        }
+        if (intra) {
+            cgst += Math.round(amt * (l.cgst_rate || 0)) / 100;
+            sgst += Math.round(amt * (l.sgst_rate || 0)) / 100;
+        } else {
+            igst += Math.round(amt * (l.igst_rate || 0)) / 100;
+        }
     });
-    const el = document.getElementById('selectedTotal'); if (el) el.textContent = '₹'+sel.toFixed(2);
+
+    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = '₹'+v.toFixed(2); };
+    set('selectedTotal', sel); set('selectedCgst', cgst);
+    set('selectedSgst', sgst); set('selectedIgst', igst);
+    set('selectedGrand', Math.round((sel + cgst + sgst + igst) * 100) / 100);
+
+    document.getElementById('cgstItem').style.display = intra ? 'flex' : 'none';
+    document.getElementById('sgstItem').style.display = intra ? 'flex' : 'none';
+    document.getElementById('igstItem').style.display = intra ? 'none' : 'flex';
+    document.getElementById('gstWarn').textContent = missing.size
+        ? '⚠ No GST rate configured for ' + [...missing].join(', ') + ' — set it in FSTM01'
+        : '';
 }
 
 function generateBill() {

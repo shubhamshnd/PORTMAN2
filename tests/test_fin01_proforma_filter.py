@@ -26,11 +26,22 @@ def test_filter():
 
 
 def test_view_uses_same_key():
-    body = SRC[SRC.index('def proforma_invoice'):]
-    body = body[:body.index('\n@bp.route')]
-    assert "request.args.get('l')" in body
+    # The filter lives in _proforma_ctx, which the preview, the PDF and the
+    # mail send all go through — so all three print the same lines.
+    body = SRC[SRC.index('def _proforma_ctx'):]
+    body = body[:body.index('\ndef _proforma_filename')]
     assert re.search(r"cargo_source_type.*cargo_source_id.*service_type_id", body, re.S)
     assert 'No lines selected' in body
+
+
+def test_every_proforma_entrypoint_applies_the_filter():
+    """A route that skipped the ?l= filter would mail the customer lines the
+    user never ticked — check each one passes it to the shared builder."""
+    for fn in ('def proforma_invoice(', 'def proforma_invoice_pdf(', 'def send_proforma('):
+        body = SRC[SRC.index(fn):]
+        body = body[:body.index('\n@bp.route') if '\n@bp.route' in body else len(body)]
+        assert "_proforma_ctx(" in body, fn
+        assert "request.args.get('l')" in body, fn
 
 
 if __name__ == '__main__':

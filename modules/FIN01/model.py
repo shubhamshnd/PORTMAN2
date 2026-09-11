@@ -802,6 +802,10 @@ def generate_bill(data, created_by, bill_status, approved_by=None):
 
 _CARGO_GATE = ('Closed', 'Partial Close')
 
+# Order the billables screen and the pro-forma list services in: cargo handling,
+# then infrastructure, then the extras. Rows for one service stay together.
+_SERVICE_DISPLAY_ORDER = ['CHGU01', 'CHGL01', 'INFM01', 'MLAC01', 'TOLL01']
+
 
 def parcel_charge_codes(src, equipment_names, toll_applicable):
     """Service codes one parcel yields: cargo handling (by direction) plus
@@ -901,10 +905,14 @@ def get_customer_billables(customer_type, customer_id):
     row = cur.fetchone()
     customer_name = row['name'] if row else ''
 
-    cur.execute("""SELECT id, service_code, service_name, sac_code, uom, gst_rate_id,
-                          is_tds, tds_percent, is_tcs, tcs_percent
-                   FROM finance_service_types
-                   WHERE service_code IN ('CHGU01','CHGL01','INFM01','MLAC01','TOLL01')""")
+    # GST rates come along so the billables screen can total the tax live,
+    # instead of the user finding out what GST is only after generating.
+    cur.execute("""SELECT s.id, s.service_code, s.service_name, s.sac_code, s.uom,
+                          s.gst_rate_id, s.is_tds, s.tds_percent, s.is_tcs, s.tcs_percent,
+                          g.cgst_rate, g.sgst_rate, g.igst_rate
+                   FROM finance_service_types s
+                   LEFT JOIN gst_rates g ON g.id = s.gst_rate_id
+                   WHERE s.service_code IN ('CHGU01','CHGL01','INFM01','MLAC01','TOLL01')""")
     svc = {r['service_code']: dict(r) for r in cur.fetchall()}
 
     cur.execute("""
@@ -1009,10 +1017,22 @@ def get_customer_billables(customer_type, customer_id):
                 'declared_qty': declared, 'actual_qty': actual,
                 'uom': st['uom'] or 'MT', 'rate': rate, 'amount': amount,
                 'sac_code': st['sac_code'] or '', 'gst_rate_id': st['gst_rate_id'],
+                # None (not 0) when the service has no usable GST rate — the
+                # screen must say "not configured", never quietly show 0.00
+                'cgst_rate': _to_float(st['cgst_rate']) if st['cgst_rate'] is not None else None,
+                'sgst_rate': _to_float(st['sgst_rate']) if st['sgst_rate'] is not None else None,
+                'igst_rate': _to_float(st['igst_rate']) if st['igst_rate'] is not None else None,
                 'is_tds': st['is_tds'], 'tds_percent': float(st['tds_percent'] or 0),
                 'is_tcs': st['is_tcs'], 'tcs_percent': float(st['tcs_percent'] or 0),
             })
             v['total_amount'] = round(v['total_amount'] + amount, 2)
+
+    # Club each vessel's lines by service instead of the per-parcel hopscotch
+    # the loop above emits (P1/handling, P1/infra, P2/handling…). sort is
+    # stable, so parcels keep their order inside each service block.
+    for v in vessels.values():
+        v['lines'].sort(key=lambda l: _SERVICE_DISPLAY_ORDER.index(l['service_code'])
+                        if l['service_code'] in _SERVICE_DISPLAY_ORDER else 99)
 
     return {'vessels': list(vessels.values())}
 

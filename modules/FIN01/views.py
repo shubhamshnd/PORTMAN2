@@ -1,8 +1,13 @@
-from flask import render_template, request, redirect, url_for, session, jsonify
+from datetime import datetime
+from urllib.parse import quote
+
+from flask import render_template, request, redirect, url_for, session, jsonify, make_response
 from . import bp
 from . import model
+from . import proforma_pdf
 from database import get_user_permissions, get_db, get_cursor, get_module_config
-from mail_service import notify_module_approver, get_module_approver_info, build_approval_mail_html
+from mail_service import (notify_module_approver, get_module_approver_info,
+                          build_approval_mail_html, queue_mail, trigger_mail_processing)
 
 
 def _queue_bill_approval_request(bill_id, bill_number, customer_name, total_amount):
@@ -118,8 +123,15 @@ def generate_bill():
     from datetime import datetime
     current_date = datetime.now().strftime('%Y-%m-%d')
 
+    # The screen totals GST live, so it needs the same port state code the
+    # server uses to pick CGST+SGST over IGST (config first, then GSTIN prefix).
+    config = get_module_config('FIN01')
+    port_state = (str(config.get('port_gst_state_code') or '').strip()
+                  or str(config.get('seller_gstin') or _PI_GSTIN)[:2])
+
     return render_template('generate_bill.html',
                          current_date=current_date,
+                         port_state_code=port_state,
                          perms=perms,
                          username=session.get('username'))
 
@@ -412,49 +424,41 @@ _PI_PAYMENT_NOTE = ('Note : Payment to be made through DD / Bankers Cheque/RTGS 
                     'Mumbai – 400098, Escrow Account- 924020046923953, IFS CODE- UTIB0000776)')
 
 
-@bp.route('/module/FIN01/proforma/<customer_type>/<int:customer_id>/<int:vcn_id>')
-def proforma_invoice(customer_type, customer_id, vcn_id):
-    """Printable PRO-FORMA invoice for one vessel (JJLTPL letterhead format) —
-    declared/BL quantities at agreement rates, no GST (matches the manual
-    pro forma issued today). Display document only: nothing persisted."""
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
+def _proforma_ctx(customer_type, customer_id, vcn_id, picked):
+    """Build the pro-forma document context, or (None, error, status).
 
+    Shared by the preview, the PDF and the mail send so all three are the same
+    document — the customer can never receive figures the screen did not show.
+    """
     billables = model.get_customer_billables(customer_type, customer_id)
     vessel = next((v for v in (billables.get('vessels') or []) if v['vcn_id'] == vcn_id), None)
     if not vessel or not vessel['lines']:
-        return "No billable lines found for this vessel/customer.", 404
+        return None, 'No billable lines found for this vessel/customer.', 404
 
     # ?l=SRC:cargo_id:service_type_id,... — print only the lines ticked on the
     # billables screen. Absent (a bookmarked/older link) means every line.
-    picked = request.args.get('l')
     if picked:
         want = set(picked.split(','))
         vessel = {**vessel, 'lines': [
             l for l in vessel['lines']
             if f"{l['cargo_source_type']}:{l['cargo_source_id']}:{l['service_type_id']}" in want]}
         if not vessel['lines']:
-            return "No lines selected for this vessel/customer.", 404
+            return None, 'No lines selected for this vessel/customer.', 404
 
     conn = get_db()
     cur = get_cursor(conn)
     tbl = 'vessel_customers' if customer_type == 'Customer' else 'vessel_agents'
-    cur.execute(f'''SELECT name, gstin, billing_address, city, pincode
-                    FROM {tbl} WHERE id=%s''', [customer_id])
+    cur.execute(f"""SELECT name, gstin, billing_address, city, pincode,
+                           contact_email, contact_person
+                    FROM {tbl} WHERE id=%s""", [customer_id])
     cust = dict(cur.fetchone() or {})
     conn.close()
 
-    lines, subtotal = [], 0.0
-    for l in vessel['lines']:
-        amount = round(float(l['qty']) * float(l['rate'] or 0), 2)
-        lines.append({**l, 'amount': amount, 'amount_fmt': _inr(amount),
-                      'qty_fmt': f"{float(l['qty']):.3f}".rstrip('0').rstrip('.'),
-                      'rate_fmt': f"{float(l['rate'] or 0):.2f}"})
-        subtotal += amount
-    subtotal = round(subtotal, 2)
+    # Club the per-parcel lines by service type before they reach the document.
+    rows = proforma_pdf.group_lines(vessel['lines'])
+    subtotal = round(sum(r['amount'] for r in rows if r['amount'] is not None), 2)
     sac_codes = sorted({l['sac_code'] for l in vessel['lines'] if l.get('sac_code')})
 
-    from datetime import datetime
     now = datetime.now()
     fy = (f'{now.year % 100}-{(now.year + 1) % 100:02d}' if now.month >= 4
           else f'{(now.year - 1) % 100}-{now.year % 100:02d}')
@@ -463,15 +467,140 @@ def proforma_invoice(customer_type, customer_id, vcn_id):
     ref_no = f"JJLTPL/PI/{fy}/{vessel['vcn_doc_num']}"
 
     config = get_module_config('FIN01')
-    return render_template('proforma_print.html',
-                           vessel=vessel, lines=lines, customer=cust,
-                           ref_no=ref_no, date_str=now.strftime('%d.%m.%Y'),
-                           sac_codes=', '.join(sac_codes),
-                           subtotal_fmt=_inr(subtotal),
-                           amount_words=_amount_in_words(subtotal),
-                           seller_gstin=config.get('seller_gstin') or _PI_GSTIN,
-                           seller_pan=config.get('seller_pan') or _PI_PAN,
-                           payment_note=config.get('payment_note') or _PI_PAYMENT_NOTE)
+    return {
+        'vessel': vessel,
+        'vessel_name': vessel.get('vessel_name') or vessel['vcn_doc_num'],
+        'customer': cust,
+        'rows': rows,
+        'ref_no': ref_no,
+        'date_str': now.strftime('%d.%m.%Y'),
+        'sac_codes': ', '.join(sac_codes),
+        'subtotal': subtotal,
+        'amount_words': _amount_in_words(subtotal),
+        'seller_gstin': config.get('seller_gstin') or _PI_GSTIN,
+        'seller_pan': config.get('seller_pan') or _PI_PAN,
+        'payment_note': config.get('payment_note') or _PI_PAYMENT_NOTE,
+    }, None, None
+
+
+def _proforma_filename(ctx):
+    return 'Pro-Forma Invoice ' + ctx['ref_no'].replace('/', '-') + '.pdf'
+
+
+def _proforma_qs():
+    """Carry the ticked-line filter through to the PDF and send endpoints."""
+    picked = request.args.get('l')
+    return ('?l=' + quote(picked)) if picked else ''
+
+
+@bp.route('/module/FIN01/proforma/<customer_type>/<int:customer_id>/<int:vcn_id>')
+def proforma_invoice(customer_type, customer_id, vcn_id):
+    """Pro-forma preview: the PDF itself, wrapped in a toolbar that can print it
+    or mail it to the customer. Display document only: nothing persisted."""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    ctx, err, status = _proforma_ctx(customer_type, customer_id, vcn_id,
+                                     request.args.get('l'))
+    if err:
+        return err, status
+
+    qs = _proforma_qs()
+    base = f'/module/FIN01/proforma/{customer_type}/{customer_id}/{vcn_id}'
+    return render_template(
+        'proforma_print.html',
+        pdf_url=base + '.pdf' + qs,
+        send_url=(f'/api/module/FIN01/proforma/send/{customer_type}'
+                  f'/{customer_id}/{vcn_id}' + qs),
+        ref_no=ctx['ref_no'],
+        customer=ctx['customer'],
+        vessel_name=ctx['vessel_name'],
+        subtotal_fmt=_inr(ctx['subtotal']),
+        no_rate=any(r['rate'] == 0 for r in ctx['rows'] if r['rate'] is not None))
+
+
+@bp.route('/module/FIN01/proforma/<customer_type>/<int:customer_id>/<int:vcn_id>.pdf')
+def proforma_invoice_pdf(customer_type, customer_id, vcn_id):
+    """The pro-forma rendered as a PDF, inline for the preview iframe."""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    ctx, err, status = _proforma_ctx(customer_type, customer_id, vcn_id,
+                                     request.args.get('l'))
+    if err:
+        return err, status
+
+    resp = make_response(proforma_pdf.render(ctx))
+    resp.headers['Content-Type'] = 'application/pdf'
+    resp.headers['Content-Disposition'] = f'inline; filename="{_proforma_filename(ctx)}"'
+    return resp
+
+
+@bp.route('/api/module/FIN01/proforma/send/<customer_type>/<int:customer_id>/<int:vcn_id>',
+          methods=['POST'])
+def send_proforma(customer_type, customer_id, vcn_id):
+    """Mail the pro-forma PDF to the customer's VCUM01 contact address.
+
+    The recipient is never taken from the request — only from the customer
+    master — so the button cannot be used to mail an invoice anywhere else."""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+
+    perms = get_user_permissions(session['user_id'], 'FIN01')
+    if not (perms.get('can_add') or perms.get('can_edit') or session.get('is_admin')):
+        return jsonify({'success': False, 'error': 'No permission to send invoices'}), 403
+
+    ctx, err, status = _proforma_ctx(customer_type, customer_id, vcn_id,
+                                     request.args.get('l'))
+    if err:
+        return jsonify({'success': False, 'error': err}), status
+
+    to_email = (ctx['customer'].get('contact_email') or '').strip()
+    if not to_email:
+        master = 'VCUM01' if customer_type == 'Customer' else 'VAM01'
+        return jsonify({'success': False, 'error':
+                        f"{ctx['customer'].get('name') or 'This customer'} has no contact "
+                        f"email in {master}. Add one there and try again."}), 400
+
+    queue_mail(
+        to_email,
+        ctx['customer'].get('contact_person') or ctx['customer'].get('name'),
+        f"Pro-Forma Invoice {ctx['ref_no']} - {ctx['vessel_name']} - Rs. {_inr(ctx['subtotal'])}",
+        _proforma_mail_html(ctx),
+        module_code='FIN01',
+        ref_id=vcn_id,
+        attachment_name=_proforma_filename(ctx),
+        attachment_bytes=proforma_pdf.render(ctx),
+    )
+    trigger_mail_processing()
+    return jsonify({'success': True, 'to_email': to_email})
+
+
+def _proforma_mail_html(ctx):
+    """Covering note — the figures live in the attached PDF."""
+    greeting = (ctx['customer'].get('contact_person')
+                or ctx['customer'].get('name') or 'Sir/Madam')
+    rows = ''.join(
+        f'<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;">{r["label"]}</td>'
+        f'<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">'
+        f'{"" if r["amount"] is None else "Rs. " + _inr(r["amount"])}</td></tr>'
+        for r in ctx['rows'])
+    return f"""
+<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1a202c;">
+  <p>Dear {greeting},</p>
+  <p>Please find attached the pro-forma invoice <b>{ctx['ref_no']}</b>
+     dated {ctx['date_str']} for <b>{ctx['vessel_name']}</b>.</p>
+  <table style="border-collapse:collapse;font-size:13px;margin:14px 0;min-width:340px;">
+    {rows}
+    <tr><td style="padding:7px 10px;font-weight:700;">Total</td>
+        <td style="padding:7px 10px;font-weight:700;text-align:right;">Rs. {_inr(ctx['subtotal'])}</td></tr>
+  </table>
+  <p style="font-size:12px;color:#4a5568;">{ctx['payment_note']}</p>
+  <p style="font-size:12px;color:#718096;">
+     This is a pro-forma invoice issued for your reference; it is not a tax invoice.</p>
+  <p style="font-size:12px;color:#718096;margin-top:18px;">
+     JSW JNPA Liquid Terminals &ndash; Portbird JNPA</p>
+</div>"""
 
 
 @bp.route('/api/module/FIN01/bill/approve', methods=['POST'])

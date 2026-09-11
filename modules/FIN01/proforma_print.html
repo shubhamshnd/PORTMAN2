@@ -2,131 +2,101 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Pro-Forma Invoice — {{ vessel.vcn_doc_num }}</title>
+<title>Pro-Forma Invoice — {{ ref_no }}</title>
 <style>
-    body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 13px; color: #000; margin: 0; background: #f0f0f0; }
-    .page { width: 860px; margin: 0 auto; background: white; padding: 30px 40px 40px; box-sizing: border-box; }
-    .letterhead { width: 100%; margin-bottom: 24px; }
-    .letterhead img { width: 100%; display: block; }
-
-    .box { border: 1.5px solid #000; }
-    .box .row { border-bottom: 1.5px solid #000; }
-    .title { text-align: center; font-size: 16px; font-weight: 700; padding: 8px; }
-    .refdate { display: flex; justify-content: space-between; padding: 8px 10px; font-weight: 700; }
-    .to-block { padding: 8px 10px 14px; min-height: 110px; }
-    .to-block div { line-height: 1.35; }
-
-    table.lines { width: 100%; border-collapse: collapse; }
-    table.lines th, table.lines td { padding: 4px 8px; }
-    table.lines thead th { border-bottom: 1.5px solid #000; font-weight: 700; text-align: center; }
-    .col-qty, .col-rate, .col-amt { border-left: 1.5px solid #000; width: 110px; }
-    .col-amt { width: 140px; }
-    .num { text-align: right; }
-    .vessel-row td:first-child { font-weight: 700; text-decoration: underline; }
-    .particulars-body td { border-bottom: none; }
-    .subtotal-row td { border-top: 1.5px solid #000; font-weight: 700; }
-    .total-row td { border-top: 1.5px solid #000; font-weight: 700; }
-    .spacer-row td { height: 34px; }
-    .words { padding: 6px 10px; font-weight: 700; }
-
-    .sign-block { display: flex; justify-content: flex-end; padding: 26px 10px 6px; }
-    .sign-inner { text-align: center; }
-    .sign-line { margin-top: 44px; font-weight: 700; }
-    .gst-pan { padding: 4px 10px 12px; font-weight: 700; line-height: 1.5; }
-    .pay-note { border-top: 1.5px solid #000; padding: 8px 10px; font-weight: 700; font-size: 12px; line-height: 1.4; }
-    .rate-note { padding: 4px 10px; font-size: 11px; color: #b91c1c; }
-
-    .print-btn { position: fixed; top: 12px; right: 12px; padding: 8px 18px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
-    @media print {
-        .print-btn { display: none; }
-        body { background: white; }
-        .page { width: 100%; padding: 0; }
-    }
+    body { font-family: Segoe UI, Calibri, Arial, sans-serif; font-size: 13px; color: #1a202c;
+           margin: 0; background: #525659; height: 100vh; display: flex; flex-direction: column; }
+    .bar { background: #fff; border-bottom: 2px solid #d90429; padding: 8px 14px;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .bar .ref { font-weight: 700; }
+    .bar .meta { color: #4a5568; font-size: 12px; }
+    .bar .spacer { flex: 1; }
+    .btn { padding: 7px 16px; font-size: 12px; border: none; border-radius: 4px;
+           cursor: pointer; font-weight: 600; }
+    .btn-send { background: #27ae60; color: #fff; }
+    .btn-send:disabled { background: #9ae6b4; cursor: default; }
+    .btn-print { background: #2563eb; color: #fff; }
+    .btn-close { background: #e2e8f0; color: #2d3748; }
+    .warn { background: #fffbeb; border-bottom: 1px solid #fde68a; color: #92400e;
+            padding: 6px 14px; font-size: 12px; }
+    .status { font-size: 12px; font-weight: 600; }
+    iframe { flex: 1; width: 100%; border: none; }
 </style>
 </head>
 <body>
-<button class="print-btn" onclick="window.print()">🖨 Print</button>
-<div class="page">
-    <div class="letterhead"><img src="/static/img/invoice_header.png" alt="JNPT Liquid Terminal Private Limited"></div>
 
-    <div class="box">
-        <div class="row title">PRO-FORMA INVOICE</div>
-
-        <div class="row refdate">
-            <span>Ref.No: {{ ref_no }}</span>
-            <span>DATE:&nbsp; {{ date_str }}</span>
-        </div>
-
-        <div class="row to-block">
-            <div>To,</div>
-            <div><b>{{ customer.name }}</b></div>
-            {% if customer.billing_address %}<div>{{ customer.billing_address }}</div>{% endif %}
-            {% if customer.city or customer.pincode %}<div>{{ customer.city or '' }}{{ ', ' ~ customer.pincode if customer.pincode else '' }}</div>{% endif %}
-            {% if customer.gstin %}<div>GSTIN:- &nbsp;{{ customer.gstin }}</div>{% endif %}
-        </div>
-
-        <div class="row">
-            <table class="lines">
-                <thead>
-                    <tr>
-                        <th>Particulars</th>
-                        <th class="col-qty">Qty. in<br>MT</th>
-                        <th class="col-rate">Rate<br>(Rs.)/MT</th>
-                        <th class="col-amt">Amount<br>(Rs.)</th>
-                    </tr>
-                </thead>
-                <tbody class="particulars-body">
-                    <tr class="vessel-row">
-                        <td>{{ vessel.vessel_name or vessel.vcn_doc_num }}</td>
-                        <td class="col-qty"></td><td class="col-rate"></td><td class="col-amt"></td>
-                    </tr>
-                    {% for l in lines %}
-                    <tr>
-                        <td>{{ l.service_name }}{{ ' — ' ~ l.cargo_name if l.cargo_name else '' }}</td>
-                        <td class="col-qty num">{{ l.qty_fmt }}</td>
-                        <td class="col-rate num">{{ l.rate_fmt }}</td>
-                        <td class="col-amt num">{{ l.amount_fmt }}</td>
-                    </tr>
-                    {% endfor %}
-                    <tr>
-                        <td style="font-weight:700;">{% if sac_codes %}SAC Code- {{ sac_codes }}{% endif %}</td>
-                        <td class="col-qty"></td><td class="col-rate"></td><td class="col-amt"></td>
-                    </tr>
-                    <tr class="subtotal-row">
-                        <td></td>
-                        <td class="col-qty">Sub Total</td>
-                        <td class="col-rate"></td>
-                        <td class="col-amt num">{{ subtotal_fmt }}</td>
-                    </tr>
-                    <tr class="spacer-row">
-                        <td></td><td class="col-qty"></td><td class="col-rate"></td><td class="col-amt"></td>
-                    </tr>
-                    <tr class="total-row">
-                        <td colspan="3" class="num" style="border-left:none;">Total :</td>
-                        <td class="col-amt num">{{ subtotal_fmt }}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="row words">{{ amount_words }}</div>
-
-        <div class="row" style="border-bottom:none;">
-            {% if lines|selectattr('rate', 'equalto', 0)|list %}
-            <div class="rate-note">* One or more lines have no agreement rate (shown as 0.00) — amounts to be confirmed.</div>
-            {% endif %}
-            <div class="sign-block">
-                <div class="sign-inner">
-                    <div class="sign-line">Authorised Signatory</div>
-                </div>
-            </div>
-            <div class="gst-pan">
-                GSTIN:- {{ seller_gstin }}<br>
-                PAN : {{ seller_pan }}
-            </div>
-            <div class="pay-note">{{ payment_note }}</div>
-        </div>
-    </div>
+<div class="bar">
+    <span class="ref">{{ ref_no }}</span>
+    <span class="meta">{{ vessel_name }} &middot; {{ customer.name or '' }} &middot; ₹{{ subtotal_fmt }}</span>
+    <span class="spacer"></span>
+    <span class="status" id="status"></span>
+    <button class="btn btn-send" id="sendBtn" onclick="openSend()">✉ Send to Customer</button>
+    <button class="btn btn-print" onclick="printPdf()">🖨 Print</button>
+    <button class="btn btn-close" onclick="window.close()">Close</button>
 </div>
+
+{% if no_rate %}
+<div class="warn">One or more services have no agreement rate (shown as 0.00) — amounts to be confirmed before sending.</div>
+{% endif %}
+
+<iframe id="pdf" src="{{ pdf_url }}" title="Pro-Forma Invoice {{ ref_no }}"></iframe>
+
+<!-- Send confirmation — the address comes from the customer master, never from here -->
+<div id="sendModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);
+     z-index:999;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:8px;padding:24px;max-width:440px;width:90%;">
+    <h3 style="margin:0 0 10px;font-size:16px;">✉ Send Pro-Forma Invoice</h3>
+    <p style="font-size:13px;color:#4a5568;margin:0 0 6px;">
+      Mail <b>{{ ref_no }}</b> with the PDF attached to:
+    </p>
+    <p style="font-size:13px;margin:0 0 14px;">
+      <b>{{ customer.contact_email or 'no contact email on record' }}</b><br>
+      <span style="color:#718096;font-size:12px;">
+        {{ customer.name }} — from the customer master (VCUM01/VAM01)
+      </span>
+    </p>
+    <div id="sendError" style="color:#e53e3e;font-size:12px;min-height:16px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+      <button class="btn btn-close" onclick="document.getElementById('sendModal').style.display='none'">Cancel</button>
+      <button class="btn btn-send" id="sendConfirm" onclick="sendProforma()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SEND_URL = "{{ send_url }}";
+
+function printPdf() {
+    const f = document.getElementById('pdf');
+    try { f.contentWindow.focus(); f.contentWindow.print(); }
+    catch (e) { window.open(f.src, '_blank'); }
+}
+
+function openSend() {
+    document.getElementById('sendError').textContent = '';
+    document.getElementById('sendModal').style.display = 'flex';
+}
+
+async function sendProforma() {
+    const btn = document.getElementById('sendConfirm');
+    const err = document.getElementById('sendError');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+        const res = await fetch(SEND_URL, {method: 'POST',
+                                headers: {'Content-Type': 'application/json'}, body: '{}'});
+        const j = await res.json();
+        if (!j.success) { err.textContent = j.error || 'Send failed'; return; }
+        document.getElementById('sendModal').style.display = 'none';
+        const s = document.getElementById('status');
+        s.textContent = '✓ Sent to ' + j.to_email;
+        s.style.color = '#27ae60';
+        document.getElementById('sendBtn').disabled = true;
+    } catch (e) {
+        err.textContent = 'Send failed: ' + e.message;
+    } finally {
+        btn.disabled = false; btn.textContent = 'Send';
+    }
+}
+</script>
 </body>
 </html>

@@ -1,9 +1,14 @@
+import base64
 import smtplib
 import threading
+from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from database import get_db, get_cursor
+
+# Display name on every outgoing mail, unless smtp_config overrides it.
+FROM_NAME = 'JSW JNPA Liquid Terminals - Portbird JNPA'
 
 
 def build_approval_mail_html(
@@ -100,16 +105,24 @@ def get_smtp_config():
     return dict(row) if row else None
 
 
-def queue_mail(to_email, to_name, subject, body_html, module_code=None, ref_id=None):
-    """Insert a pending mail into mail_queue. Safe to call from any view."""
+def queue_mail(to_email, to_name, subject, body_html, module_code=None, ref_id=None,
+               attachment_name=None, attachment_bytes=None):
+    """Insert a pending mail into mail_queue. Safe to call from any view.
+
+    A single optional attachment rides along base64-encoded in the row, so the
+    queue stays self-contained — no temp files to lose between queueing and the
+    retry that sends three attempts later."""
     if not to_email:
         return
+    b64 = base64.b64encode(attachment_bytes).decode('ascii') if attachment_bytes else None
     conn = get_db()
     cur = get_cursor(conn)
     cur.execute("""
-        INSERT INTO mail_queue (to_email, to_name, subject, body_html, module_code, ref_id)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, [to_email, to_name, subject, body_html, module_code, ref_id])
+        INSERT INTO mail_queue (to_email, to_name, subject, body_html, module_code, ref_id,
+                                attachment_name, attachment_b64)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """, [to_email, to_name, subject, body_html, module_code, ref_id,
+          attachment_name if b64 else None, b64])
     conn.commit()
     conn.close()
 
@@ -192,16 +205,32 @@ def process_mail_queue():
         _send_one(mail, cfg)
 
 
+def build_message(mail, cfg):
+    """Compose one mail_queue row into a MIME message, with its attachment if
+    it has one. Split out from _send_one so it can be checked without SMTP."""
+    body = MIMEText(mail['body_html'], 'html')
+    if mail.get('attachment_b64'):
+        msg = MIMEMultipart('mixed')
+        msg.attach(body)
+        part = MIMEApplication(base64.b64decode(mail['attachment_b64']), _subtype='pdf')
+        part.add_header('Content-Disposition', 'attachment',
+                        filename=mail.get('attachment_name') or 'attachment.pdf')
+        msg.attach(part)
+    else:
+        msg = MIMEMultipart('alternative')
+        msg.attach(body)
+    msg['Subject'] = mail['subject']
+    msg['From'] = f"{cfg.get('from_name') or FROM_NAME} <{cfg['from_email']}>"
+    msg['To'] = mail['to_email']
+    return msg
+
+
 def _send_one(mail, cfg):
     """Send a single mail row. Updates status in DB."""
     conn = get_db()
     cur = get_cursor(conn)
     try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = mail['subject']
-        msg['From'] = f"{cfg.get('from_name', 'Portbird - DPPL')} <{cfg['from_email']}>"
-        msg['To'] = mail['to_email']
-        msg.attach(MIMEText(mail['body_html'], 'html'))
+        msg = build_message(mail, cfg)
 
         server = smtplib.SMTP(cfg['host'], cfg['port'], timeout=15)
         if cfg.get('use_tls'):
