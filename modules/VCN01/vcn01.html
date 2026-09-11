@@ -1175,8 +1175,8 @@
         }
         const chip = (label, v) => `<span style="display:inline-block;background:#edf2f7;border-radius:10px;padding:1px 9px;margin-right:6px;">`
             + `${label}: <b>${v ? formatDateTime(v) : '—'}</b></span>`;
-        el.innerHTML = chip('Anchorage', w.anchored) + chip('Pilot Pickup', w.pilot_pickup)
-            + chip('NOR Accepted', w.nor_accepted)
+        el.innerHTML = chip('Anchorage', w.anchored) + chip('NOR Accepted', w.nor_accepted)
+            + chip('Pilot Pickup', w.pilot_pickup)
             + '<span style="color:#718096;">delays must fall inside the Anchorage → Pilot Pickup window</span>';
     }
 
