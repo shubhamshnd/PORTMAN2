@@ -125,7 +125,9 @@ def _load_live_pipeline_rows():
         cur.execute("""
             SELECT ld.id AS ldud_id, ld.cast_off_datetime, ld.alongside_datetime, ld.nor_tendered,
                    ld.discharge_commenced, ld.discharge_completed,
-                   h.id AS vcn_id, h.vessel_name, h.berth_name, h.cargo_type, h.operation_type,
+                   h.id AS vcn_id,
+                   COALESCE(h.vcn_doc_num, h.via_number, ld.vcn_doc_num, h.id::text) AS vcn_no,
+                   h.vessel_name, h.berth_name, h.cargo_type, h.operation_type,
                    SUM(l.quantity) AS quantity
             FROM lueu_parcel_log l
             JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
@@ -178,9 +180,137 @@ def _load_live_pipeline_rows():
                 'stay_at_berth': sab,
                 'working_time': wt,
                 'cast_off': r['cast_off_datetime'],
-                'vcn_no': str(r['vcn_id'])
+                'vcn_no': r['vcn_no']
             })
     return live_rows
+
+
+def _norm_vcn(value):
+    return str(value or '').strip().upper()
+
+
+def _load_report3_db_time_data(fin_year: str):
+    """Load the raw time/delay totals used by Report-3.
+
+    Port pre-berthing is the milestone Anchorage/NOR -> Pilot Pickup plus
+    all vcn_delays classified as Port. Agent is all vcn_delays classified as
+    Agent. Operational berth/working time is calculated from ldud_header.
+    """
+    conn = get_db()
+    try:
+        cur = get_cursor(conn)
+
+        # Vessel operational milestones.  These are also the source used by
+        # the Vessel Delay Report for its milestone delays.
+        cur.execute("""
+            SELECT
+                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
+                lh.cast_off_datetime,
+                lh.anchored_datetime,
+                lh.nor_tendered,
+                lh.pilot_pickup_time,
+                lh.alongside_datetime,
+                lh.discharge_commenced,
+                lh.discharge_completed
+            FROM ldud_header lh
+            LEFT JOIN vcn_header vh
+              ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
+            WHERE lh.is_deleted IS NOT TRUE
+              AND lh.cast_off_datetime IS NOT NULL
+              AND TRIM(lh.cast_off_datetime) <> ''
+        """)
+        milestone_rows = cur.fetchall()
+
+        # Original vessel delay records and their responsibility/account.
+        cur.execute("""
+            SELECT
+                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
+                vd.delay_start,
+                vd.delay_end,
+                COALESCE(NULLIF(TRIM(pdt.responsibility), ''), 'Port') AS delay_account
+            FROM vcn_delays vd
+            JOIN vcn_header vh ON vd.vcn_id = vh.id
+            JOIN ldud_header lh
+              ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
+             AND lh.is_deleted IS NOT TRUE
+             AND lh.cast_off_datetime IS NOT NULL
+             AND TRIM(lh.cast_off_datetime) <> ''
+            LEFT JOIN port_delay_types pdt
+              ON LOWER(TRIM(vd.delay_name)) = LOWER(TRIM(pdt.name))
+            WHERE (vd.delay_name IS NOT NULL AND TRIM(vd.delay_name) <> '')
+               OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) <> '')
+        """)
+        delay_rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    data = {}
+
+    def ensure(vcn_no):
+        key = _norm_vcn(vcn_no)
+        if not key:
+            return None
+        if key not in data:
+            data[key] = {
+                'port_preberth_hours': 0.0,
+                'agent_hours': 0.0,
+                'stay_hours': 0.0,
+                'working_hours': 0.0,
+            }
+        return data[key]
+
+    # Calculate operational base values from the actual timestamps.
+    for r in milestone_rows:
+        cast = _parse_dt(r['cast_off_datetime'])
+        if not cast:
+            continue
+
+        fy_start = cast.year if cast.month >= 4 else cast.year - 1
+        row_fy = f"{fy_start}-{(fy_start + 1) % 100:02d}"
+        if row_fy != fin_year:
+            continue
+
+        item = ensure(r['vcn_no'])
+        if item is None:
+            continue
+
+        anchored_or_nor = _parse_dt(r['anchored_datetime']) or _parse_dt(r['nor_tendered'])
+        pilot = _parse_dt(r['pilot_pickup_time'])
+        alongside = _parse_dt(r['alongside_datetime'])
+        commenced = _parse_dt(r['discharge_commenced'])
+        completed = _parse_dt(r['discharge_completed'])
+
+        # Pre-berthing Port time: Anchorage/NOR -> Pilot Pickup.
+        if anchored_or_nor and pilot and pilot > anchored_or_nor:
+            item['port_preberth_hours'] += (pilot - anchored_or_nor).total_seconds() / 3600.0
+
+        # Stay at berth: Alongside -> Cast Off.
+        if alongside and cast > alongside:
+            item['stay_hours'] += (cast - alongside).total_seconds() / 3600.0
+
+        # Working time: Cargo/Discharge Commenced -> Completed.
+        if commenced and completed and completed > commenced:
+            item['working_hours'] += (completed - commenced).total_seconds() / 3600.0
+
+    # Calculate original delay totals by responsibility/account.
+    for r in delay_rows:
+        d_start = _parse_dt(r['delay_start'])
+        d_end = _parse_dt(r['delay_end'])
+        if not d_start or not d_end or d_end <= d_start:
+            continue
+
+        item = ensure(r['vcn_no'])
+        if item is None:
+            continue
+
+        hours = (d_end - d_start).total_seconds() / 3600.0
+        account = str(r['delay_account'] or 'Port').strip().upper()
+        if account == 'AGENT':
+            item['agent_hours'] += hours
+        elif account == 'PORT':
+            item['port_preberth_hours'] += hours
+
+    return data
 
 
 def build_report_data(fin_year: str):
@@ -216,6 +346,10 @@ def build_report_data(fin_year: str):
         if fy not in avail_years:
             avail_years.append(fy)
     avail_years.sort(reverse=True)
+
+    # Load raw Report-3 time/delay values once.  All categories/months use the
+    # same database source, while the existing row classification remains unchanged.
+    db_time_data = _load_report3_db_time_data(fin_year)
 
     m_opts = month_options_for(fin_year)
     m_labels = [opt["label"] for opt in m_opts]
@@ -269,50 +403,70 @@ def build_report_data(fin_year: str):
 
         # -----------------------------------------------------------------
         # Report-3 BASE TOTALS
-        #
-        # All stored time values are in DAYS in mis_vessel_master.
-        # First convert each summed base value to HOURS, then convert the
-        # TOTAL back to DAYS by /24. This keeps every time calculation in
-        # the same base-unit flow as the reference Excel report.
         # -----------------------------------------------------------------
-        wp_vals = [float(r['waiting_port']) for r in rlist if r.get('waiting_port') is not None]
-        wnp_vals = [float(r['waiting_non_port']) for r in rlist if r.get('waiting_non_port') is not None]
-        sab_vals = [float(r['stay_at_berth']) for r in rlist if r.get('stay_at_berth') is not None]
-        wt_vals = [float(r['working_time']) for r in rlist if r.get('working_time') is not None]
-        qty_vals = [float(r['quantity']) for r in rlist if r.get('quantity') is not None]
+        # PORT = Anchorage/NOR -> Pilot Pickup + original Port-account delays.
+        # AGENT = original Agent-account delays.
+        # Stay and working time are calculated from the actual ldud_header
+        # timestamps.  The existing master values are retained only as a
+        # fallback when a vessel has no matching raw timestamp data.
+        port_total_hours = 0.0
+        agent_total_hours = 0.0
+        stay_total_hours = 0.0
+        working_total_hours = 0.0
+        idle_total_hours = 0.0
+        matched_time_rows = 0
 
-        # Base totals in HOURS
-        port_total_hours = sum(wp_vals) * 24.0
-        agent_total_hours = sum(wnp_vals) * 24.0
-        stay_total_hours = sum(sab_vals) * 24.0
-        working_total_hours = sum(wt_vals) * 24.0
+        fallback_port_hours = 0.0
+        fallback_agent_hours = 0.0
+        fallback_stay_hours = 0.0
+        fallback_working_hours = 0.0
 
-        # Base totals converted back to DAYS
+        for r in rlist:
+            key = _norm_vcn(r.get('vcn_no'))
+            dbv = db_time_data.get(key)
+
+            if dbv is not None:
+                matched_time_rows += 1
+                port_h = float(dbv.get('port_preberth_hours') or 0.0)
+                agent_h = float(dbv.get('agent_hours') or 0.0)
+                stay_h = float(dbv.get('stay_hours') or 0.0)
+                working_h = float(dbv.get('working_hours') or 0.0)
+
+                port_total_hours += port_h
+                agent_total_hours += agent_h
+                stay_total_hours += stay_h
+                working_total_hours += working_h
+                idle_total_hours += max(0.0, stay_h - working_h)
+            else:
+                # Preserve the old master/live values only for records that
+                # cannot be matched to an ldud_header/vcn_header record.
+                fallback_port_hours += float(r.get('waiting_port') or 0.0) * 24.0
+                fallback_agent_hours += float(r.get('waiting_non_port') or 0.0) * 24.0
+                fallback_stay_hours += float(r.get('stay_at_berth') or 0.0) * 24.0
+                fallback_working_hours += float(r.get('working_time') or 0.0) * 24.0
+
+        port_total_hours += fallback_port_hours
+        agent_total_hours += fallback_agent_hours
+        stay_total_hours += fallback_stay_hours
+        working_total_hours += fallback_working_hours
+        idle_total_hours += max(0.0, fallback_stay_hours - fallback_working_hours)
+
+        # Base totals converted to DAYS, matching the reference Excel flow.
         port_total_days = port_total_hours / 24.0
         agent_total_days = agent_total_hours / 24.0
         stay_total_days = stay_total_hours / 24.0
         working_total_days = working_total_hours / 24.0
+        non_working_total_days = idle_total_hours / 24.0
 
-        # Non-working / idle base total.
-        # Calculate vessel-level difference first, matching:
-        # U = S - T, then total U / 24.
-        non_working_total_hours = sum(
-            max(0.0, float(r.get('stay_at_berth') or 0.0) -
-                      float(r.get('working_time') or 0.0)) * 24.0
-            for r in rlist
-        )
-        non_working_total_days = non_working_total_hours / 24.0
-
-        traffic = sum(qty_vals)
+        traffic = sum(float(r.get('quantity') or 0.0) for r in rlist)
 
         # -----------------------------------------------------------------
         # Report-3 FINAL FORMULAS
         # -----------------------------------------------------------------
-
-        # PORT = Total Port Pre-Berthing Time / Vessels Sailed
+        # PORT = Total Port Pre-Berthing Time / 24 / Vessels Sailed
         port_wait = (port_total_days / vsl_sailed) if vsl_sailed > 0 else 0.0
 
-        # AGENT = Total Agent/Non-Port Pre-Berthing Time / Vessels Sailed
+        # AGENT = Total Agent Time / 24 / Vessels Sailed
         agent_wait = (agent_total_days / vsl_sailed) if vsl_sailed > 0 else 0.0
 
         # AVG. BERTH. WAIT = PORT + AGENT
@@ -320,9 +474,6 @@ def build_report_data(fin_year: str):
 
         # STAY AT BERTH = Total Berth Stay / 24
         stay_at_berth = stay_total_days
-
-        # Working time base value is retained for the idle calculation.
-        working_time = working_total_days
 
         # TURN ROUND (PORT) = STAY AT BERTH + PORT
         turn_round_port = stay_at_berth + port_wait
