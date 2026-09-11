@@ -610,14 +610,18 @@ def _proforma_mail_html(ctx):
     """Covering note — the figures live in the attached PDF."""
     greeting = (ctx['customer'].get('contact_person')
                 or ctx['customer'].get('name') or 'Sir/Madam')
-    def _tr(label, amount, weight='400'):
-        return (f'<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;'
-                f'font-weight:{weight};">{label}</td>'
+    def _tr(label, amount, weight='400', pad=10):
+        return (f'<tr><td style="padding:5px 10px 5px {pad}px;'
+                f'border-bottom:1px solid #e2e8f0;font-weight:{weight};">{label}</td>'
                 f'<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;'
                 f'text-align:right;font-weight:{weight};">'
                 f'{"" if amount is None else "Rs. " + _inr(amount)}</td></tr>')
 
-    rows = ''.join(_tr(r['label'], r['amount']) for r in ctx['rows'])
+    # Same shape as the PDF: service heading, then the cargo it was charged on.
+    rows = ''.join(_tr(r['label'], r['amount'],
+                       weight='400' if r.get('indent') else '600',
+                       pad=26 if r.get('indent') else 10)
+                   for r in ctx['rows'])
     if ctx['tax_rows']:
         rows += _tr('Sub Total', ctx['subtotal'], '600')
         rows += ''.join(_tr(t['label'], t['amount']) for t in ctx['tax_rows'])

@@ -90,12 +90,26 @@ class _PI(FPDF):
                       new_x=XPos.LMARGIN if last else XPos.RIGHT,
                       new_y=YPos.NEXT if last else YPos.TOP)
 
+    def fit(self, text, width, style='', size=9.0, floor=6.0):
+        """Set a font that fits `text` into `width`, and return the text to
+        draw. Cargo descriptions run long — 'INDUSTRIAL / AUTOMOTIVE LUBRICANTS
+        (DIVY OLBS 150)' overflows the Particulars column at the body size — so
+        shrink first, and only clip once shrinking runs out."""
+        self.set_font('helvetica', style, size)
+        while size > floor and self.get_string_width(text) > width:
+            size -= 0.25
+            self.set_font('helvetica', style, size)
+        while len(text) > 1 and self.get_string_width(text) > width:
+            text = text[:-1]
+        return text
+
     def body_row(self, label, qty, rate, amount, bold=False, underline=False,
                  indent=False, h=ROW_H):
         style = ('B' if bold else '') + ('U' if underline else '')
-        self.set_font('helvetica', style, 9)
-        self.cell(COL_PART, h, _l1(('     ' if indent else '') + (label or '')),
-                  border='LR', align='L', new_x=XPos.RIGHT, new_y=YPos.TOP)
+        text = self.fit(_l1(('    ' if indent else '') + (label or '')),
+                        COL_PART - 3, style=style)
+        self.cell(COL_PART, h, text, border='LR', align='L',
+                  new_x=XPos.RIGHT, new_y=YPos.TOP)
         self.set_font('helvetica', 'B' if bold else '', 9)
         for w, val in ((COL_QTY, qty), (COL_RATE, rate), (COL_AMT, amount)):
             self.cell(w, h, _l1(val or ''), border='LR', align='R',
@@ -107,9 +121,11 @@ def group_lines(lines):
     """Club the billable lines by service type instead of the per-parcel
     hopscotch the billables engine emits (P1/handling, P1/infra, P2/handling…).
 
-    One row per service when every parcel shares the rate — the shape of the
-    manual pro forma. When cargo-specific rates differ inside a service, the
-    service becomes a heading with one row per cargo, so nothing is averaged.
+    Each service becomes a heading, with the cargo it was charged on listed
+    underneath: parcels of the same cargo merge into one row, and a cargo
+    priced differently from its neighbours keeps its own row instead of being
+    averaged into them. The heading carries no figures — the cargo rows do, so
+    they sum to the Sub Total without double counting.
     """
     order, groups = [], {}
     for l in lines:
@@ -126,15 +142,9 @@ def group_lines(lines):
         # GST is a property of the service, so it is constant across the group
         # and rides onto every row the group emits.
         gst = {k: members[0].get(k) for k in ('cgst_rate', 'sgst_rate', 'igst_rate')}
-        rates = {round(float(l.get('rate') or 0), 4) for l in members}
-        if len(rates) == 1:
-            rate = float(members[0].get('rate') or 0)
-            qty = round(sum(float(l.get('qty') or 0) for l in members), 3)
-            rows.append({'label': name, 'indent': False, 'qty': qty,
-                         'rate': rate, 'amount': round(qty * rate, 2), **gst})
-            continue
         rows.append({'label': name, 'indent': False,
                      'qty': None, 'rate': None, 'amount': None, **gst})
+
         by_cargo, cargo_order = {}, []
         for l in members:
             ck = (l.get('cargo_name') or name, round(float(l.get('rate') or 0), 4))
@@ -142,9 +152,8 @@ def group_lines(lines):
                 cargo_order.append(ck)
                 by_cargo[ck] = []
             by_cargo[ck].append(l)
-        for ck in cargo_order:
-            cargo, rate = ck
-            qty = round(sum(float(x.get('qty') or 0) for x in by_cargo[ck]), 3)
+        for cargo, rate in cargo_order:
+            qty = round(sum(float(x.get('qty') or 0) for x in by_cargo[(cargo, rate)]), 3)
             rows.append({'label': cargo, 'indent': True, 'qty': qty,
                          'rate': rate, 'amount': round(qty * rate, 2), **gst})
     return rows
@@ -237,7 +246,8 @@ def render(ctx):
             qty_fmt(r['qty']) if r['qty'] is not None else '',
             f"{float(r['rate']):,.2f}" if r['rate'] is not None else '',
             inr(r['amount']) if r['amount'] is not None else '',
-            bold=True, indent=r.get('indent'))
+            # the service heading is bold; the cargo under it reads as detail
+            bold=not r.get('indent'), indent=r.get('indent'))
 
     pdf.body_row('', '', '', '')
     if ctx.get('sac_codes'):
@@ -309,29 +319,45 @@ def demo():
     assert split[0]['qty'] is None and split[1]['rate'] == 20.0
     assert round(sum(r['amount'] for r in split if r['amount']), 2) == 3500.0
 
+    # parcels of the SAME cargo merge into one row rather than repeating it
+    merged = group_lines([
+        {'service_code': 'CHGL01', 'service_name': 'Cargo Handling Loading',
+         'cargo_name': 'HEAVY MINERAL OIL', 'qty': 900.0, 'rate': 24.20},
+        {'service_code': 'CHGL01', 'service_name': 'Cargo Handling Loading',
+         'cargo_name': 'HEAVY MINERAL OIL', 'qty': 191.662, 'rate': 24.20},
+    ])
+    assert [r['label'] for r in merged] == ['Cargo Handling Loading', 'HEAVY MINERAL OIL']
+    assert merged[1]['qty'] == 1091.662
+
     assert inr(71148) == '71,148' and inr(305843.5) == '3,05,843.50'
 
-    # --- the real document: two parcels of one vessel, clubbed to two rows ---
+    # --- the real document: two parcels of one vessel, clubbed by service ---
+    # A long cargo name, straight off the billables screen, to exercise the fit.
+    CARGO_A = 'INDUSTRIAL / AUTOMOTIVE LUBRICANTS (DIVY OLBS 150)'
+    CARGO_B = 'LIGHT WHITE OIL USP (SERVONEXGEN LITE) 4 CST'
     rows = group_lines([
         {'service_code': 'CHGL01', 'service_name': 'Cargo Handling Charges',
-         'cargo_name': 'CARGO A', 'qty': 1000.0, 'rate': 252.00,
+         'cargo_name': CARGO_A, 'qty': 1000.0, 'rate': 252.00,
          'cgst_rate': 9, 'sgst_rate': 9, 'igst_rate': 18},
         {'service_code': 'INFM01', 'service_name': 'Infrastructure and Miscellaneous Charges',
-         'cargo_name': 'CARGO A', 'qty': 1000.0, 'rate': 100.00,
+         'cargo_name': CARGO_A, 'qty': 1000.0, 'rate': 100.00,
          'cgst_rate': 9, 'sgst_rate': 9, 'igst_rate': 18},
         {'service_code': 'CHGL01', 'service_name': 'Cargo Handling Charges',
-         'cargo_name': 'CARGO B', 'qty': 470.0, 'rate': 252.00,
+         'cargo_name': CARGO_B, 'qty': 470.0, 'rate': 252.00,
          'cgst_rate': 9, 'sgst_rate': 9, 'igst_rate': 18},
         {'service_code': 'INFM01', 'service_name': 'Infrastructure and Miscellaneous Charges',
-         'cargo_name': 'CARGO B', 'qty': 470.0, 'rate': 100.00,
+         'cargo_name': CARGO_B, 'qty': 470.0, 'rate': 100.00,
          'cgst_rate': 9, 'sgst_rate': 9, 'igst_rate': 18},
     ])
-    assert [r['label'] for r in rows] == ['Cargo Handling Charges',
-                                          'Infrastructure and Miscellaneous Charges'], rows
-    assert rows[0]['qty'] == 1470.0 and rows[0]['amount'] == 370440.0
-    assert rows[1]['amount'] == 147000.0
+    # each service heads its own block, with the cargo named underneath
+    assert [r['label'] for r in rows] == [
+        'Cargo Handling Charges', CARGO_A, CARGO_B,
+        'Infrastructure and Miscellaneous Charges', CARGO_A, CARGO_B], rows
+    assert [r['indent'] for r in rows] == [False, True, True, False, True, True]
+    assert rows[0]['amount'] is None, 'heading must not double count'
+    assert rows[1]['amount'] == 252000.0 and rows[2]['amount'] == 118440.0
 
-    subtotal = round(sum(r['amount'] for r in rows), 2)
+    subtotal = round(sum(r['amount'] for r in rows if r['amount'] is not None), 2)
     assert subtotal == 517440.0
     tax = tax_lines(rows, intra_state=True)
     assert [t['label'] for t in tax] == ['ADD: C-GST 9%', 'ADD: S-GST 9%'], tax
