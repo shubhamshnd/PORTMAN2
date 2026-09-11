@@ -448,7 +448,7 @@ def _proforma_ctx(customer_type, customer_id, vcn_id, picked):
     conn = get_db()
     cur = get_cursor(conn)
     tbl = 'vessel_customers' if customer_type == 'Customer' else 'vessel_agents'
-    cur.execute(f"""SELECT name, gstin, billing_address, city, pincode,
+    cur.execute(f"""SELECT name, gstin, gst_state_code, billing_address, city, pincode,
                            contact_email, contact_person
                     FROM {tbl} WHERE id=%s""", [customer_id])
     cust = dict(cur.fetchone() or {})
@@ -459,6 +459,10 @@ def _proforma_ctx(customer_type, customer_id, vcn_id, picked):
     subtotal = round(sum(r['amount'] for r in rows if r['amount'] is not None), 2)
     sac_codes = sorted({l['sac_code'] for l in vessel['lines'] if l.get('sac_code')})
 
+    config = get_module_config('FIN01')
+    tax_rows = proforma_pdf.tax_lines(rows, _is_intra_state(cust, config))
+    total = round(subtotal + sum(t['amount'] for t in tax_rows), 2)
+
     now = datetime.now()
     fy = (f'{now.year % 100}-{(now.year + 1) % 100:02d}' if now.month >= 4
           else f'{(now.year - 1) % 100}-{now.year % 100:02d}')
@@ -466,7 +470,6 @@ def _proforma_ctx(customer_type, customer_id, vcn_id, picked):
     # pro forma register if finance wants sequential PI numbers
     ref_no = f"JJLTPL/PI/{fy}/{vessel['vcn_doc_num']}"
 
-    config = get_module_config('FIN01')
     return {
         'vessel': vessel,
         'vessel_name': vessel.get('vessel_name') or vessel['vcn_doc_num'],
@@ -476,11 +479,38 @@ def _proforma_ctx(customer_type, customer_id, vcn_id, picked):
         'date_str': now.strftime('%d.%m.%Y'),
         'sac_codes': ', '.join(sac_codes),
         'subtotal': subtotal,
-        'amount_words': _amount_in_words(subtotal),
+        'tax_rows': tax_rows,
+        'total': total,
+        'amount_words': _amount_in_words(total),
+        # The escalation note is about the cargo handling rate, so it prints
+        # only when the document actually carries a cargo handling line.
+        'escalation_note': (
+            (config.get('escalation_note') or proforma_pdf.ESCALATION_NOTE)
+            if any(l['service_code'] in ('CHGU01', 'CHGL01') for l in vessel['lines'])
+            else ''),
+        'signature_note': config.get('signature_note') or proforma_pdf.SIGNATURE_NOTE,
         'seller_gstin': config.get('seller_gstin') or _PI_GSTIN,
         'seller_pan': config.get('seller_pan') or _PI_PAN,
         'payment_note': config.get('payment_note') or _PI_PAYMENT_NOTE,
     }, None, None
+
+
+def _is_intra_state(cust, config):
+    """CGST+SGST when the customer is in the port's state, IGST otherwise.
+
+    Same precedence as save_bill_line — explicit state code, then the GSTIN
+    prefix, then intra-state as the default when neither is on record."""
+    port = (str(config.get('port_gst_state_code') or '').strip()
+            or str(config.get('seller_gstin') or _PI_GSTIN)[:2])
+    state = str(cust.get('gst_state_code') or '').strip()
+    gstin = str(cust.get('gstin') or '').strip()
+    if not port:
+        return True
+    if state:
+        return state == port
+    if gstin:
+        return gstin[:2] == port
+    return True
 
 
 def _proforma_filename(ctx):
@@ -515,7 +545,7 @@ def proforma_invoice(customer_type, customer_id, vcn_id):
         ref_no=ctx['ref_no'],
         customer=ctx['customer'],
         vessel_name=ctx['vessel_name'],
-        subtotal_fmt=_inr(ctx['subtotal']),
+        subtotal_fmt=_inr(ctx['total']),
         no_rate=any(r['rate'] == 0 for r in ctx['rows'] if r['rate'] is not None))
 
 
@@ -565,7 +595,7 @@ def send_proforma(customer_type, customer_id, vcn_id):
     queue_mail(
         to_email,
         ctx['customer'].get('contact_person') or ctx['customer'].get('name'),
-        f"Pro-Forma Invoice {ctx['ref_no']} - {ctx['vessel_name']} - Rs. {_inr(ctx['subtotal'])}",
+        f"Pro-Forma Invoice {ctx['ref_no']} - {ctx['vessel_name']} - Rs. {_inr(ctx['total'])}",
         _proforma_mail_html(ctx),
         module_code='FIN01',
         ref_id=vcn_id,
@@ -580,11 +610,17 @@ def _proforma_mail_html(ctx):
     """Covering note — the figures live in the attached PDF."""
     greeting = (ctx['customer'].get('contact_person')
                 or ctx['customer'].get('name') or 'Sir/Madam')
-    rows = ''.join(
-        f'<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;">{r["label"]}</td>'
-        f'<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">'
-        f'{"" if r["amount"] is None else "Rs. " + _inr(r["amount"])}</td></tr>'
-        for r in ctx['rows'])
+    def _tr(label, amount, weight='400'):
+        return (f'<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;'
+                f'font-weight:{weight};">{label}</td>'
+                f'<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;'
+                f'text-align:right;font-weight:{weight};">'
+                f'{"" if amount is None else "Rs. " + _inr(amount)}</td></tr>')
+
+    rows = ''.join(_tr(r['label'], r['amount']) for r in ctx['rows'])
+    if ctx['tax_rows']:
+        rows += _tr('Sub Total', ctx['subtotal'], '600')
+        rows += ''.join(_tr(t['label'], t['amount']) for t in ctx['tax_rows'])
     return f"""
 <div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1a202c;">
   <p>Dear {greeting},</p>
@@ -593,7 +629,7 @@ def _proforma_mail_html(ctx):
   <table style="border-collapse:collapse;font-size:13px;margin:14px 0;min-width:340px;">
     {rows}
     <tr><td style="padding:7px 10px;font-weight:700;">Total</td>
-        <td style="padding:7px 10px;font-weight:700;text-align:right;">Rs. {_inr(ctx['subtotal'])}</td></tr>
+        <td style="padding:7px 10px;font-weight:700;text-align:right;">Rs. {_inr(ctx['total'])}</td></tr>
   </table>
   <p style="font-size:12px;color:#4a5568;">{ctx['payment_note']}</p>
   <p style="font-size:12px;color:#718096;">
