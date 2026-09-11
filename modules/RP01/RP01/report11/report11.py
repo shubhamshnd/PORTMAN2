@@ -156,16 +156,22 @@ def _fetch_live_idle_by_parcel_op(cur, parcel_op_ids):
 
 
 def _fetch_live_rows(cur):
-    """Vessel-call rows built from LDUD/VCN for months not yet migrated
-    into mis_vessel_master.
+    """Build Report-11 vessel-call rows from LDUD/VCN.
 
-    quantity is the ACTUAL discharged quantity from lueu_parcel_log
-    (excluding is_shortclose = true entries), falling back to the
-    originally declared po.quantity only if no log entries exist yet.
-    Financial year and month are derived from cast_off_datetime."""
+    Correct Report-11 timing formulas:
+      - Port pre-berthing = Pilot Pickup - Anchorage (or NOR Tendered)
+        + Port-responsibility Pre-Berthing Delays.
+      - Non-Port pre-berthing = Agent-responsibility Pre-Berthing Delays.
+      - Berth stay = Cast Off - Alongside.
+      - Working time = last parcel end - first parcel start.
+      - Inward = Alongside - Pilot Pickup.
+      - Outward = Pilot Disembarked - Cast Off.
+      - Working-berth idle = Berth stay - Working time, assigned to Port.
+    """
     cur.execute("""
         SELECT
             lh.id AS ldud_id,
+            lh.vcn_id AS vcn_id,
             po.id AS parcel_op_id,
             vh.berth_name AS berth_no,
             vh.operation_type AS import_export,
@@ -180,10 +186,12 @@ def _fetch_live_rows(cur):
             COALESCE(actual.real_qty, po.quantity::numeric) AS quantity,
             lh.nor_tendered AS nor_tendered,
             lh.nor_accepted AS nor_accepted,
+            lh.anchored_datetime AS anchored_datetime,
             lh.alongside_datetime AS alongside_datetime,
             lh.cast_off_datetime AS cast_off_datetime,
             lh.pilot_pickup_time AS pilot_pickup_time,
             lh.pilot_board_departure AS pilot_board_departure,
+            lh.pilot_disembarked AS pilot_disembarked,
             lh.created_date AS created_date
         FROM ldud_parcel_ops po
         JOIN ldud_header lh ON lh.id = po.ldud_id
@@ -191,37 +199,108 @@ def _fetch_live_rows(cur):
         LEFT JOIN (
             SELECT parcel_op_id, SUM(quantity) AS real_qty
             FROM lueu_parcel_log
-            WHERE is_deleted = false
-              AND is_shortclose = false
+            WHERE COALESCE(is_deleted, FALSE) = FALSE
+              AND COALESCE(is_shortclose, FALSE) = FALSE
             GROUP BY parcel_op_id
         ) actual
             ON actual.parcel_op_id = po.id
         LEFT JOIN vessel_cargo vc ON (
             UPPER(TRIM(vc.cargo_name)) = UPPER(TRIM(po.cargo_name))
             OR UPPER(TRIM(vc.cargo_code)) = UPPER(TRIM(po.cargo_name))
-            OR UPPER(TRIM(vc.cargo_name)) = UPPER(TRIM(REGEXP_REPLACE(po.cargo_name, '\\s*\\[.*\\]', '')))
-            OR UPPER(TRIM(vc.cargo_code)) = UPPER(TRIM(REGEXP_REPLACE(po.cargo_name, '\\s*\\[.*\\]', '')))
+            OR UPPER(TRIM(vc.cargo_name)) =
+               UPPER(TRIM(REGEXP_REPLACE(po.cargo_name, '\\s*\\[.*\\]', '')))
+            OR UPPER(TRIM(vc.cargo_code)) =
+               UPPER(TRIM(REGEXP_REPLACE(po.cargo_name, '\\s*\\[.*\\]', '')))
         )
         WHERE COALESCE(lh.is_deleted, FALSE) = FALSE
           AND lh.cast_off_datetime IS NOT NULL
           AND NULLIF(TRIM(lh.cast_off_datetime), '') IS NOT NULL
     """)
+
     raw = cur.fetchall()
     if not raw:
         return []
 
-    parcel_op_ids = [r["parcel_op_id"] for r in raw]
-    idle = _fetch_live_idle_by_parcel_op(cur, parcel_op_ids)
+    # Aggregate working time once per vessel call.
+    ldud_ids = list({r["ldud_id"] for r in raw if r.get("ldud_id") is not None})
+    working_by_ldud = {}
+    if ldud_ids:
+        cur.execute("""
+            SELECT
+                ldud_id,
+                MIN(NULLIF(TRIM(start_dt), '')::timestamp) AS first_start,
+                MAX(NULLIF(TRIM(end_dt), '')::timestamp) AS last_end
+            FROM ldud_parcel_ops
+            WHERE ldud_id = ANY(%s)
+              AND NULLIF(TRIM(start_dt), '') IS NOT NULL
+              AND NULLIF(TRIM(end_dt), '') IS NOT NULL
+            GROUP BY ldud_id
+        """, (ldud_ids,))
+
+        for w in cur.fetchall():
+            first_start = w["first_start"]
+            last_end = w["last_end"]
+            if first_start and last_end and last_end > first_start:
+                working_by_ldud[w["ldud_id"]] = (
+                    last_end - first_start
+                ).total_seconds() / 86400.0
+
+    # Aggregate Pre-Berthing Delays from the authoritative delay master.
+    # This avoids the old keyword classification and matches the Excel
+    # Port/Non-Port responsibility split.
+    vcn_ids = list({r["vcn_id"] for r in raw if r.get("vcn_id") is not None})
+    delay_by_vcn = {}
+    if vcn_ids:
+        cur.execute("""
+            SELECT
+                vd.vcn_id,
+                COALESCE(SUM(
+                    CASE
+                        WHEN pdt.type = 'Pre-Berthing Delays'
+                         AND pdt.responsibility = 'Port'
+                        THEN EXTRACT(EPOCH FROM (
+                            vd.delay_end::timestamp -
+                            vd.delay_start::timestamp
+                        )) / 86400.0
+                        ELSE 0
+                    END
+                ), 0) AS port_delay_days,
+                COALESCE(SUM(
+                    CASE
+                        WHEN pdt.type = 'Pre-Berthing Delays'
+                         AND pdt.responsibility = 'Agent'
+                        THEN EXTRACT(EPOCH FROM (
+                            vd.delay_end::timestamp -
+                            vd.delay_start::timestamp
+                        )) / 86400.0
+                        ELSE 0
+                    END
+                ), 0) AS non_port_delay_days
+            FROM vcn_delays vd
+            JOIN port_delay_types pdt
+              ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
+            WHERE vd.vcn_id = ANY(%s)
+              AND vd.delay_start IS NOT NULL
+              AND vd.delay_end IS NOT NULL
+            GROUP BY vd.vcn_id
+        """, (vcn_ids,))
+
+        for d in cur.fetchall():
+            delay_by_vcn[d["vcn_id"]] = {
+                "port": float(d["port_delay_days"] or 0.0),
+                "non_port": float(d["non_port_delay_days"] or 0.0),
+            }
 
     seen_ldud = set()
     rows = []
+
     for r in raw:
         nor_tendered = _parse_ts(r["nor_tendered"])
-        nor_accepted = _parse_ts(r["nor_accepted"])
         alongside = _parse_ts(r["alongside_datetime"])
         cast_off = _parse_ts(r["cast_off_datetime"])
+        anchored = _parse_ts(r["anchored_datetime"])
         pilot_pickup = _parse_ts(r["pilot_pickup_time"])
-        pilot_departure = _parse_ts(r["pilot_board_departure"])
+        pilot_disembarked = _parse_ts(r["pilot_disembarked"])
 
         dt = cast_off
         if not dt:
@@ -238,13 +317,56 @@ def _fetch_live_rows(cur):
         is_first_parcel = ldud_id not in seen_ldud
         seen_ldud.add(ldud_id)
 
-        waiting_non_port = _days_between(nor_tendered, nor_accepted) if is_first_parcel else 0.0
-        waiting_port = _days_between(nor_accepted, alongside) if is_first_parcel else 0.0
-        stay_at_berth = _days_between(alongside, cast_off) if is_first_parcel else 0.0
-        inward_movement = _days_between(pilot_pickup, alongside) if is_first_parcel else 0.0
-        outward_movement = _days_between(pilot_departure, cast_off) if is_first_parcel else 0.0
+        delay = delay_by_vcn.get(
+            r["vcn_id"],
+            {"port": 0.0, "non_port": 0.0}
+        )
 
-        idle_bucket = idle.get(r["parcel_op_id"], {"port": 0.0, "non_port": 0.0})
+        # Base Port waiting: Anchorage -> Pilot Pickup.
+        # If Anchorage is unavailable, use NOR Tendered -> Pilot Pickup.
+        pbw_start = anchored or nor_tendered
+        base_port_waiting = (
+            _days_between(pbw_start, pilot_pickup)
+            if is_first_parcel else 0.0
+        )
+
+        waiting_port = (
+            base_port_waiting + delay["port"]
+            if is_first_parcel else 0.0
+        )
+        waiting_non_port = (
+            delay["non_port"]
+            if is_first_parcel else 0.0
+        )
+
+        stay_at_berth = (
+            _days_between(alongside, cast_off)
+            if is_first_parcel else 0.0
+        )
+
+        inward_movement = (
+            _days_between(pilot_pickup, alongside)
+            if is_first_parcel else 0.0
+        )
+
+        # Correct Excel/reference formula:
+        # Pilot Disembarked - Cast Off.
+        outward_movement = (
+            _days_between(cast_off, pilot_disembarked)
+            if is_first_parcel else 0.0
+        )
+
+        working_time = (
+            working_by_ldud.get(ldud_id, 0.0)
+            if is_first_parcel else 0.0
+        )
+
+        # Correct working-berth idle:
+        # Berth Stay - Working Time.
+        idle_working_berth = max(
+            stay_at_berth - working_time,
+            0.0
+        ) if is_first_parcel else 0.0
 
         rows.append({
             "vessel_call_id": f"live_{ldud_id}",
@@ -267,11 +389,12 @@ def _fetch_live_rows(cur):
             "stay_at_berth": stay_at_berth,
             "inward_movement": inward_movement,
             "outward_movement": outward_movement,
-            "non_working_port": idle_bucket["port"],
-            "non_working_non_port": idle_bucket["non_port"],
+            "working_time": working_time,
+            "non_working_port": idle_working_berth,
+            "non_working_non_port": 0.0,
         })
-    return rows
 
+    return rows
 
 def _parse_ts(val):
     """LDUD header fields are free-text ISO-ish datetimes ('2026-07-12T14:40')
@@ -392,6 +515,19 @@ def load_data() -> pd.DataFrame:
         for r in live_rows:
             r["broad_category"] = classify_broad_category_live(r)
 
+        # Live LDUD data is the authoritative source for months that have
+        # not been migrated to mis_vessel_master.  Do not add both sources
+        # for the same FY/month, otherwise vessel/timing totals are duplicated.
+        live_periods = {
+            (r.get("fin_year"), r.get("month"))
+            for r in live_rows
+        }
+        if live_periods:
+            mis_rows = [
+                r for r in mis_rows
+                if (r.get("fin_year"), r.get("month")) not in live_periods
+            ]
+
         rows = mis_rows + live_rows
     finally:
         conn.close()
@@ -408,12 +544,15 @@ def load_data() -> pd.DataFrame:
     df = pd.DataFrame(rows)
     print(f"REPORT11 DEBUG: rows fetched from DB: {len(df)}")
 
+    if "working_time" not in df.columns:
+        df["working_time"] = 0.0
+
     df["fin_year"] = df["fin_year"].str.strip()
     df["fy_month_idx"] = df["month"].apply(month_str_to_idx)
 
     numeric_cols = [
         "quantity", "pre_berthing_waiting", "waiting_port", "waiting_non_port",
-        "stay_at_berth", "inward_movement", "outward_movement",
+        "stay_at_berth", "inward_movement", "outward_movement", "working_time",
         "non_working_port", "non_working_non_port",
     ]
     for c in numeric_cols:
@@ -459,6 +598,7 @@ def compute_section_a_month(df, fin_year, month_idx):
         "Total Crane deplyoed hours (For Crane Productivity)": 0.0,
         "Vessel Inward movement (Total)": round(float(m["inward_movement"].sum()) * 24, 3),
         "Vessel Outward movement (Total)": round(float(m["outward_movement"].sum()) * 24, 3),
+        "Working Time": round(float(m["working_time"].sum()) * 24, 3),
         "Idle time at working berth on Port A/c.": round(float(m["non_working_port"].sum()) * 24, 3),
         "Idle time at working berth on Non-Port A/c.": round(float(m["non_working_non_port"].sum()) * 24, 3),
         "Idle time at Non-working berth on Port A/c.": 0.0,
@@ -507,6 +647,7 @@ def compute_section_a_fy(df, fin_year):
         "Total Crane deplyoed hours (For Crane Productivity)": 0.0,
         "Vessel Inward movement (Total)": round(float(m["inward_movement"].sum()) * 24, 3),
         "Vessel Outward movement (Total)": round(float(m["outward_movement"].sum()) * 24, 3),
+        "Working Time": round(float(m["working_time"].sum()) * 24, 3),
         "Idle time at working berth on Port A/c.": round(float(m["non_working_port"].sum()) * 24, 3),
         "Idle time at working berth on Non-Port A/c.": round(float(m["non_working_non_port"].sum()) * 24, 3),
         "Idle time at Non-working berth on Port A/c.": 0.0,
