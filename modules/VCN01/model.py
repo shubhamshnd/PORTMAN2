@@ -419,12 +419,14 @@ def get_delay_window(vcn_id):
     must fall inside. Either may be unset; the UI then enforces only what it has."""
     conn = get_db()
     cur = get_cursor(conn)
-    cur.execute('''SELECT anchored_datetime, pilot_pickup_time FROM ldud_header
+    cur.execute('''SELECT anchored_datetime, pilot_pickup_time, nor_accepted FROM ldud_header
                    WHERE vcn_id=%s AND is_deleted IS NOT TRUE ORDER BY id DESC LIMIT 1''', [vcn_id])
     row = cur.fetchone() or {}
     conn.close()
     return {'anchored': row.get('anchored_datetime') or '',
-            'pilot_pickup': row.get('pilot_pickup_time') or ''}
+            'pilot_pickup': row.get('pilot_pickup_time') or '',
+            # display only — NOR Accepted doesn't bound the delay window
+            'nor_accepted': row.get('nor_accepted') or ''}
 
 
 def get_export_parcel(row_id):

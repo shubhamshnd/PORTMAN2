@@ -1169,14 +1169,15 @@
         const el = document.getElementById(`delay-window-${vcnId}`);
         if (!el) return;
         const w = delayWindows[vcnId] || {};
-        if (!w.anchored && !w.pilot_pickup) {
+        if (!w.anchored && !w.pilot_pickup && !w.nor_accepted) {
             el.innerHTML = '<span style="color:#a0aec0;">No Anchorage / Pilot Pickup time in LDUD01 yet — delay times are unbounded.</span>';
             return;
         }
         const chip = (label, v) => `<span style="display:inline-block;background:#edf2f7;border-radius:10px;padding:1px 9px;margin-right:6px;">`
             + `${label}: <b>${v ? formatDateTime(v) : '—'}</b></span>`;
         el.innerHTML = chip('Anchorage', w.anchored) + chip('Pilot Pickup', w.pilot_pickup)
-            + '<span style="color:#718096;">delays must fall inside this window</span>';
+            + chip('NOR Accepted', w.nor_accepted)
+            + '<span style="color:#718096;">delays must fall inside the Anchorage → Pilot Pickup window</span>';
     }
 
     // Delay times must sit inside the LDUD window, and End must follow Start.
@@ -1211,6 +1212,12 @@
                 + '. Excluded from billing, closure and cargo totals.';
         }
     }
+
+    // Qty total on top of the parcel tables — parcels removed in LUEU01 don't count.
+    const qtyTopCalc = (values, data) =>
+        data.reduce((s, r) => r.is_removed ? s : s + (parseFloat(r.quantity) || 0), 0);
+    const QTY_TOTAL = {topCalc: qtyTopCalc, topCalcFormatter: "money",
+                       topCalcFormatterParams: {precision: 3, thousand: ","}};
 
     async function initSubTables(vcnId, operationType = 'Import') {
         const _vcnRow = table.getRows().find(r => r.getData().id === vcnId);
@@ -1256,7 +1263,7 @@
                 {title: "Cargo Name", field: "cargo_name", widthGrow: 1.2, editor: canEdit ? "list" : false,
                     editorParams: {values: cargoOptions, autocomplete: true, allowEmpty: true, listOnEmpty: true}
                 },
-                {title: "Qty (MT)", field: "quantity", widthGrow: 0.8, hozAlign: "right",
+                {title: "Qty (MT)", field: "quantity", widthGrow: 0.8, hozAlign: "right", ...QTY_TOTAL,
                     editor: canEdit ? "number" : false, editorParams: {min: 0, step: 0.001},
                     cellEdited: function(cell) {
                         // cap at 3 decimal places
@@ -1323,7 +1330,7 @@
         // Delays sit between LDUD01's Anchorage and Pilot Pickup times — fetch that
         // window so the grid can bound entry (and show operators what the bounds are).
         delayWindows[vcnId] = await fetch(`/api/module/VCN01/delay_window/${vcnId}`)
-            .then(r => r.json()).catch(() => ({anchored: '', pilot_pickup: ''}));
+            .then(r => r.json()).catch(() => ({anchored: '', pilot_pickup: '', nor_accepted: ''}));
         renderDelayWindow(vcnId);
 
         // Delays table
@@ -1384,7 +1391,7 @@
                     {title: "Cargo Name", field: "cargo_name", widthGrow: 1.2, editor: canEdit ? "list" : false,
                         editorParams: {values: cargoOptions, autocomplete: true, allowEmpty: true, listOnEmpty: true}
                     },
-                    {title: "Qty (MT)", field: "quantity", widthGrow: 0.8, hozAlign: "right",
+                    {title: "Qty (MT)", field: "quantity", widthGrow: 0.8, hozAlign: "right", ...QTY_TOTAL,
                         editor: canEdit ? "number" : false, editorParams: {min: 0, step: 0.001},
                         cellEdited: function(cell) {
                             const v = cell.getValue();
