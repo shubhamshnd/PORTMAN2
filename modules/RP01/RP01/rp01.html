@@ -493,6 +493,38 @@
             </div>
             <div class="card-action">Open Report &rarr;</div>
         </a>
+
+        <!-- Vessel Timing Details -->
+        <a href="/module/RP01/vessel-timing/" class="report-card">
+            <div>
+                <div class="card-top">
+                    <div class="card-icon">
+                        <img src="{{ url_for('static', filename='img/time.png') }}" alt="Vessel Timing Details Logo"
+                            class="card-logo-img">
+                    </div>
+                    <span class="card-badge">TIMINGS</span>
+                </div>
+                <div class="card-title">Vessel Timing Details</div>
+                <div class="card-desc">Detailed operational milestone timings including Arrival, NOR, Pilotage, Alongside, Customs/Agent clearance, Cargo Commenced/Completed, and Cast off.</div>
+            </div>
+            <div class="card-action">Open Report &rarr;</div>
+        </a>
+
+        <!-- Vessel Delay Report -->
+        <a href="/module/RP01/vessel-delay/" class="report-card">
+            <div>
+                <div class="card-top">
+                    <div class="card-icon">
+                        <img src="{{ url_for('static', filename='img/time.png') }}" alt="Vessel Delay Report Logo"
+                            class="card-logo-img">
+                    </div>
+                    <span class="card-badge" style="background:rgba(234, 88, 12, 0.1);color:#ea580c;">DELAYS</span>
+                </div>
+                <div class="card-title">Vessel Delay Report</div>
+                <div class="card-desc">Comprehensive log of vessel and port delays with Delay Name, Delay Type, Delay Account, Start/End Timestamps, and duration in hours.</div>
+            </div>
+            <div class="card-action" style="color:#ea580c;">Open Report &rarr;</div>
+        </a>
     </div>
 </div>
 

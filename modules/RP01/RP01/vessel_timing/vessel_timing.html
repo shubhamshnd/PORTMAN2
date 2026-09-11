@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+
+{% block title %}Vessel Timing Details — RP01{% endblock %}
+
+{% block head %}
+<style>
+    :root {
+        --rp-blue: #2F6FED;
+        --rp-blue-dark: #1D4FB8;
+        --rp-green: #16A34A;
+        --rp-green-dark: #0F7C38;
+        --rp-ink: #1F2937;
+        --rp-muted: #6B7280;
+        --rp-border: #DDE3EA;
+        --rp-bg: #F6F8FA;
+        --rp-card: #FFFFFF;
+        --rp-header-bg: #D9D9D9;
+        --rp-table-border: #444444;
+    }
+
+    .vt-wrap * { box-sizing: border-box; }
+    .vt-wrap { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding-bottom: 30px; }
+
+    /* Module Header */
+    .module-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--rp-border);
+    }
+    .module-header h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--rp-ink);
+    }
+    .module-header .rp-badge {
+        background: var(--rp-blue);
+        color: #fff;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+    }
+    .module-header .rp-back {
+        margin-left: auto;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--rp-blue);
+        text-decoration: none;
+    }
+    .module-header .rp-back:hover { text-decoration: underline; }
+
+    /* Toolbar matching Report-13 screenshot */
+    .jjltpl-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    .jjltpl-toolbar label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--rp-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        margin-right: 2px;
+    }
+
+    .jjltpl-toolbar select {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--rp-ink);
+        background: var(--rp-bg);
+        border: 1px solid var(--rp-border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        cursor: pointer;
+        outline: none;
+    }
+
+    .jjltpl-toolbar select:focus {
+        border-color: var(--rp-blue);
+    }
+
+    .jjltpl-toolbar button {
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 8px 16px;
+        border: none;
+        cursor: pointer;
+        color: #fff;
+        transition: background 0.15s ease, transform 0.1s ease;
+    }
+
+    .jjltpl-toolbar button:active {
+        transform: translateY(1px);
+    }
+
+    .jjltpl-load-btn {
+        background: var(--rp-blue);
+    }
+    .jjltpl-load-btn:hover {
+        background: var(--rp-blue-dark);
+    }
+
+    .jjltpl-export-btn {
+        background: var(--rp-green);
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .jjltpl-export-btn:hover {
+        background: var(--rp-green-dark);
+    }
+
+    #vtStatus {
+        font-size: 13px;
+        color: var(--rp-muted);
+        margin-bottom: 12px;
+        font-weight: 500;
+        min-height: 18px;
+    }
+
+    /* Table Container & Excel-like Layout */
+    .table-card {
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .table-container {
+        overflow-x: auto;
+        max-height: 720px;
+    }
+    table.vt-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        color: var(--rp-ink);
+        white-space: nowrap;
+    }
+    table.vt-table th, table.vt-table td {
+        border: 1px solid #444;
+        padding: 7px 10px;
+        vertical-align: middle;
+    }
+    table.vt-table thead tr.title-row th {
+        background: #D9D9D9;
+        font-size: 14px;
+        font-weight: bold;
+        text-align: center;
+        letter-spacing: 0.5px;
+        padding: 10px;
+        color: #000;
+    }
+    table.vt-table thead tr.header-row th {
+        background: #D9D9D9;
+        font-weight: bold;
+        text-align: center;
+        font-size: 12px;
+        color: #000;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+    table.vt-table tbody tr:hover {
+        background: #f1f5f9;
+    }
+    table.vt-table td.center { text-align: center; }
+    table.vt-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
+    table.vt-table td.vsl-name { font-weight: 600; }
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--rp-muted);
+        font-size: 14px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vt-wrap">
+    <!-- Header matching Image 2 -->
+    <div class="module-header">
+        <h2>Vessel Timing Details</h2>
+        <span class="rp-badge">RP01</span>
+        <a href="/module/RP01/" class="rp-back">&larr; Back to Reports</a>
+    </div>
+
+    <!-- Toolbar matching Report-13 Screenshot -->
+    <div class="jjltpl-toolbar">
+        <label for="yearSelect">YEAR</label>
+        <select id="yearSelect" onchange="loadData()"></select>
+
+        <label for="monthSelect">MONTH</label>
+        <select id="monthSelect" onchange="loadData()"></select>
+
+        <button class="jjltpl-load-btn" onclick="loadData()">Load</button>
+        <button class="jjltpl-export-btn" onclick="downloadExcel()">📊 Download Excel</button>
+    </div>
+
+    <div id="vtStatus"></div>
+
+    <!-- Table Card matching Image 1 layout -->
+    <div class="table-card">
+        <div class="table-container">
+            <table class="vt-table" id="vtTable">
+                <thead>
+                    <tr class="title-row">
+                        <th colspan="16">Vessel timing details</th>
+                    </tr>
+                    <tr class="header-row">
+                        <th style="width: 50px;">Sr No</th>
+                        <th>Vessel Name</th>
+                        <th>Qty</th>
+                        <th>Arrival</th>
+                        <th>NOR</th>
+                        <th>NOR Accepted</th>
+                        <th>Pilot pickup</th>
+                        <th>First line</th>
+                        <th>Along side</th>
+                        <th>Customs clearance</th>
+                        <th>Agent clearance</th>
+                        <th>Cargo commence time</th>
+                        <th>Cargo complete time</th>
+                        <th>Pilot board departure</th>
+                        <th>Cast off time</th>
+                        <th>Pilot disembarked</th>
+                    </tr>
+                </thead>
+                <tbody id="vtTbody">
+                    <tr>
+                        <td colspan="16" class="empty-state">Loading vessel timing data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let filterOptionsLoaded = false;
+
+    // Helper: calculate default Financial Year (e.g. 2026-27) and Month Index (0 for April, ..., 11 for March)
+    function getCurrentFinYearAndMonthIdx() {
+        const now = new Date();
+        const m = now.getMonth(); // 0 = Jan, 1 = Feb, ..., 7 = Aug, 8 = Sep
+        const y = now.getFullYear();
+        let finYear, monthIdx;
+
+        if (m >= 3) { // April (3) to December (11)
+            finYear = `${y}-${String((y + 1) % 100).padStart(2, '0')}`;
+            monthIdx = m - 3;
+        } else { // January (0) to March (2)
+            finYear = `${y - 1}-${String(y % 100).padStart(2, '0')}`;
+            monthIdx = m + 9;
+        }
+        return { finYear, monthIdx };
+    }
+
+    function initFilters(availableYears, months, defaultFinYear, defaultMonthIdx) {
+        const yearSelect = document.getElementById("yearSelect");
+        const monthSelect = document.getElementById("monthSelect");
+
+        // Populate Years
+        yearSelect.innerHTML = availableYears.map(y => `<option value="${y}">${y}</option>`).join("");
+        if (defaultFinYear && availableYears.includes(defaultFinYear)) {
+            yearSelect.value = defaultFinYear;
+        } else if (availableYears.length) {
+            yearSelect.value = availableYears[0];
+        }
+
+        // Populate Months (ALL + April, May, June...)
+        let opts = [];
+        if (!months.some(m => String(m.idx) === "ALL")) {
+            opts.push(`<option value="ALL">ALL</option>`);
+        }
+        opts = opts.concat(months.map(m => `<option value="${m.idx}">${m.label}</option>`));
+        monthSelect.innerHTML = opts.join("");
+
+        // By default, select CURRENT MONTH
+        if (defaultMonthIdx !== undefined && defaultMonthIdx !== null) {
+            monthSelect.value = String(defaultMonthIdx);
+        }
+
+        filterOptionsLoaded = true;
+    }
+
+    async function loadData() {
+        const yearSelect = document.getElementById('yearSelect');
+        const monthSelect = document.getElementById('monthSelect');
+        const statusEl = document.getElementById('vtStatus');
+        const tbody = document.getElementById('vtTbody');
+
+        const { finYear: curFY, monthIdx: curMIdx } = getCurrentFinYearAndMonthIdx();
+        const year = yearSelect.value || curFY;
+        const month = monthSelect.value !== undefined && monthSelect.value !== '' ? monthSelect.value : String(curMIdx);
+
+        statusEl.textContent = 'Loading data...';
+        statusEl.style.color = '#2F6FED';
+
+        try {
+            const resp = await fetch(`/api/module/RP01/vessel-timing/data?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to fetch data');
+            }
+            const data = await resp.json();
+
+            // Populate dropdowns once on first load
+            if (!filterOptionsLoaded) {
+                initFilters(
+                    data.available_years || [curFY],
+                    data.months || [],
+                    data.selected_year || curFY,
+                    data.current_month_idx !== undefined ? data.current_month_idx : curMIdx
+                );
+            }
+
+            renderTable(data.rows);
+
+            const monthObj = data.months ? data.months.find(m => String(m.idx) === String(month)) : null;
+            const monthLabel = (month === 'ALL' || (monthObj && monthObj.idx === 'ALL')) ? 'All Months' : (monthObj ? monthObj.label : month);
+            statusEl.textContent = `Showing ${data.rows.length} vessel records for ${monthLabel} (${year}).`;
+            statusEl.style.color = '#16A34A';
+        } catch (err) {
+            console.error(err);
+            statusEl.textContent = 'Error: ' + (err.message || 'Could not load data');
+            statusEl.style.color = '#c62828';
+            tbody.innerHTML = `<tr><td colspan="16" class="empty-state" style="color:#c62828;">Failed to load data.</td></tr>`;
+        }
+    }
+
+    function renderTable(rows) {
+        const tbody = document.getElementById('vtTbody');
+        tbody.innerHTML = '';
+
+        if (!rows || rows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="16" class="empty-state">No vessels found for the selected period.</td></tr>`;
+            return;
+        }
+
+        rows.forEach((r, index) => {
+            const tr = document.createElement('tr');
+            const qtyFormatted = r.quantity ? Number(r.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+            const srNo = r.sr_no !== undefined ? r.sr_no : (index + 1);
+
+            tr.innerHTML = `
+                <td class="center" style="font-weight: 500;">${srNo}</td>
+                <td class="vsl-name">${r.vessel_name || '-'}</td>
+                <td class="right">${qtyFormatted}</td>
+                <td class="center">${r.arrival || '-'}</td>
+                <td class="center">${r.nor || '-'}</td>
+                <td class="center">${r.nor_accepted || '-'}</td>
+                <td class="center">${r.pilot_pickup || '-'}</td>
+                <td class="center">${r.first_line || '-'}</td>
+                <td class="center">${r.alongside || '-'}</td>
+                <td class="center">${r.customs_clearance || '-'}</td>
+                <td class="center">${r.agent_clearance || '-'}</td>
+                <td class="center">${r.cargo_commenced || '-'}</td>
+                <td class="center">${r.cargo_completed || '-'}</td>
+                <td class="center">${r.pilot_board_departure || '-'}</td>
+                <td class="center">${r.cast_off || '-'}</td>
+                <td class="center">${r.pilot_disembarked || '-'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function downloadExcel() {
+        const yearSelect = document.getElementById('yearSelect');
+        const monthSelect = document.getElementById('monthSelect');
+        const { finYear: curFY, monthIdx: curMIdx } = getCurrentFinYearAndMonthIdx();
+
+        const year = yearSelect.value || curFY;
+        const month = monthSelect.value !== undefined && monthSelect.value !== '' ? monthSelect.value : String(curMIdx);
+
+        window.location.href = `/api/module/RP01/vessel-timing/export?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadData();
+    });
+</script>
+{% endblock %}

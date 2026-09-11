@@ -4,6 +4,7 @@
 
 {% block head %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
     .bpln-toolbar {
         display: flex;
@@ -290,8 +291,7 @@
 
 <div id="bplnStatus"></div>
 
-<div class="bpln-sheet">
-    <div class="bpln-sheet">
+<div class="bpln-sheet" id="reportSheet">
 
         <div class="bpln-title-block">
             <div class="line1">JSW JNPT LIQUID TERMINAL PRIVATE LIMITED</div>
@@ -538,9 +538,42 @@
             }
         });
 
-        function downloadPDF() {
+        async function downloadPDF() {
             toggleDownloadMenu();
-            window.print();   // @media print CSS hides toolbar/status, keeps the report sheet layout
+            const date = document.getElementById('bplnDate').value || todayStr();
+            const filename = `Berth_Plan_${date}.pdf`;
+            const element = document.getElementById('reportSheet');
+            const statusEl = document.getElementById('bplnStatus');
+
+            statusEl.textContent = 'Generating PDF, please wait...';
+            statusEl.style.color = '#1565c0';
+
+            try {
+                if (typeof html2pdf !== 'undefined') {
+                    const opt = {
+                        margin:       [4, 4, 4, 4],
+                        filename:     filename,
+                        image:        { type: 'jpeg', quality: 0.98 },
+                        html2canvas:  { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+                        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
+                    };
+                    await html2pdf().set(opt).from(element).save();
+                    statusEl.textContent = '';
+                } else {
+                    const origTitle = document.title;
+                    document.title = `Berth_Plan_${date}`;
+                    window.addEventListener('afterprint', () => {
+                        document.title = origTitle;
+                    }, { once: true });
+                    window.print();
+                    statusEl.textContent = '';
+                }
+            } catch (err) {
+                console.error('PDF error:', err);
+                statusEl.textContent = 'Failed generating direct PDF. Opening print dialog...';
+                statusEl.style.color = '#c62828';
+                window.print();
+            }
         }
 
         function appendTableToSheet(wsData, title, tableId) {
