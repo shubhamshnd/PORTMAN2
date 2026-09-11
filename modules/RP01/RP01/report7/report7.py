@@ -29,7 +29,7 @@ Section Breakdown:
      a) Inward Movement (Hrs)  [Pilot pick up to alongside]
      b) Outward Movement (Hrs) [Pilot disembark to castoff]
   8. Shifting Time
-  9. Turn Round Time (Hrs)-Total=(3+4+5+6+7+8)
+  9. Turn Round Time (Hrs)-Total=(3+4+5+6)
      a) Turn Round Time (Hrs)-Port a/c=(3(a)+4+5(a)+6(a)+7+8)
      b) Turn Round Time (Hrs)-N.P a/c=(3(b)+5(b)+6(b))
 """
@@ -112,7 +112,37 @@ def _load_live_pipeline_rows():
                    h.operation_type,
                    SUM(l.quantity) AS quantity,
                    MIN(po.start_dt) AS first_parcel_start,
-                   MAX(po.end_dt) AS last_parcel_end
+                   MAX(po.end_dt) AS last_parcel_end,
+                   COALESCE((
+                       SELECT SUM(
+                           EXTRACT(EPOCH FROM (
+                               vd.delay_end::timestamp - vd.delay_start::timestamp
+                           )) / 3600.0
+                       )
+                       FROM vcn_delays vd
+                       JOIN port_delay_types pdt
+                         ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
+                       WHERE vd.vcn_id = h.id
+                         AND vd.delay_start IS NOT NULL
+                         AND vd.delay_end IS NOT NULL
+                         AND pdt.type = 'Pre-Berthing Delays'
+                         AND pdt.responsibility = 'Port'
+                   ), 0.0) AS port_preberthing_delay_hrs,
+                   COALESCE((
+                       SELECT SUM(
+                           EXTRACT(EPOCH FROM (
+                               vd.delay_end::timestamp - vd.delay_start::timestamp
+                           )) / 3600.0
+                       )
+                       FROM vcn_delays vd
+                       JOIN port_delay_types pdt
+                         ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
+                       WHERE vd.vcn_id = h.id
+                         AND vd.delay_start IS NOT NULL
+                         AND vd.delay_end IS NOT NULL
+                         AND pdt.type = 'Pre-Berthing Delays'
+                         AND pdt.responsibility = 'Agent'
+                   ), 0.0) AS non_port_preberthing_delay_hrs
             FROM lueu_parcel_log l
             JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
             JOIN ldud_header ld ON ld.id = po.ldud_id
@@ -153,6 +183,13 @@ def _load_live_pipeline_rows():
             p_pick = _parse_dt(r['pilot_pickup_time'])
             p_dis = _parse_dt(r['pilot_disembarked'])
 
+            port_preberthing_delay_hrs = float(
+                r.get('port_preberthing_delay_hrs') or 0.0
+            )
+            non_port_preberthing_delay_hrs = float(
+                r.get('non_port_preberthing_delay_hrs') or 0.0
+            )
+
             # Working Time for live pipeline:
             # First parcel operation start -> Last parcel operation end
             first_parcel_start = _parse_dt(r.get('first_parcel_start'))
@@ -167,13 +204,33 @@ def _load_live_pipeline_rows():
             )
 
             # 3. Pre-Berthing Waiting Time
-            # Approved formula:
-            # Pre-Berthing Waiting Time = Alongside Date/Time - Anchorage Date/Time
-            pbw_hrs = (
-                (along - anchored).total_seconds() / 3600.0
-                if anchored and along and along > anchored
+            #
+            # Excel/reference logic:
+            #   Base Port waiting = Pilot Pickup - Anchorage
+            #                        (use NOR Tendered when Anchorage is unavailable)
+            #   Port a/c          = Base Port waiting + Port pre-berthing delays
+            #   Non-Port a/c      = Agent pre-berthing delays
+            #   Total             = Port a/c + Non-Port a/c
+            #
+            # For August-2026 this produces:
+            #   Base Port waiting = 460.07 Hrs
+            #   Port delays       = 159.63 Hrs
+            #   Port a/c          = 619.70 Hrs
+            #   Non-Port a/c      = 287.67 Hrs
+            #   Total             = 907.37 Hrs
+            pbw_start = anchored or _parse_dt(r['nor_tendered'])
+
+            base_port_waiting_hrs = (
+                (p_pick - pbw_start).total_seconds() / 3600.0
+                if pbw_start and p_pick and p_pick > pbw_start
                 else 0.0
             )
+
+            waiting_port_hrs = (
+                base_port_waiting_hrs + port_preberthing_delay_hrs
+            )
+            waiting_non_port_hrs = non_port_preberthing_delay_hrs
+            pbw_hrs = waiting_port_hrs + waiting_non_port_hrs
 
             # 5. Total Berth Stay
             # Approved formula:
@@ -193,10 +250,10 @@ def _load_live_pipeline_rows():
                 else 0.0
             )
 
-            # Outward Movement = Cast-off - Pilot Disembarked
+            # Outward Movement = Pilot Disembarked - Cast-off
             outward_hrs = (
-                (cast - p_dis).total_seconds() / 3600.0
-                if cast and p_dis and cast > p_dis
+                (p_dis - cast).total_seconds() / 3600.0
+                if cast and p_dis and p_dis > cast
                 else 0.0
             )
 
@@ -211,8 +268,8 @@ def _load_live_pipeline_rows():
                 'unloading_terminal': r['berth_name'],
                 'quantity': float(r['quantity'] or 0),
                 'pre_berthing_waiting': pbw_hrs / 24.0,
-                'waiting_port': pbw_hrs / 24.0,
-                'waiting_non_port': 0.0,
+                'waiting_port': waiting_port_hrs / 24.0,
+                'waiting_non_port': waiting_non_port_hrs / 24.0,
                 'stay_at_berth': sab_hrs / 24.0,
                 'working_time': wt_hrs / 24.0,
                 'inward_movement': inward_hrs / 24.0,
@@ -272,17 +329,13 @@ def calculate_section_metrics(rlist):
     traffic_berth = traffic_total - traffic_stream
 
     # 3. Pre Berthing Waiting Time (Hrs)
-    pbw_non_port = sum(float(r.get('waiting_non_port') or 0) for r in rlist) * 24.0
+    # Excel logic:
+    #   Total = Port a/c + Non-Port a/c
     pbw_port = sum(float(r.get('waiting_port') or 0) for r in rlist) * 24.0
-    pbw_total_col = sum(float(r.get('pre_berthing_waiting') or 0) for r in rlist) * 24.0
-
-    if pbw_port == 0 and pbw_non_port == 0:
-        pbw_total = round(pbw_total_col, 2)
-        pbw_port = pbw_total
-    else:
-        pbw_total = round(pbw_total_col if pbw_total_col > (pbw_port + pbw_non_port) else (pbw_port + pbw_non_port), 2)
-        pbw_port = round(pbw_total - pbw_non_port, 2)
-        pbw_non_port = round(pbw_non_port, 2)
+    pbw_non_port = sum(float(r.get('waiting_non_port') or 0) for r in rlist) * 24.0
+    pbw_total = round(pbw_port + pbw_non_port, 2)
+    pbw_port = round(pbw_port, 2)
+    pbw_non_port = round(pbw_non_port, 2)
 
     # 4. Working Time (in Days and Hrs)
     wt_days_sum = 0.0
@@ -297,7 +350,8 @@ def calculate_section_metrics(rlist):
             wt_hrs_sum += float(r.get('working_time') or 0) * 24.0
             wt_days_sum += float(r.get('working_time') or 0)
 
-    working_time = round(wt_days_sum, 2)
+    # Excel logic: Working Time is reported in HOURS, not days.
+    working_time = round(wt_hrs_sum, 2)
 
     # 5. Stay at berth in hours (using stay_at_berth column if present, else Cast Off - Alongside timestamp)
     sab_hrs_sum = 0.0
@@ -352,7 +406,14 @@ def calculate_section_metrics(rlist):
     # Total = (3 + 4 + 5 + 6)
     # Port  = (3(a) + 4 + 5(a) + 6(a) + 7 + 8)
     # N.P   = (3(b) + 5(b) + 6(b))
-    trt_total = round(pbw_total + working_time + nw_working_total + nw_non_working_total, 2)
+    # Excel logic: Total Turn Round Time = 3 + 4 + 5 + 6
+    trt_total = round(
+        pbw_total
+        + working_time
+        + nw_working_total
+        + nw_non_working_total,
+        2
+    )
     trt_port = round(pbw_port + working_time + nw_working_port + nw_non_working_port + nav_total + shifting_time, 2)
     trt_non_port = round(pbw_non_port + nw_working_non_port + nw_non_working_non_port, 2)
 
