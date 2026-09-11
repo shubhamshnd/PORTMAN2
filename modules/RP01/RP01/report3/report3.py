@@ -241,6 +241,28 @@ def _load_report3_db_time_data(fin_year: str):
                OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) <> '')
         """)
         delay_rows = cur.fetchall()
+
+        # Actual cargo working-time source used by the reference Report-3:
+        # MIN(ldud_parcel_ops.start_dt) -> MAX(ldud_parcel_ops.end_dt).
+        # ldud_header.discharge_commenced/discharge_completed are not populated
+        # for the current live vessels, so they must not be used for idle time.
+        cur.execute("""
+            SELECT
+                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
+                po.start_dt,
+                po.end_dt
+            FROM ldud_parcel_ops po
+            JOIN ldud_header lh
+              ON lh.id = po.ldud_id
+             AND lh.is_deleted IS NOT TRUE
+             AND lh.cast_off_datetime IS NOT NULL
+             AND TRIM(lh.cast_off_datetime) <> ''
+            LEFT JOIN vcn_header vh
+              ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
+            WHERE NULLIF(TRIM(po.start_dt), '') IS NOT NULL
+              AND NULLIF(TRIM(po.end_dt), '') IS NOT NULL
+        """)
+        cargo_rows = cur.fetchall()
     finally:
         conn.close()
 
@@ -277,9 +299,6 @@ def _load_report3_db_time_data(fin_year: str):
         anchored_or_nor = _parse_dt(r['anchored_datetime']) or _parse_dt(r['nor_tendered'])
         pilot = _parse_dt(r['pilot_pickup_time'])
         alongside = _parse_dt(r['alongside_datetime'])
-        commenced = _parse_dt(r['discharge_commenced'])
-        completed = _parse_dt(r['discharge_completed'])
-
         # Pre-berthing Port time: Anchorage/NOR -> Pilot Pickup.
         if anchored_or_nor and pilot and pilot > anchored_or_nor:
             item['port_preberth_hours'] += (pilot - anchored_or_nor).total_seconds() / 3600.0
@@ -288,9 +307,9 @@ def _load_report3_db_time_data(fin_year: str):
         if alongside and cast > alongside:
             item['stay_hours'] += (cast - alongside).total_seconds() / 3600.0
 
-        # Working time: Cargo/Discharge Commenced -> Completed.
-        if commenced and completed and completed > commenced:
-            item['working_hours'] += (completed - commenced).total_seconds() / 3600.0
+        # Working time is calculated below from ldud_parcel_ops.start_dt/end_dt.
+        # The ldud_header discharge fields are retained in the query for
+        # compatibility but are not used for the Report-3 working-time total.
 
     # Calculate original delay totals by responsibility/account.
     for r in delay_rows:
@@ -309,6 +328,39 @@ def _load_report3_db_time_data(fin_year: str):
             item['agent_hours'] += hours
         elif account == 'PORT':
             item['port_preberth_hours'] += hours
+
+    # Calculate actual cargo working time from parcel-operation records.
+    # Working Time = latest cargo end - earliest cargo start.
+    cargo_times = {}
+    for r in cargo_rows:
+        key = _norm_vcn(r['vcn_no'])
+        if not key:
+            continue
+
+        start = _parse_dt(r['start_dt'])
+        end = _parse_dt(r['end_dt'])
+        if not start or not end or end <= start:
+            continue
+
+        if key not in cargo_times:
+            cargo_times[key] = {
+                'start': start,
+                'end': end,
+            }
+        else:
+            if start < cargo_times[key]['start']:
+                cargo_times[key]['start'] = start
+            if end > cargo_times[key]['end']:
+                cargo_times[key]['end'] = end
+
+    for key, times in cargo_times.items():
+        item = ensure(key)
+        if item is None:
+            continue
+
+        item['working_hours'] = (
+            times['end'] - times['start']
+        ).total_seconds() / 3600.0
 
     return data
 
