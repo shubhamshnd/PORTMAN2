@@ -267,23 +267,42 @@ def build_report_data(fin_year: str):
         vsl_called = len(rlist)
         vsl_sailed = len(rlist)  # In mis_vessel_master, all logged rows are completed calls
 
-        pbw_vals = [float(r['pre_berthing_waiting']) for r in rlist if r.get('pre_berthing_waiting') is not None]
+        # Report-3 formula inputs. The waiting_port, waiting_non_port,
+        # stay_at_berth, and working_time values in mis_vessel_master are
+        # stored/calculated in days. Therefore the Excel /24 conversion is
+        # already represented in these source values and must not be applied again.
         wp_vals = [float(r['waiting_port']) for r in rlist if r.get('waiting_port') is not None]
         wnp_vals = [float(r['waiting_non_port']) for r in rlist if r.get('waiting_non_port') is not None]
         sab_vals = [float(r['stay_at_berth']) for r in rlist if r.get('stay_at_berth') is not None]
         wt_vals = [float(r['working_time']) for r in rlist if r.get('working_time') is not None]
         qty_vals = [float(r['quantity']) for r in rlist if r.get('quantity') is not None]
 
-        avg_berth_wait = (sum(pbw_vals) / len(pbw_vals)) if pbw_vals else 0.0
-        port_wait = (sum(wp_vals) / len(wp_vals)) if wp_vals else 0.0
-        agent_wait = (sum(wnp_vals) / len(wnp_vals)) if wnp_vals else 0.0
+        # PORT = Total Port Pre-Berthing Time / No. of Sailed Vessels
+        # Excel equivalent: Total Port Hours / 24 / Sailed Vessels
+        # waiting_port is already in days in this application.
+        port_total = sum(wp_vals)
+        port_wait = (port_total / vsl_sailed) if vsl_sailed > 0 else 0.0
+
+        # AGENT = Total Agent/Non-Port Pre-Berthing Time / No. of Sailed Vessels
+        # waiting_non_port is already in days in this application.
+        agent_total = sum(wnp_vals)
+        agent_wait = (agent_total / vsl_sailed) if vsl_sailed > 0 else 0.0
+
+        # AVG. BERTH. WAIT = PORT + AGENT
+        avg_berth_wait = port_wait + agent_wait
+
+        # STAY AT BERTH = Total vessel berth time
         stay_at_berth = sum(sab_vals)
         working_time = sum(wt_vals)
         traffic = sum(qty_vals)
 
+        # TURN ROUND (PORT) = STAY AT BERTH + PORT
         turn_round_port = stay_at_berth + port_wait
+
+        # AV. IDLE TIME = STAY AT BERTH - WORKING TIME
         av_idle_time = max(0.0, stay_at_berth - working_time)
 
+        # OUTPUT = Traffic / (Stay at berth * Vessels sailed)
         output = int(round(traffic / (stay_at_berth * vsl_sailed))) if (stay_at_berth > 0 and vsl_sailed > 0) else 0
 
         return {
