@@ -278,7 +278,7 @@ def _fetch_live_data(cur, start_dt, end_dt, masters):
         cast_off_date = dt_val.strftime('%d-%m-%Y')
         cast_off_time = dt_val.strftime('%H:%M')
 
-        vcn_num = vc['via_number'] or vc['vcn_doc_num'] or 'Missing VCN'
+        vcn_num = vc['vcn_doc_num'] or vc['via_number'] or 'Missing VCN'
         vessel_name = vc['vessel_name'] or 'Missing Vessel'
         agent_name = (vc['vessel_agent_name'] or '').strip()
         run_type = (vc['vessel_run_type'] or '').strip()
@@ -637,8 +637,13 @@ def get_other_statistics_data(fin_year: str, month: str):
             validation_errors.append({'vcn': vcn, 'vessel': vessel, 'field': 'Port Code', 'issue': f'Load Port "{port_name}" not registered in Port Master (VPM01)'})
 
         # 9. Cast-off date verification
-        if not r['cast_off_date'] or 'Missing' in r['cast_off_date']:
+        c_date = (r['cast_off_date'] or '').strip()
+        c_time = (r['cast_off_time'] or '').strip()
+        if not c_date or 'Missing' in c_date:
             validation_errors.append({'vcn': vcn, 'vessel': vessel, 'field': 'Cast-Off', 'issue': 'Cast-Off / Completion date-time is missing'})
+            last_cast_off = c_date or 'Missing Cast-Off Date'
+        else:
+            last_cast_off = f"{c_date} {c_time}".strip()
 
         processed_records.append({
             'vcn': vcn,
@@ -656,6 +661,7 @@ def get_other_statistics_data(fin_year: str, month: str):
             'port_name': port_name,
             'cast_off_date': r['cast_off_date'],
             'cast_off_time': r['cast_off_time'],
+            'last_cast_off': last_cast_off,
         })
 
     # Summary 1: Terminal and Pipeline Wise
@@ -870,8 +876,7 @@ def statistics_report_api_export():
     # SHEET 1: Terminal_Pipeline_Cargo
     # ─────────────────────────────────────────────────────────────
     ws1 = wb.create_sheet(title="Terminal_Pipeline_Cargo")
-    ws1.cell(row=1, column=1, value=f"Cargo Handled Terminal and Pipeline Wise — {month} ({fin_year})").font = font_title
-    ws1.cell(row=2, column=1, value="Cross-checked from live operations and parcel masters").font = font_sub
+
 
     headers1 = ["Terminal", "Pipeline", "Cargo", "Qty Handled in MT"]
     for i, h in enumerate(headers1, 1):
@@ -907,8 +912,7 @@ def statistics_report_api_export():
     # SHEET 2: Vessel_Agent
     # ─────────────────────────────────────────────────────────────
     ws2 = wb.create_sheet(title="Vessel_Agent")
-    ws2.cell(row=1, column=1, value=f"Cargo Handled Vessel Agent Wise — {month} ({fin_year})").font = font_title
-    ws2.cell(row=2, column=1, value="Grouped by Vessel Agent Name").font = font_sub
+
 
     headers2 = ["Vessel Agent Name", "Qty Handled in MT"]
     for i, h in enumerate(headers2, 1):
@@ -940,8 +944,6 @@ def statistics_report_api_export():
     # SHEET 3: Flag_Wise
     # ─────────────────────────────────────────────────────────────
     ws3 = wb.create_sheet(title="Flag_Wise")
-    ws3.cell(row=1, column=1, value=f"Cargo Handled Flag Wise — {month} ({fin_year})").font = font_title
-    ws3.cell(row=2, column=1, value="Cross-checked against Vessel Flag Master").font = font_sub
 
     headers3 = ["Flag Type", "Flag Name", "Qty Handled in MT"]
     for i, h in enumerate(headers3, 1):
@@ -975,8 +977,6 @@ def statistics_report_api_export():
     # SHEET 4: Port_Wise
     # ─────────────────────────────────────────────────────────────
     ws4 = wb.create_sheet(title="Port_Wise")
-    ws4.cell(row=1, column=1, value=f"Cargo Handled Port Wise — {month} ({fin_year})").font = font_title
-    ws4.cell(row=2, column=1, value="Cross-checked against Port Master").font = font_sub
 
     headers4 = ["Port Code", "Port Name", "Qty Handled in MT"]
     for i, h in enumerate(headers4, 1):
@@ -1010,13 +1010,11 @@ def statistics_report_api_export():
     # SHEET 5: Vessel_Detail
     # ─────────────────────────────────────────────────────────────
     ws5 = wb.create_sheet(title="Vessel_Detail")
-    ws5.cell(row=1, column=1, value=f"Vessel-Level Cross-Check Detail — {month} ({fin_year})").font = font_title
-    ws5.cell(row=2, column=1, value="Detailed reconciliation view for every vessel call and parcel").font = font_sub
 
     headers5 = [
-        "VCN", "Vessel Name", "Terminal", "Pipeline", "Cargo", "Qty MT",
+        "VCN Doc No", "Vessel Name", "Terminal", "Pipeline", "Cargo", "Qty MT",
         "Vessel Agent", "Vessel Run Type", "Flag Name", "Flag Type",
-        "Cast-Off Date", "Cast-Off Time"
+        "Last Cast-Off Date & Time"
     ]
     for i, h in enumerate(headers5, 1):
         ws5.cell(row=4, column=i, value=h)
@@ -1037,10 +1035,9 @@ def statistics_report_api_export():
         ws5.cell(row=cur_row, column=8, value=r['run_type']).font = font_data
         ws5.cell(row=cur_row, column=9, value=r['flag_name']).font = font_data
         ws5.cell(row=cur_row, column=10, value=r['flag_type']).font = font_data
-        ws5.cell(row=cur_row, column=11, value=r['cast_off_date']).font = font_data
-        ws5.cell(row=cur_row, column=12, value=r['cast_off_time']).font = font_data
+        ws5.cell(row=cur_row, column=11, value=r.get('last_cast_off', '')).font = font_data
 
-        for c in range(1, 13):
+        for c in range(1, 12):
             ws5.cell(row=cur_row, column=c).border = thin_border
         tot_qty5 += r['qty_mt']
         cur_row += 1
@@ -1051,42 +1048,12 @@ def statistics_report_api_export():
     c_tot5 = ws5.cell(row=cur_row, column=6, value=round(tot_qty5, 3))
     c_tot5.font = font_total
     c_tot5.number_format = "#,##0.000"
-    for c in range(7, 13):
+    for c in range(7, 12):
         ws5.cell(row=cur_row, column=c, value="").font = font_total
-    for c in range(1, 13):
+    for c in range(1, 12):
         ws5.cell(row=cur_row, column=c).fill = fill_total
         ws5.cell(row=cur_row, column=c).border = total_border
-    auto_fit_columns(ws5, 12)
-
-    # ─────────────────────────────────────────────────────────────
-    # SHEET 6: Validation_Errors
-    # ─────────────────────────────────────────────────────────────
-    ws6 = wb.create_sheet(title="Validation_Errors")
-    ws6.cell(row=1, column=1, value=f"Cross-Check Validation Errors / Missing Master Links — {month} ({fin_year})").font = font_title
-    ws6.cell(row=2, column=1, value="Shows all records with missing master relationships, unmapped flags, or missing dates").font = font_sub
-
-    headers6 = ["VCN", "Vessel Name", "Field", "Issue / Missing Reason"]
-    for i, h in enumerate(headers6, 1):
-        ws6.cell(row=4, column=i, value=h)
-    style_header(ws6, 4, len(headers6))
-
-    cur_row = 5
-    if data['validation_errors']:
-        for err in data['validation_errors']:
-            ws6.cell(row=cur_row, column=1, value=err['vcn']).font = font_data
-            ws6.cell(row=cur_row, column=2, value=err['vessel']).font = font_data
-            ws6.cell(row=cur_row, column=3, value=err['field']).font = font_bold
-            ws6.cell(row=cur_row, column=4, value=err['issue']).font = font_data
-            for c in range(1, 5):
-                cell = ws6.cell(row=cur_row, column=c)
-                cell.border = thin_border
-                cell.fill = fill_error
-            cur_row += 1
-    else:
-        ws6.cell(row=5, column=1, value="No validation errors found for this period.").font = font_data
-        ws6.merge_cells("A5:D5")
-
-    auto_fit_columns(ws6, 4)
+    auto_fit_columns(ws5, 11)
 
     bio = io.BytesIO()
     wb.save(bio)
