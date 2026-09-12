@@ -1,0 +1,509 @@
+{% extends "base.html" %}
+
+{% block title %} Statistics Report — PORTMAN{% endblock %}
+
+{% block head %}
+<style>
+    :root {
+        --rp-primary: #2563EB;
+        --rp-primary-dark: #1D4ED8;
+        --rp-success: #16A34A;
+        --rp-success-dark: #15803D;
+        --rp-ink: #111827;
+        --rp-muted: #6B7280;
+        --rp-border: #E5E7EB;
+        --rp-bg: #F9FAFB;
+        --rp-card: #FFFFFF;
+        --rp-header-bg: #1E3A8A;
+    }
+
+    .report-wrap * { box-sizing: border-box; }
+    .report-wrap {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--rp-ink);
+        padding-bottom: 40px;
+    }
+
+    .module-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--rp-border);
+    }
+    .module-header h2 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--rp-ink);
+    }
+    .module-header .rp-badge {
+        background: var(--rp-primary);
+        color: #fff;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+    .module-header .rp-back {
+        margin-left: auto;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--rp-primary);
+        text-decoration: none;
+    }
+    .module-header .rp-back:hover { text-decoration: underline; }
+
+    /* Filter Toolbar */
+    .filter-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-bottom: 24px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .filter-group label {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--rp-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .filter-group select {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--rp-ink);
+        background: var(--rp-bg);
+        border: 1px solid var(--rp-border);
+        border-radius: 6px;
+        padding: 8px 12px;
+        outline: none;
+        cursor: pointer;
+        min-width: 130px;
+    }
+    .filter-group select:focus {
+        border-color: var(--rp-primary);
+        box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+    }
+    .btn-apply {
+        background: var(--rp-primary);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 8px 18px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.15s ease;
+    }
+    .btn-apply:hover { background: var(--rp-primary-dark); }
+    .btn-export {
+        background: var(--rp-success);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 8px 18px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+        transition: background 0.15s ease;
+        text-decoration: none;
+    }
+    .btn-export:hover { background: var(--rp-success-dark); }
+
+    /* 4-Table Horizontal Container matching the Reference Excel */
+    .tables-scroll-wrapper {
+        overflow-x: auto;
+        padding-bottom: 12px;
+    }
+    .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(320px, 1fr));
+        gap: 16px;
+        align-items: start;
+        min-width: 1320px;
+    }
+    .report-box {
+        background: var(--rp-card);
+        border: 1px solid var(--rp-border);
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+    }
+    .report-box-header {
+        background: #F3F4F6;
+        border-bottom: 2px solid #E5E7EB;
+        padding: 12px 14px;
+        min-height: 58px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .report-box-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--rp-ink);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .report-box-sub {
+        font-size: 11px;
+        color: var(--rp-muted);
+        margin-top: 2px;
+    }
+    .table-container {
+        overflow-x: auto;
+        max-height: 560px;
+        position: relative;
+    }
+
+    /* Shared Table Styles */
+    table.data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        text-align: left;
+    }
+    table.data-table th {
+        background: #3d6be9;
+        color: #FFFFFF;
+        font-weight: 700;
+        padding: 9px 10px;
+        border: 1px solid #3B82F6;
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+    table.data-table td {
+        padding: 8px 10px;
+        border: 1px solid #E5E7EB;
+        color: var(--rp-ink);
+    }
+    table.data-table tbody tr:nth-child(even) {
+        background-color: #F9FAFB;
+    }
+    table.data-table tbody tr:hover {
+        background-color: #EFF6FF;
+    }
+    table.data-table td.text-right, table.data-table th.text-right {
+        text-align: right;
+    }
+    table.data-table td.text-center, table.data-table th.text-center {
+        text-align: center;
+    }
+    table.data-table tfoot td {
+        background: #E0E7FF;
+        color: #1E3A8A;
+        font-weight: 700;
+        border-top: 2px solid #1E3A8A;
+        border-bottom: 2px solid #1E3A8A;
+        padding: 9px 10px;
+    }
+
+    .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .pill-blue { background: #DBEAFE; color: #1E40AF; }
+    .pill-green { background: #DCFCE7; color: #166534; }
+    .pill-red { background: #FEE2E2; color: #991B1B; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="report-wrap">
+    <!-- Header -->
+    <div class="module-header">
+        <h2> Statistics Report</h2>
+        <span class="rp-badge">RP01</span>
+       
+        <a href="/module/RP01/" class="rp-back">&larr; Back to Reports</a>
+    </div>
+
+    <!-- Filter Toolbar -->
+    <div class="filter-toolbar">
+        <div class="filter-group">
+            <label for="selFinYear">Financial Year</label>
+            <select id="selFinYear">
+                {% for fy in fin_years %}
+                <option value="{{ fy }}" {% if fy == default_fy %}selected{% endif %}>{{ fy }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="selMonth">Month</label>
+            <select id="selMonth">
+                {% for m in month_names %}
+                <option value="{{ m }}" {% if m == default_month %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button class="btn-apply" onclick="loadReportData()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            Load Report
+        </button>
+        <a id="btnExportExcel" class="btn-export" href="#" onclick="exportExcel(event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Export to Excel
+        </a>
+    </div>
+
+    <!-- 4 Tables Horizontal Layout (Matching Reference Excel) -->
+    <div class="tables-scroll-wrapper">
+        <div class="overview-grid">
+            <!-- Table 1: Cargo Handled Terminal and pipeline wise -->
+            <div class="report-box">
+                <div class="report-box-header">
+                    <div class="report-box-title">Cargo Handled Terminal and pipeline wise</div>
+                    <div class="report-box-sub">Terminal, Pipeline &amp; Cargo breakdown</div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="tblOverviewTerminal">
+                        <thead>
+                            <tr>
+                                <th>Terminal</th>
+                                <th>Pipeline</th>
+                                <th>Cargo</th>
+                                <th class="text-right">Qty handled in MT</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3">Total</td>
+                                <td class="text-right" id="totOverviewTerminal">0.000</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Table 2: Cargo Handled Vessel Agent wise -->
+            <div class="report-box">
+                <div class="report-box-header">
+                    <div class="report-box-title">Cargo Handled Vessel Agent wise</div>
+                    <div class="report-box-sub">Grouped by Vessel Agent Name</div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="tblOverviewAgent">
+                        <thead>
+                            <tr>
+                                <th>Vessel Agent Name</th>
+                                <th class="text-right">Qty handled in MT</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td>Total</td>
+                                <td class="text-right" id="totOverviewAgent">0.000</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Table 3: Cargo Handled Flag Wise -->
+            <div class="report-box">
+                <div class="report-box-header">
+                    <div class="report-box-title">Cargo Handled Flag Wise</div>
+                    <div class="report-box-sub">Cross-checked with Vessel Flag Master</div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="tblOverviewFlag">
+                        <thead>
+                            <tr>
+                                <th>Flag type</th>
+                                <th>Flag Name</th>
+                                <th class="text-right">Qty handled in MT</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="2">Total</td>
+                                <td class="text-right" id="totOverviewFlag">0.000</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Table 4: Cargo Handled Port Wise -->
+            <div class="report-box">
+                <div class="report-box-header">
+                    <div class="report-box-title">Cargo Handled Port Wise</div>
+                    <div class="report-box-sub">Cross-checked with Port Master</div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="tblOverviewPort">
+                        <thead>
+                            <tr>
+                                <th>Port Code</th>
+                                <th>Port Name</th>
+                                <th class="text-right">Qty handled in MT</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="2">Total</td>
+                                <td class="text-right" id="totOverviewPort">0.000</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let reportData = null;
+
+    function formatNumber(num) {
+        if (num === null || num === undefined || isNaN(num)) return "0.000";
+        return Number(num).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    }
+
+    async function loadReportData() {
+        const fy = document.getElementById('selFinYear').value;
+        const mo = document.getElementById('selMonth').value;
+
+        const exportBtn = document.getElementById('btnExportExcel');
+        exportBtn.href = `/api/module/RP01/statistics-report/export?fin_year=${encodeURIComponent(fy)}&month=${encodeURIComponent(mo)}`;
+
+        try {
+            const res = await fetch(`/api/module/RP01/statistics-report/data?fin_year=${encodeURIComponent(fy)}&month=${encodeURIComponent(mo)}`);
+            if (!res.ok) {
+                const err = await res.json();
+                alert('Error loading data: ' + (err.error || res.statusText));
+                return;
+            }
+            reportData = await res.json();
+            renderReport(reportData);
+        } catch (e) {
+            console.error('Fetch error:', e);
+            alert('Failed to fetch report data: ' + e);
+        }
+    }
+
+    function exportExcel(e) {
+        // dynamic link
+    }
+
+    function renderReport(data) {
+        if (!data) return;
+
+        renderTerminalTable('tblOverviewTerminal', 'totOverviewTerminal', data.terminal_pipeline_cargo);
+        renderAgentTable('tblOverviewAgent', 'totOverviewAgent', data.vessel_agent);
+        renderFlagTable('tblOverviewFlag', 'totOverviewFlag', data.flag_wise);
+        renderPortTable('tblOverviewPort', 'totOverviewPort', data.port_wise);
+    }
+
+    function renderTerminalTable(tblId, totId, rows) {
+        const tbody = document.querySelector(`#${tblId} tbody`);
+        tbody.innerHTML = '';
+        let tot = 0.0;
+        (rows || []).forEach(r => {
+            tot += r.qty_mt;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${r.terminal || '-'}</strong></td>
+                <td>${r.pipeline || '-'}</td>
+                <td>${r.cargo || '-'}</td>
+                <td class="text-right font-mono">${formatNumber(r.qty_mt)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        document.getElementById(totId).textContent = formatNumber(tot);
+    }
+
+    function renderAgentTable(tblId, totId, rows) {
+        const tbody = document.querySelector(`#${tblId} tbody`);
+        tbody.innerHTML = '';
+        let tot = 0.0;
+        (rows || []).forEach(r => {
+            tot += r.qty_mt;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${r.agent_name || '-'}</strong></td>
+                <td class="text-right font-mono">${formatNumber(r.qty_mt)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        document.getElementById(totId).textContent = formatNumber(tot);
+    }
+
+    function renderFlagTable(tblId, totId, rows) {
+        const tbody = document.querySelector(`#${tblId} tbody`);
+        tbody.innerHTML = '';
+        let tot = 0.0;
+        (rows || []).forEach(r => {
+            tot += r.qty_mt;
+            const tr = document.createElement('tr');
+            const flagTypePill = r.flag_type === 'IF' ? '<span class="pill pill-green">IF</span>' :
+                                (r.flag_type === 'FF' ? '<span class="pill pill-blue">FF</span>' :
+                                `<span class="pill pill-red">${r.flag_type || 'Unknown'}</span>`);
+            tr.innerHTML = `
+                <td class="text-center">${flagTypePill}</td>
+                <td><strong>${r.flag_name || '-'}</strong></td>
+                <td class="text-right font-mono">${formatNumber(r.qty_mt)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        document.getElementById(totId).textContent = formatNumber(tot);
+    }
+
+    function renderPortTable(tblId, totId, rows) {
+        const tbody = document.querySelector(`#${tblId} tbody`);
+        tbody.innerHTML = '';
+        let tot = 0.0;
+        (rows || []).forEach(r => {
+            tot += r.qty_mt;
+            const tr = document.createElement('tr');
+            const isMissing = !r.port_code || r.port_code.toLowerCase().includes('missing');
+            const pillClass = isMissing ? 'pill-red' : 'pill-blue';
+            tr.innerHTML = `
+                <td><span class="pill ${pillClass}">${r.port_code || '-'}</span></td>
+                <td><strong>${r.port_name || '-'}</strong></td>
+                <td class="text-right font-mono">${formatNumber(r.qty_mt)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        document.getElementById(totId).textContent = formatNumber(tot);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadReportData();
+    });
+</script>
+{% endblock %}
