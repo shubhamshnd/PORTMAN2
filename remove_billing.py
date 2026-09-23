@@ -25,6 +25,16 @@ no-op, so deleting a bill through the UI leaves its parcels flagged billed
 forever. This tool deletes the ledger rows the bill wrote -- and only those:
 rows with a NULL bill_id are go-live cutover flags and are never touched.
 
+Scope: bills, invoices, and the flags that mark their cargo and services
+billed. Nothing else. Specifically NOT touched:
+  * credit/debit notes  - their own documents; the run refuses while one
+                          references an in-scope invoice
+  * integration_logs    - the audit trail of what was sent to SAP
+  * parcels, VCNs, LDUDs, service record content - only the billed flag moves
+The SAP staging and outbound-queue rows for an invoice ARE removed: they are
+that invoice own outbound plumbing, and a queued job for a deleted invoice
+would post to SAP.
+
 Document numbers are not sequences here; they are derived from MAX() over the
 live tables, floored at the cutover seed (see FIN01.next_from_seed). Removing
 documents therefore frees their numbers with no sequence reset, which is what
@@ -104,6 +114,23 @@ def posted_documents(cur, invoice_ids):
     return [dict(r) for r in cur.fetchall()]
 
 
+def credit_notes(cur, invoice_ids):
+    """Credit/debit notes raised against the in-scope invoices.
+
+    These are separate financial documents with their own numbers and their own
+    SAP postings, so they are not ours to delete as a side effect. The FK is ON
+    DELETE NO ACTION, so an invoice cannot go while one exists — the run stops
+    and says so rather than destroying it.
+    """
+    if not invoice_ids:
+        return []
+    cur.execute("""SELECT doc_number, doc_type, original_invoice_number,
+                          sap_document_number
+                   FROM fdcn_header WHERE original_invoice_id = ANY(%s)
+                   ORDER BY doc_number""", [list(invoice_ids)])
+    return [dict(r) for r in cur.fetchall()]
+
+
 def survey(cur, bill_ids, invoice_ids):
     """Row counts each step would touch, in the order they are applied."""
     b, i = list(bill_ids), list(invoice_ids)
@@ -116,8 +143,6 @@ def survey(cur, bill_ids, invoice_ids):
         cur.execute(sql, params)
         steps.append((label, cur.fetchone()['n']))
 
-    count('credit/debit note lines', "SELECT COUNT(*) n FROM fdcn_lines WHERE fdcn_id IN (SELECT id FROM fdcn_header WHERE original_invoice_id = ANY(%s))", [i])
-    count('credit/debit notes', 'SELECT COUNT(*) n FROM fdcn_header WHERE original_invoice_id = ANY(%s)', [i])
     count('SAP staging rows', 'SELECT COUNT(*) n FROM invoice_sap_staging WHERE invoice_id = ANY(%s)', [i])
     count('SAP outbound queue jobs', 'SELECT COUNT(*) n FROM sap_outbound_queue WHERE invoice_id = ANY(%s)', [i])
     count('invoice lines', 'SELECT COUNT(*) n FROM invoice_lines WHERE invoice_id = ANY(%s)', [i])
@@ -144,8 +169,10 @@ def remove(cur, bill_ids, invoice_ids):
 
     # Invoices first: invoice_lines carries a bill_id, so the bills cannot go
     # until the invoice rows that point at them are gone.
-    run('credit/debit note lines', 'DELETE FROM fdcn_lines WHERE fdcn_id IN (SELECT id FROM fdcn_header WHERE original_invoice_id = ANY(%s))', [i])
-    run('credit/debit notes', 'DELETE FROM fdcn_header WHERE original_invoice_id = ANY(%s)', [i])
+    #
+    # Credit/debit notes are deliberately NOT removed here - see credit_notes().
+    # The staging and queue rows below are: they are this invoice own outbound
+    # plumbing, and a pending job for a deleted invoice would post to SAP.
     run('SAP staging rows', 'DELETE FROM invoice_sap_staging WHERE invoice_id = ANY(%s)', [i])
     run('SAP outbound queue jobs', 'DELETE FROM sap_outbound_queue WHERE invoice_id = ANY(%s)', [i])
     run('invoice lines', 'DELETE FROM invoice_lines WHERE invoice_id = ANY(%s)', [i])
@@ -215,6 +242,20 @@ def main(argv=None):
                       '\nRe-run with --include-posted once SAP is settled.')
                 return 1
             print('  --include-posted given: removing them anyway.')
+
+        notes = credit_notes(cur, invoice_ids)
+        if notes:
+            print(f'\n{len(notes)} credit/debit note(s) reference these invoices:')
+            for d in notes[:10]:
+                sap = d['sap_document_number'] or 'not posted'
+                print(f"    {d['doc_number']:22} {d['doc_type'] or '':3} against "
+                      f"{d['original_invoice_number'] or '':20} SAP {sap}")
+            if len(notes) > 10:
+                print(f'    ... and {len(notes) - 10} more')
+            print('\nRefusing: a note is its own document, with its own number and'
+                  '\npossibly its own SAP posting, so this tool will not delete one as a'
+                  '\nside effect. Remove the note(s) in FDCN01 first, then re-run.')
+            return 1
 
         print('\nWould remove:' if not args.apply else '\nRemoving:')
         for label, n in survey(cur, bill_ids, invoice_ids):
