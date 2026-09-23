@@ -1683,29 +1683,32 @@ def get_detailed_analytics_data(
 
                 customer_master_values.append(resolved)
 
-            # Keep unique customer codes/names.
-            unique_customer_codes = []
-            unique_customer_names = []
+            # Keep unique customers.
+            unique_customers = []
 
             for cm in customer_master_values:
+                code = (cm.get('customer_code') or '').strip()
+                name = (cm.get('customer_name') or '').strip()
+                if not name:
+                    continue
 
-                code = (
-                    cm.get('customer_code') or ''
-                ).strip()
+                found = False
+                for uc in unique_customers:
+                    if uc['name'] == name:
+                        found = True
+                        if not uc['code'] and code:
+                            uc['code'] = code
+                        break
 
-                name = (
-                    cm.get('customer_name') or ''
-                ).strip()
+                if not found:
+                    unique_customers.append({'code': code, 'name': name})
+            
+            if not unique_customers:
+                unique_customers.append({'code': '', 'name': 'Unspecified Customer'})
 
-                if code and code not in unique_customer_codes:
-                    unique_customer_codes.append(code)
-
-                if name and name not in unique_customer_names:
-                    unique_customer_names.append(name)
-
-            customer_code = ', '.join(unique_customer_codes)
-
-            customer_name = ', '.join(unique_customer_names)
+            customer_code = ', '.join([uc['code'] for uc in unique_customers if uc['code']])
+            customer_name = ', '.join([uc['name'] for uc in unique_customers])
+            payers_list = payers if payers else ['Unspecified Payment']
 
             # -----------------------------------------------------------------
             # LUEU QUANTITY
@@ -1996,6 +1999,8 @@ def get_detailed_analytics_data(
                 'cargo':
                     raw_cargo,
 
+                'customers_list': unique_customers,
+                
                 # Customer Name used for display.
                 'customer':
                     customer_name
@@ -2007,6 +2012,8 @@ def get_detailed_analytics_data(
                 # Customer Code retained separately.
                 'customer_code':
                     customer_code,
+                
+                'payers_list': payers_list,
 
                 'payment_by':
                     raw_payer
@@ -2224,33 +2231,26 @@ def get_detailed_analytics_data(
             # -----------------------------------------------------------------
             # HISTORICAL CUSTOMER MASTER LOOKUP
             # -----------------------------------------------------------------
-            historical_customer = (
-                h['customer']
-                or
-                ''
-            ).strip()
+            historical_customer = (h['customer'] or '').strip()
+            
+            hist_custs = [c.strip() for c in historical_customer.split(',') if c.strip()]
+            if not hist_custs:
+                hist_custs = ['Unspecified Customer']
+                
+            hist_customers_list = []
+            for hc in hist_custs:
+                resolved = resolve_customer(hc)
+                code = (resolved.get('customer_code') or '').strip()
+                name = (resolved.get('customer_name') or hc or 'Unspecified Customer').strip()
+                hist_customers_list.append({'code': code, 'name': name})
 
-            historical_customer_resolved = resolve_customer(
-                historical_customer
-            )
-
-            historical_customer_code = (
-                historical_customer_resolved.get(
-                    'customer_code'
-                )
-                or
-                ''
-            ).strip()
-
-            historical_customer_name = (
-                historical_customer_resolved.get(
-                    'customer_name'
-                )
-                or
-                historical_customer
-                or
-                'Unspecified Customer'
-            ).strip()
+            historical_customer_code = ', '.join([uc['code'] for uc in hist_customers_list if uc['code']])
+            historical_customer_name = ', '.join([uc['name'] for uc in hist_customers_list])
+            
+            historical_payer = (h['payment_by'] or '').strip()
+            hist_payers_list = [p.strip() for p in historical_payer.split(',') if p.strip()]
+            if not hist_payers_list:
+                hist_payers_list = ['Unspecified Payment']
 
             # -----------------------------------------------------------------
             # APPEND HISTORICAL ITEM
@@ -2281,11 +2281,15 @@ def get_detailed_analytics_data(
                 'cargo':
                     raw_cargo,
 
+                'customers_list': hist_customers_list,
+
                 'customer':
                     historical_customer_name,
 
                 'customer_code':
                     historical_customer_code,
+                    
+                'payers_list': hist_payers_list,
 
                 'payment_by':
                     (
@@ -2498,63 +2502,41 @@ def get_detailed_analytics_data(
     # =========================================================================
     def _agg_customer():
 
-        # key  = customer_code.upper()  OR  'NAME:' + customer_name.upper()
-        # value = {customer_code, customer_name, pipelines[], qty_mt}
         totals = {}
 
         for it in raw_items:
 
-            customer_code = (
-                it.get('customer_code') or ''
-            ).strip()
+            cust_list = it.get('customers_list') or [{'code': '', 'name': 'Unspecified Customer'}]
+            n = len(cust_list)
+            share = it['qty_mt'] / n if n > 0 else 0.0
+            pipeline_name = (it.get('pipeline') or 'Flexible Hose').strip()
 
-            customer_name = (
-                it.get('customer') or 'Unspecified Customer'
-            ).strip()
+            for cust in cust_list:
+                c_code = cust['code']
+                c_name = cust['name']
 
-            pipeline_name = (
-                it.get('pipeline') or 'Flexible Hose'
-            ).strip()
+                if c_code:
+                    group_key = c_code.upper()
+                else:
+                    group_key = 'NAME:' + c_name.upper()
 
-            # ----------------------------------------------------------------
-            # Determine grouping key
-            # ----------------------------------------------------------------
-            if customer_code:
-                # Grouped by master code — different name spellings merge here
-                group_key = customer_code.upper()
-            else:
-                # No code found in master — group by name
-                group_key = 'NAME:' + customer_name.upper()
+                if group_key not in totals:
+                    totals[group_key] = {
+                        'customer_code': c_code,
+                        'customer_name': c_name,
+                        'pipelines': [],
+                        'qty_mt': 0.0
+                    }
+                else:
+                    if not totals[group_key]['customer_code'] and c_code:
+                        totals[group_key]['customer_code'] = c_code
+                    if totals[group_key]['customer_name'] in ('', 'Unspecified Customer') and c_name and c_name != 'Unspecified Customer':
+                        totals[group_key]['customer_name'] = c_name
 
-            # ----------------------------------------------------------------
-            # Initialise slot
-            # ----------------------------------------------------------------
-            if group_key not in totals:
-                totals[group_key] = {
-                    'customer_code': customer_code,
-                    'customer_name': customer_name,
-                    'pipelines': [],
-                    'qty_mt': 0.0
-                }
-            else:
-                # If the slot already exists but code was added later,
-                # prefer a non-empty code/name.
-                if not totals[group_key]['customer_code'] and customer_code:
-                    totals[group_key]['customer_code'] = customer_code
-                if (
-                    totals[group_key]['customer_name'] in (
-                        '', 'Unspecified Customer'
-                    )
-                    and customer_name
-                    and customer_name != 'Unspecified Customer'
-                ):
-                    totals[group_key]['customer_name'] = customer_name
+                totals[group_key]['qty_mt'] += share
 
-            totals[group_key]['qty_mt'] += it['qty_mt']
-
-            # Collect unique pipelines in insertion order
-            if pipeline_name not in totals[group_key]['pipelines']:
-                totals[group_key]['pipelines'].append(pipeline_name)
+                if pipeline_name not in totals[group_key]['pipelines']:
+                    totals[group_key]['pipelines'].append(pipeline_name)
 
         grand_total = sum(
             x['qty_mt'] for x in totals.values()
@@ -2574,7 +2556,6 @@ def get_detailed_analytics_data(
             name = item['customer_name']
 
             rows.append({
-                # 'name' = what the HTML first column shows
                 'name':
                     code if code else name,
 
@@ -2594,6 +2575,32 @@ def get_detailed_analytics_data(
                     round(pct, 1)
             })
 
+        return {
+            'rows': rows,
+            'total_qty': round(grand_total, 3),
+            'total_pct': 100.0 if grand_total > 0 else 0.0
+        }
+
+    def _agg_payment_by():
+        totals = {}
+        for it in raw_items:
+            payers = it.get('payers_list') or ['Unspecified Payment']
+            n = len(payers)
+            share = it['qty_mt'] / n if n > 0 else 0.0
+            
+            for p in payers:
+                totals[p] = totals.get(p, 0.0) + share
+                
+        grand_total = sum(totals.values())
+        rows = []
+        for k, v in sorted(totals.items(), key=lambda x: -x[1]):
+            pct = v / grand_total * 100.0 if grand_total > 0 else 0.0
+            rows.append({
+                'name': k,
+                'qty_mt': round(v, 3),
+                'pct': round(pct, 1)
+            })
+            
         return {
             'rows': rows,
             'total_qty': round(grand_total, 3),
@@ -2861,7 +2868,7 @@ def get_detailed_analytics_data(
             _agg_qty('port_name'),
 
         'payment_type_wise':
-            _agg_qty('payment_by'),
+            _agg_payment_by(),
 
         # IMPORTANT:
         # Equipment utilisation now comes from actual
