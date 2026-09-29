@@ -98,17 +98,23 @@ def test_only_the_ticked_records_print():
 
 def test_one_vcn_is_named_once_in_the_heading_not_on_every_line():
     """A service has no cargo to break down, so it is one flat row carrying its
-    own figures — repeating the VCN under a heading that already says it adds
-    nothing."""
+    own figures — repeating the reference under a heading that already says it
+    adds nothing.
+
+    The heading is the VESSEL, matching section A. It used to be the VCN
+    number, because it was parsed out of ref_source_display ("VCN / vessel /
+    anchored") by splitting on '/' and keeping the first field.
+    """
     conn = get_db(); cur = get_cursor(conn)
     cid, vcn, rec, ag = _setup(cur)
     conn.commit(); conn.close()
     try:
         ctx, _, _ = views._services_ctx('Customer', cid, str(rec))
-        assert ctx['vessel_name'] == 'VCN-PF-1'
+        assert ctx['vessel_name'] == 'PFVESSEL'
         assert len(ctx['rows']) == 1
         row = ctx['rows'][0]
         assert 'VCN-PF-1' not in row['label'], row['label']
+        assert 'PFVESSEL' not in row['label'], row['label']
         assert row['indent'] is False
         # the figures are on the row itself, not on a detail row underneath
         assert row['qty'] == 2.0 and row['rate'] == RATE and row['amount'] == 2400.0
@@ -187,7 +193,7 @@ def test_the_remark_prints_under_the_heading():
     try:
         ctx, _, _ = views._services_ctx('Customer', cid, str(rec), remark='VIA No: ' + VIA)
         drawn = _drawn(proforma_pdf.render(ctx))
-        i = drawn.index('VCN-PF-1')
+        i = drawn.index('PFVESSEL')      # heading is the vessel, not the VCN
         assert drawn[i + 1] == 'VIA No: ' + VIA
     finally:
         _teardown(cid, vcn, rec, ag)

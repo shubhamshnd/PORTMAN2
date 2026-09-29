@@ -1453,7 +1453,8 @@ def get_unbilled_services(customer_type, customer_id):
                st.sac_code, st.gl_code, st.uom, st.gst_rate_id,
                st.is_tds, st.tds_percent, st.is_tcs, st.tcs_percent,
                g.cgst_rate, g.sgst_rate, g.igst_rate,
-               h.via_number
+               sr.ref_source_id,
+               h.via_number, h.vessel_name, h.vcn_doc_num
         FROM service_records sr
         JOIN finance_service_types st ON st.id = sr.service_type_id
         LEFT JOIN gst_rates g ON g.id = st.gst_rate_id
@@ -1477,6 +1478,13 @@ def get_unbilled_services(customer_type, customer_id):
             'service_record_id': r['id'], 'record_number': r['record_number'],
             'record_date': r['record_date'], 'ref_source_display': r['ref_source_display'] or '',
             'via_number': r['via_number'] or '',
+            # The vessel the record was raised against, read off vcn_header
+            # rather than parsed out of ref_source_display — that string is a
+            # dropdown label ("VCN / vessel / anchored") and splitting it was
+            # dropping the vessel name from the pro forma heading.
+            'ref_source_id': r['ref_source_id'],
+            'vessel_name': r['vessel_name'] or '',
+            'vcn_doc_num': r['vcn_doc_num'] or '',
             'service_type_id': r['service_type_id'], 'service_code': r['service_code'],
             'service_name': r['service_name'], 'qty': qty,
             'uom': r['billable_uom'] or r['uom'] or '', 'rate': rate,

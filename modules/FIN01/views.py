@@ -591,20 +591,43 @@ def _services_ctx(customer_type, customer_id, picked, series=None, number=None,
     if not lines:
         return None, 'No service records selected for this customer.', 404
 
-    vcns = {(l.get('ref_source_display') or '').split('/')[0].strip()
-            for l in lines if l.get('ref_source_display')}
-    one_vcn = len(vcns) == 1
-    header = next(iter(vcns)) if one_vcn else 'Other Services'
-    # The VCN is already the heading when there is only one, so repeating it on
-    # every line says nothing. It stays on the line only when the document
-    # spans several calls, where it is the only thing telling them apart.
-    if not one_vcn:
-        lines = [dict(l, cargo_name=(l.get('ref_source_display') or '')) for l in lines]
+    # Group on the VCN id, not on a prefix of ref_source_display: that string
+    # is the SRV01 dropdown label ("VCN / vessel / anchored"), and splitting it
+    # on '/' threw the vessel name away, which is why a services pro forma
+    # showed only the VCN number where section A shows the vessel.
+    vcn_ids = {l.get('ref_source_id') for l in lines if l.get('ref_source_id')}
+    # Every line must be against the SAME vessel for it to become the heading.
+    # A record with no VCN mixed in would otherwise be filtered out of the set
+    # and printed under a vessel it was never raised against.
+    one_vcn = len(vcn_ids) == 1 and all(l.get('ref_source_id') for l in lines)
 
+    def vessel_of(line):
+        return (line.get('vessel_name') or line.get('vcn_doc_num')
+                or (line.get('ref_source_display') or '').split('/')[0].strip())
+
+    if one_vcn:
+        # Same heading section A uses: the vessel, falling back to its VCN.
+        header = vessel_of(lines[0]) or 'Other Services'
+    else:
+        header = 'Other Services'
+        # Several calls on one document: the vessel is the only thing telling
+        # the lines apart, so it goes on each line instead of the heading. A
+        # record raised against no vessel falls back to its own number rather
+        # than repeating the service name as if it were a cargo.
+        lines = [dict(l, cargo_name=(' / '.join(
+            x for x in (l.get('vcn_doc_num'), l.get('vessel_name')) if x)
+            or l.get('ref_source_display') or l.get('record_number') or ''))
+            for l in lines]
+
+    # Flat unless the lines need a per-vessel breakdown: with one vessel (or
+    # none at all) a detail row under the heading would only repeat it.
     ctx = _proforma_doc(customer_type, customer_id, lines, header,
                         lines[0].get('record_number') or '', series, number, remark,
-                        flat=one_vcn)
-    ctx['vessel'] = {'lines': lines}
+                        flat=one_vcn or not vcn_ids)
+    first = lines[0]
+    ctx['vessel'] = {'lines': lines,
+                     'vessel_name': first.get('vessel_name') if one_vcn else '',
+                     'vcn_doc_num': first.get('vcn_doc_num') if one_vcn else ''}
     return ctx, None, None
 
 

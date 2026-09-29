@@ -189,7 +189,9 @@
         if (running >= target - 1e-6) {
           if (d.entry_date && d.to_time) {
             const hhmm = String(d.to_time).length === 5 ? d.to_time : String(d.to_time).padStart(5, '0');
-            end = `${d.entry_date}T${hhmm}`;
+            // row crossing midnight (To < From, e.g. 23:00 → 00:30) ends the next day
+            const wrapped = d.from_time && _tmin(hhmm) < _tmin(d.from_time);
+            end = `${wrapped ? _addDays(d.entry_date, 1) : d.entry_date}T${hhmm}`;
           }
           break;
         }
