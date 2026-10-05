@@ -739,7 +739,7 @@ def report8_api_export():
         wb.save(buf)
         buf.seek(0)
 
-        filename = f"PMO_NITI_AYOG_{fin_year}_{month_label}.xlsx"
+        filename = f"8.PM O NITI AYOG_{month_label}.xlsx"
         return send_file(
             buf,
             as_attachment=True,

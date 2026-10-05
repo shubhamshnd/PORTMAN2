@@ -664,7 +664,7 @@ def report7_export():
         wb.save(buf)
         buf.seek(0)
 
-        filename = f"Report-7_Physical_Perf_{fin_year}_{month}.xlsx"
+        filename = f"7. Physical Performance- PDMP-BT {month}.xlsx"
         return send_file(
             buf,
             as_attachment=True,
