@@ -16,6 +16,7 @@
     <button class="tab-btn" onclick="showTab('gst')">GST Config</button>
     <button class="tab-btn" onclick="showTab('services')">Services</button>
     <button class="tab-btn" onclick="showTab('sap')">SAP Config</button>
+    <button class="tab-btn" onclick="showTab('saptokens')">SAP Tokens</button>
     <button class="tab-btn" onclick="showTab('banks')">Bank Accounts</button>
     <button class="tab-btn" onclick="showTab('mail')">Mail</button>
     <button class="tab-btn" onclick="showTab('cutover')">Cutover</button>
@@ -300,6 +301,28 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- SAP Inbound Tokens Tab -->
+<div id="saptokens-tab" class="tab-content">
+    <div class="admin-section">
+        <h3>SAP Inbound Bearer Tokens</h3>
+        <p style="font-size:12px;color:#666;">SAP calls <code>POST /api/sap/callback</code> with <code>Authorization: Bearer &lt;token&gt;</code>. Calls are logged in FSAP01.</p>
+        <div class="toolbar">
+            <button class="btn btn-add" onclick="generateSapToken()">+ Generate Token</button>
+            <button class="btn" onclick="loadSapTokens()" style="background:#3498db;color:#fff;">Refresh</button>
+        </div>
+        <table class="admin-table" id="sapTokensTable">
+            <thead>
+                <tr>
+                    <th>Label</th><th>Token</th><th>Active</th>
+                    <th>Last Used</th><th>Last IP</th>
+                    <th>Created By / Date</th><th>Revoked</th><th>Actions</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
     </div>
 </div>
 
@@ -791,6 +814,7 @@ function showTab(tab) {
     if (tab === 'gst') loadGstConfig();
     if (tab === 'services') loadServiceConfig();
     if (tab === 'sap') loadSapConfig();
+    if (tab === 'saptokens') loadSapTokens();
     if (tab === 'banks') loadBankAccounts();
     if (tab === 'config') loadAllConfigs();
     if (tab === 'mail') { loadSmtpConfig(); loadMailQueue(); }
@@ -1962,5 +1986,63 @@ async function saveNginxConfig() {
 // Initialize
 loadUsers().then(() => loadAllConfigs());
 loadModules();
+
+// ===== SAP Inbound Tokens =====
+const escTok = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+async function loadSapTokens() {
+    const rows = await (await fetch('/admin/api/sap-tokens')).json();
+    const tbody = document.querySelector('#sapTokensTable tbody');
+    if (!Array.isArray(rows) || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#999;">No tokens yet. Click "+ Generate Token" to create one.</td></tr>';
+        return;
+    }
+    const ts = v => v ? escTok(String(v).slice(0, 16)) : '—';
+    tbody.innerHTML = rows.map(r => {
+        const active = r.is_active && !r.revoked_at;
+        return `<tr>
+            <td>${escTok(r.label)}</td>
+            <td><code>${escTok(r.token_masked || '****')}</code></td>
+            <td>${active ? '<span style="color:#27ae60;font-weight:700;">Yes</span>' : '<span style="color:#c0392b;font-weight:700;">No</span>'}</td>
+            <td style="font-size:11px;">${ts(r.last_used_at)}</td>
+            <td style="font-size:11px;">${escTok(r.last_used_ip || '—')}</td>
+            <td style="font-size:11px;">${escTok(r.created_by || '—')}<br><small>${ts(r.created_date)}</small></td>
+            <td style="font-size:11px;">${r.revoked_at ? `${escTok(r.revoked_by || '')}<br><small>${ts(r.revoked_at)}</small>` : '—'}</td>
+            <td>${active
+                ? `<button class="btn" style="background:#e74c3c;color:#fff;padding:2px 8px;font-size:10px;" onclick="revokeSapToken(${r.id})">Revoke</button>`
+                : `<button class="btn" style="background:#27ae60;color:#fff;padding:2px 8px;font-size:10px;" onclick="reactivateSapToken(${r.id})">Reactivate</button>`}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function sapTokenPost(action, body) {
+    const res = await fetch('/admin/api/sap-tokens/' + action, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    return res.json();
+}
+
+async function generateSapToken() {
+    const label = prompt('Token label (e.g. "SAP Prod"):');
+    if (!label) return;
+    const d = await sapTokenPost('generate', {label});
+    if (!d.success) { alert(d.error || 'Failed'); return; }
+    // One-time reveal: only a masked value is stored for display afterwards.
+    prompt(`Token generated for "${d.label}".
+
+Copy it NOW, it will not be shown again:`, d.token);
+    loadSapTokens();
+}
+
+async function revokeSapToken(id) {
+    if (!confirm('Revoke this token? Calls using it will be rejected.')) return;
+    await sapTokenPost('revoke', {id});
+    loadSapTokens();
+}
+
+async function reactivateSapToken(id) {
+    await sapTokenPost('reactivate', {id});
+    loadSapTokens();
+}
 </script>
 {% endblock %}

@@ -974,6 +974,46 @@ def _calc_log_stats(entries):
     }
 
 
+# ── SAP Inbound Tokens ────────────────────────────────────────────────────────
+# Bearer tokens SAP uses to call /api/sap/callback (see sap_inbound.py).
+
+import sap_inbound  # noqa: E402
+
+
+@bp.route('/api/sap-tokens')
+@admin_required
+def list_sap_tokens():
+    return jsonify(sap_inbound.list_tokens())
+
+
+@bp.route('/api/sap-tokens/generate', methods=['POST'])
+@admin_required
+def generate_sap_token():
+    label = ((request.json or {}).get('label') or '').strip()
+    if not label:
+        return jsonify({'error': 'Label required'}), 400
+    return jsonify({'success': True,
+                    **sap_inbound.generate_token(label, created_by=session.get('username'))})
+
+
+@bp.route('/api/sap-tokens/revoke', methods=['POST'])
+@admin_required
+def revoke_sap_token():
+    token_id = (request.json or {}).get('id')
+    if not token_id:
+        return jsonify({'error': 'id required'}), 400
+    sap_inbound.revoke_token(token_id, revoked_by=session.get('username'))
+    return jsonify({'success': True})
+
+
+@bp.route('/api/sap-tokens/reactivate', methods=['POST'])
+@admin_required
+def reactivate_sap_token():
+    token_id = (request.json or {}).get('id')
+    if not token_id:
+        return jsonify({'error': 'id required'}), 400
+    sap_inbound.reactivate_token(token_id)
+    return jsonify({'success': True})
 
 
 # ── Go-live Cutover ───────────────────────────────────────────────────────────
