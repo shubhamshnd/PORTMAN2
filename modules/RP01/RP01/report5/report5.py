@@ -1810,7 +1810,7 @@ def build_report5_export_workbook(month_abbrev: str, calendar_year: int):
     wb.save(buf)
     buf.seek(0)
 
-    filename = f"Report5_{month_abbrev}-{calendar_year}.xlsx"
+    filename = f"5. MONTHLY REPORT_{month_abbrev}-{str(calendar_year)[-2:]}.xlsx"
     return buf, filename
 
 

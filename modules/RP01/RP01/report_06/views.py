@@ -577,6 +577,6 @@ def report1_export_excel():
     buf.seek(0)
     return send_file(
         buf, as_attachment=True,
-        download_name=f"Report1_{report['year']}_{report['month']}.xlsx",
+        download_name=f"6. Overseas-Coastal Cargo - {report['month']}.xlsx",
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )

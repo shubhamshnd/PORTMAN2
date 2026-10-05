@@ -505,7 +505,7 @@ def report10_api_export():
         wb.save(buf)
         buf.seek(0)
 
-        filename = f"Report-10_Export_Performance_{fin_year}_{month_label}.xlsx"
+        filename = f"10. YOY VARIATION_{month_label}.xlsx"
         return send_file(
             buf,
             as_attachment=True,

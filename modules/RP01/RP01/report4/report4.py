@@ -1280,7 +1280,7 @@ def report4_api_export():
         wb.save(buf)
         buf.seek(0)
 
-        filename = f"Report-4_{fin_year}_{month_label}.xlsx"
+        filename = f"4. Mode-wise traffic {month_label}.xlsx"
         return send_file(
             buf,
             as_attachment=True,

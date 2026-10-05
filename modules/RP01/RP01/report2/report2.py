@@ -1046,7 +1046,12 @@ def report2_export():
         wb.save(buf)
         buf.seek(0)
 
-        filename = f"Report-2_{month}.xlsx"
+        if cur_cal_year:
+            month_label = f"{month}-{str(cur_cal_year)[-2:]}"
+        else:
+            month_label = month
+            
+        filename = f"2. Appendix_3_FROM BT_{month_label}.xlsx"
         return send_file(
             buf,
             as_attachment=True,

@@ -4,20 +4,83 @@
 
 {% block head %}
 <style>
-    .lueu-wrap { display:flex; gap:12px; height:calc(100vh - 140px); }
-    .lueu-vessels { width:240px; overflow:auto; border-right:1px solid #e2e8f0; }
-    .lueu-parcels { flex:1; overflow:auto; padding:0 8px; }
-    .vessel-row { padding:8px; cursor:pointer; border-bottom:1px solid #f1f5f9; }
-    .vessel-row:hover { background:#f8fafc; }
-    .vessel-row.active { background:#eff6ff; border-left:3px solid #2563eb; }
-    .parcel-card { border:1px solid #e2e8f0; border-radius:6px; margin:8px 0; }
-    .parcel-head { padding:8px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
-    .parcel-head:hover { background:#f8fafc; }
-    .lueu-btn { background:#2563eb; color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
-    .lueu-btn.secondary { background:#64748b; }
-    .progress-pill { font-size:12px; white-space:nowrap; }
-    .dark-theme .lueu-vessels { border-color:#374151; }
-    .dark-theme .parcel-card { border-color:#374151; }
+  .lueu-wrap {
+    display: flex;
+    gap: 12px;
+    height: calc(100vh - 140px);
+  }
+
+  .lueu-vessels {
+    width: 240px;
+    overflow: auto;
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .lueu-parcels {
+    flex: 1;
+    overflow: auto;
+    padding: 0 8px;
+  }
+
+  .vessel-row {
+    padding: 8px;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f5f9;
+  }
+
+  .vessel-row:hover {
+    background: #f8fafc;
+  }
+
+  .vessel-row.active {
+    background: #eff6ff;
+    border-left: 3px solid #2563eb;
+  }
+
+  .parcel-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin: 8px 0;
+  }
+
+  .parcel-head {
+    padding: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .parcel-head:hover {
+    background: #f8fafc;
+  }
+
+  .lueu-btn {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .lueu-btn.secondary {
+    background: #64748b;
+  }
+
+  .progress-pill {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .dark-theme .lueu-vessels {
+    border-color: #374151;
+  }
+
+  .dark-theme .parcel-card {
+    border-color: #374151;
+  }
 </style>
 {% endblock %}
 
@@ -28,7 +91,8 @@
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
       <h3 id="vesselTitle" style="margin:0;">Select a vessel</h3>
       <div style="display:flex;gap:6px;">
-        <button class="lueu-btn" onclick="window.location='/api/module/LUEU01/export'" title="Download every parcel operation, all vessels">&#8681; Export Master</button>
+        <button class="lueu-btn" onclick="window.location='/api/module/LUEU01/export'"
+          title="Download every parcel operation, all vessels">&#8681; Export Master</button>
         <button class="lueu-btn secondary" onclick="refreshInPlace()">&#8635; Refresh</button>
       </div>
     </div>
@@ -39,11 +103,11 @@
 
 {% block scripts %}
 <script>
-  const permissions = {{ permissions|tojson }};
+  const permissions = {{ permissions| tojson }};
   const canEdit = !!(permissions.can_edit || permissions.can_add);
   const canDelete = !!permissions.can_delete;
-  let masters = {equipment:[], delays:[], uom:{names:[],default:''}, berths:[], incharge:[], operators:[]};
-  let selected = {vcn_id:null, expanded:[]};
+  let masters = { equipment: [], delays: [], uom: { names: [], default: '' }, berths: [], incharge: [], operators: [] };
+  let selected = { vcn_id: null, expanded: [] };
   let vessels = [];
   const subTables = {};      // parcel_op_id -> Tabulator
   const parcelTargets = {};  // parcel_op_id -> target qty (for Remaining)
@@ -51,12 +115,33 @@
   const parcelEnd = {};      // parcel_op_id -> end_dt
   const parcelEquip = {};    // parcel_op_id -> equipment chosen on the VCN parcel (comma list)
   const parcelAlongside = {}; // parcel_op_id -> LDUD Along Side datetime (start can't precede it)
+  const parcelBlDate = {};   // parcel_op_id -> bl_date (yyyy-mm-dd)
   const parcelLocked = {};   // parcel_op_id -> true when the LDUD is fully Closed (entry locked)
   function _toDate(v) { if (!v) return null; const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? null : d; }
   let _suppress = false;     // guard against re-entrant cellEdited during clamping
 
-  function list(vals) { return {values: vals, autocomplete:true, allowEmpty:true, listOnEmpty:true}; }
+  function list(vals) { return { values: vals, autocomplete: true, allowEmpty: true, listOnEmpty: true }; }
   function r3(n) { return Math.round(n * 1000) / 1000; }
+
+  function isValidDateInput(val) {
+    if (!val || !val.trim()) return true;
+    const m = /^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})$/.exec(val.trim());
+    if (!m) return false;
+    const d = +m[1], mo = +m[2], y = +m[3], h = +m[4], min = +m[5];
+    if (y < 2000 || y > 2099) return false;
+    const dt = new Date(y, mo - 1, d, h, min);
+    return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d && h <= 23 && min <= 59;
+  }
+
+  function normalize2400(el) {
+    const val = el.value.trim();
+    const m = /^(\d{2})-(\d{2})-(\d{4})\s+24:00$/.exec(val);
+    if (m) {
+      const dt = new Date(+m[3], +m[2] - 1, +m[1] + 1);
+      const pd = n => String(n).padStart(2, '0');
+      el.value = `${pd(dt.getDate())}-${pd(dt.getMonth()+1)}-${dt.getFullYear()} 00:00`;
+    }
+  }
 
   // hours between two 'HH:MM' strings (wraps past midnight)
   function rowHours(f, t) {
@@ -77,6 +162,11 @@
   // The planned ETC is derived from these; the actual ETC stays log-driven.
   async function saveExpectedStart(pid) {
     const expEl = document.getElementById(`exp-${pid}`);
+    normalize2400(expEl);
+    if (expEl.value.trim() && !isValidDateInput(expEl.value)) {
+      alert('Please enter a valid Expected Start date/time in DD-MM-YYYY HH:MM format.');
+      expEl.value = ''; return;
+    }
     const v = _displayToDb(expEl.value);
     // expected start must not be in the past (today or later)
     const vDt = _toDate(v);
@@ -86,8 +176,8 @@
     }
     const rate = document.getElementById(`exprate-${pid}`).value;
     await fetch('/api/module/LUEU01/parcel/expected_start', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid, expected_start: v, expected_flow_rate: rate})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid, expected_start: v, expected_flow_rate: rate })
     });
     const span = document.getElementById(`expetc-${pid}`);
     if (span) span.innerHTML = expEtcChip(rate, parcelTargets[pid] || 0, v);
@@ -102,20 +192,29 @@
   // Parcel start/end are entered here in LUEU01 (persisted on the LDUD parcel-op).
   async function saveParcelTimes(pid) {
     const startEl = document.getElementById(`start-${pid}`), endEl = document.getElementById(`end-${pid}`);
+    normalize2400(startEl);
+    if (startEl.value.trim() && !isValidDateInput(startEl.value)) {
+      alert('Please enter a valid Start date/time in DD-MM-YYYY HH:MM format.');
+      startEl.value = ''; return;
+    }
     // Switching tabs to check the time fires onchange mid-entry; don't overwrite the
     // stored value with an empty one when the field holds a half-typed datetime.
     if (startEl.value.trim() && !_displayToDb(startEl.value)) { return; }
     const s = _displayToDb(startEl.value), e = _displayToDb(endEl.value);
     // start must be on/after the LDUD Along Side time
     const sDt = _toDate(s), alongDt = _toDate(parcelAlongside[pid]);
-    if (sDt && alongDt && sDt < alongDt) {
-      alert(`Start cannot be before the Along Side time (${_dbToDisplay(parcelAlongside[pid])}).`);
-      startEl.value = _dbToDisplay(parcelStart[pid] || ''); return;
+    if (sDt && sDt > new Date()) {
+      alert('Start Date & Time cannot be in the future.');
+      startEl.value = ''; return;
     }
-    if (s && e && e < s) { alert('End cannot be before Start.'); endEl.value = _dbToDisplay(parcelEnd[pid] || ''); return; }
+    if (sDt && alongDt && sDt < alongDt) {
+      alert(`Start Date & Time cannot be before the Along Side time (${_dbToDisplay(parcelAlongside[pid])}).`);
+      startEl.value = ''; return;
+    }
+    if (s && e && e < s) { alert('End Date & Time cannot be before Start Date & Time.'); endEl.value = ''; return; }
     await fetch('/api/module/LUEU01/parcel/times', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid, start_dt: s, end_dt: e})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid, start_dt: s, end_dt: e })
     });
     parcelStart[pid] = s; parcelEnd[pid] = e;
     const span = document.getElementById(`status-${pid}`);
@@ -126,7 +225,7 @@
   // ── parcel metrics: avg flow rate, run hours, ETC (Estimated Time of Completion) ──
   function fmtDateTime(dt) {
     const p = n => String(n).padStart(2, '0');
-    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return `${p(dt.getDate())} ${mon[dt.getMonth()]} ${dt.getFullYear()}, ${p(dt.getHours())}:${p(dt.getMinutes())}`;
   }
   // ETC = parcel Start + total time to discharge the full target at the avg rate.
@@ -199,8 +298,8 @@
     }
     if (end !== (parcelEnd[pid] || '')) {
       await fetch('/api/module/LUEU01/parcel/times', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({parcel_op_id: pid, start_dt: parcelStart[pid] || '', end_dt: end})
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parcel_op_id: pid, start_dt: parcelStart[pid] || '', end_dt: end })
       });
       parcelEnd[pid] = end;
     }
@@ -249,7 +348,7 @@
   }
   function mediumEdited(cell) {
     const row = cell.getRow();
-    if (cell.getValue() === 'Direct Pipe') row.update({equipment_name: ''});
+    if (cell.getValue() === 'Direct Pipe') row.update({ equipment_name: '' });
     row.reformat();
   }
 
@@ -260,7 +359,7 @@
     history.replaceState(null, '', u);
   }
   function loadSel() {
-    try { selected = JSON.parse(localStorage.getItem('lueu_sel')) || selected; } catch (e) {}
+    try { selected = JSON.parse(localStorage.getItem('lueu_sel')) || selected; } catch (e) { }
     if (!selected.expanded) selected.expanded = [];
     const q = new URL(window.location).searchParams.get('vcn');
     if (q) selected.vcn_id = parseInt(q);
@@ -275,7 +374,7 @@
       fetch('/api/module/LUEU01/shift-incharge').then(r => r.json()),
       fetch('/api/module/LUEU01/shift-operators').then(r => r.json()),
     ]);
-    masters = {equipment: eq, delays: dl, uom: uo, berths: be, incharge: inc, operators: ops};
+    masters = { equipment: eq, delays: dl, uom: uo, berths: be, incharge: inc, operators: ops };
   }
 
   async function loadVessels() {
@@ -300,7 +399,7 @@
 
   async function renderParcels() {
     // rebuilding innerHTML below detaches existing grids — destroy them first
-    for (const k of Object.keys(subTables)) { try { subTables[k].destroy(); } catch (e) {} delete subTables[k]; }
+    for (const k of Object.keys(subTables)) { try { subTables[k].destroy(); } catch (e) { } delete subTables[k]; }
     const v = currentVessel();
     document.getElementById('vesselTitle').textContent = v ? `${v.vessel_name} — ${v.vcn_doc_num}` : 'Select a vessel';
     const listEl = document.getElementById('parcelList');
@@ -313,6 +412,7 @@
       parcelEnd[p.parcel_op_id] = p.end_dt || '';
       parcelEquip[p.parcel_op_id] = p.equipment_names || '';
       parcelAlongside[p.parcel_op_id] = p.alongside_datetime || '';
+      parcelBlDate[p.parcel_op_id] = p.bl_date || '';
     });
     listEl.innerHTML = parcels.map(p => {
       // Fully Closed in LDUD01 → all LUEU01 entry for the vessel is locked
@@ -345,16 +445,16 @@
             <button class="lueu-btn" onclick="addLogRow(${p.parcel_op_id}, '${berth.replace(/'/g, "\\'")}')">+ Add</button>
             <button class="lueu-btn secondary" onclick="saveLog(${p.parcel_op_id})">Save</button>
             ${p.is_shortclosed
-              ? `<button class="lueu-btn" style="background:#f59e0b;color:#fff;" onclick="revertShortclose(${p.parcel_op_id})">↺ Revert Short-close</button>`
-              : (p.remaining_qty > 0.01
-                 ? `<button class="lueu-btn" style="background:#dc2626;color:#fff;" onclick="shortcloseParcel(${p.parcel_op_id}, ${r3(p.remaining_qty)})">Shortclose Remaining (${r3(p.remaining_qty)} MT)</button>`
-                 : '')}
+            ? `<button class="lueu-btn" style="background:#f59e0b;color:#fff;" onclick="revertShortclose(${p.parcel_op_id})">↺ Revert Short-close</button>`
+            : (p.remaining_qty > 0.01
+              ? `<button class="lueu-btn" style="background:#dc2626;color:#fff;" onclick="shortcloseParcel(${p.parcel_op_id}, ${r3(p.remaining_qty)})">Shortclose Remaining (${r3(p.remaining_qty)} MT)</button>`
+              : '')}
             ${p.additional_qty > 0
-              ? `<button class="lueu-btn" style="background:#7c3aed;color:#fff;" onclick="clearAdditional(${p.parcel_op_id})" title="Reason: ${(p.additional_reason || '').replace(/"/g, '&quot;')}">↺ Remove Additional Qty (+${r3(p.additional_qty)} MT)</button>`
-              : `<button class="lueu-btn" style="background:#2563eb;color:#fff;" onclick="openAdditional(${p.parcel_op_id})" title="Vessel discharged more than the declared BL? Amend it here instead of editing the VCN.">+ Additional Qty</button>`}
+            ? `<button class="lueu-btn" style="background:#7c3aed;color:#fff;" onclick="clearAdditional(${p.parcel_op_id})" title="Reason: ${(p.additional_reason || '').replace(/"/g, '&quot;')}">↺ Remove Additional Qty (+${r3(p.additional_qty)} MT)</button>`
+            : `<button class="lueu-btn" style="background:#2563eb;color:#fff;" onclick="openAdditional(${p.parcel_op_id})" title="Vessel discharged more than the declared BL? Amend it here instead of editing the VCN.">+ Additional Qty</button>`}
             ${p.is_removed
-              ? `<button class="lueu-btn" style="background:#16a34a;color:#fff;" onclick="restoreParcel(${p.parcel_op_id}, ${JSON.stringify(p.parcel_ids)})">↺ Restore Parcel</button>`
-              : `<button class="lueu-btn secondary" onclick="openRemoveParcel(${p.parcel_op_id}, ${JSON.stringify(p.parcel_ids)})" title="Cancel this parcel without editing the VCN. It stays visible and can be restored.">🚫 Remove Parcel</button>`}
+            ? `<button class="lueu-btn" style="background:#16a34a;color:#fff;" onclick="restoreParcel(${p.parcel_op_id}, ${JSON.stringify(p.parcel_ids)})">↺ Restore Parcel</button>`
+            : `<button class="lueu-btn secondary" onclick="openRemoveParcel(${p.parcel_op_id}, ${JSON.stringify(p.parcel_ids)})" title="Cancel this parcel without editing the VCN. It stays visible and can be restored.">🚫 Remove Parcel</button>`}
           </div>` : ''}
           ${p.is_removed ? `<div style="background:#f1f5f9;border-left:3px solid #64748b;padding:6px 10px;margin:4px 0;font-size:11px;color:#475569;">
             🚫 <strong>Parcel removed</strong> — excluded from billing, closure and targets. ${p.removed_reason ? 'Reason: ' + p.removed_reason : ''} Use <em>Restore Parcel</em> to bring it back.
@@ -387,8 +487,8 @@
     for (const r of table.getRows()) { cum += parseFloat(r.getData().quantity || 0) || 0; if (r === row) break; }
     return cum;
   }
-  const _totalFmt = function(c) { return r3(_cumQty(c.getTable(), c.getRow())); };
-  const _remFmt = function(c) {
+  const _totalFmt = function (c) { return r3(_cumQty(c.getTable(), c.getRow())); };
+  const _remFmt = function (c) {
     const target = parcelTargets[c.getRow().getData().parcel_op_id] || 0;
     const rem = r3(target - _cumQty(c.getTable(), c.getRow()));
     return `<span style="color:${rem < 0 ? '#dc2626' : '#1f2937'}">${rem}</span>`;
@@ -399,36 +499,47 @@
     const canDel = canDelete && !parcelLocked[pid];
     return [
       // value stays ISO (yyyy-mm-dd) for chaining/validation; display is DD-MM-YYYY
-      {title: "Date", field: "entry_date", editor: ed ? "date" : false, width: 96,
-        formatter: function(cell) {
+      {
+        title: "Date", field: "entry_date", editor: ed ? "date" : false, width: 96,
+        formatter: function (cell) {
           const m = String(cell.getValue() || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
           return m ? `${m[3]}-${m[2]}-${m[1]}` : (cell.getValue() || '');
-        }},
-      {title: "From", field: "from_time", editor: ed ? "input" : false, width: 60, cellEdited: validateTimeCell},
-      {title: "To", field: "to_time", editor: ed ? "input" : false, width: 60, cellEdited: validateTimeCell},
-      {title: "Last Hr", field: "quantity", editor: ed ? "number" : false, hozAlign: "right", width: 70,
-        editorParams: {min: 0, step: 0.01}, cellEdited: clampQty},
-      {title: "Total", field: "_total", hozAlign: "right", width: 70, formatter: _totalFmt},
-      {title: "Rem", field: "_remaining", hozAlign: "right", width: 72, formatter: _remFmt},
-      {title: "Press", field: "pressure", editor: ed ? "number" : false, hozAlign: "right", width: 58,
-        editorParams: {step: 0.01}},
-      {title: "UOM", field: "quantity_uom", editor: ed ? "list" : false, editorParams: list(masters.uom.names), width: 56},
-      {title: "Medium", field: "medium", width: 90,
-        editor: ed ? "list" : false, editorParams: {values: ['Equipment', 'Direct Pipe']}, cellEdited: mediumEdited},
-      {title: "Equipment", field: "equipment_name", width: 100,
+        }
+      },
+      { title: "From", field: "from_time", editor: ed ? "input" : false, width: 60, cellEdited: validateTimeCell },
+      { title: "To", field: "to_time", editor: ed ? "input" : false, width: 60, cellEdited: validateTimeCell },
+      {
+        title: "Last Hr", field: "quantity", editor: ed ? "number" : false, hozAlign: "right", width: 70,
+        editorParams: { min: 0, step: 0.01 }, cellEdited: clampQty
+      },
+      { title: "Total", field: "_total", hozAlign: "right", width: 70, formatter: _totalFmt },
+      { title: "Rem", field: "_remaining", hozAlign: "right", width: 72, formatter: _remFmt },
+      {
+        title: "Press", field: "pressure", editor: ed ? "number" : false, hozAlign: "right", width: 58,
+        editorParams: { step: 0.01 }
+      },
+      { title: "UOM", field: "quantity_uom", editor: ed ? "list" : false, editorParams: list(masters.uom.names), width: 56 },
+      {
+        title: "Medium", field: "medium", width: 90,
+        editor: ed ? "list" : false, editorParams: { values: ['Equipment', 'Direct Pipe'] }, cellEdited: mediumEdited
+      },
+      {
+        title: "Equipment", field: "equipment_name", width: 100,
         editor: ed ? "list" : false, editorParams: list(masters.equipment),
-        editable: function(cell) { return ed && cell.getRow().getData().medium === 'Equipment'; },
-        formatter: function(cell) {
+        editable: function (cell) { return ed && cell.getRow().getData().medium === 'Equipment'; },
+        formatter: function (cell) {
           return cell.getRow().getData().medium === 'Equipment'
             ? (cell.getValue() || '') : '<span style="color:#cbd5e1">—</span>';
-        }},
-      {title: "Delay", field: "delay_name", editor: ed ? "list" : false, editorParams: list(masters.delays), width: 100},
-      {title: "Shift", field: "shift", editor: ed ? "list" : false, editorParams: {values: ['A', 'B', 'C']}, width: 50},
-      {title: "Operator", field: "operator_name", editor: ed ? "list" : false, editorParams: list(masters.operators), width: 88},
-      {title: "Incharge", field: "shift_incharge", editor: ed ? "list" : false, editorParams: list(masters.incharge), width: 88},
-      {title: "Berth", field: "berth_name", editor: ed ? "list" : false, editorParams: list(masters.berths), width: 88},
-      {title: "Remarks", field: "remarks", editor: ed ? "input" : false, width: 100},
-      canDel ? {title: "", width: 32, headerSort: false, hozAlign: "center",
+        }
+      },
+      { title: "Delay", field: "delay_name", editor: ed ? "list" : false, editorParams: list(masters.delays), width: 100 },
+      { title: "Shift", field: "shift", editor: ed ? "list" : false, editorParams: { values: ['A', 'B', 'C'] }, width: 50 },
+      { title: "Operator", field: "operator_name", editor: ed ? "list" : false, editorParams: list(masters.operators), width: 88 },
+      { title: "Incharge", field: "shift_incharge", editor: ed ? "list" : false, editorParams: list(masters.incharge), width: 88 },
+      { title: "Berth", field: "berth_name", editor: ed ? "list" : false, editorParams: list(masters.berths), width: 88 },
+      { title: "Remarks", field: "remarks", editor: ed ? "input" : false, width: 100 },
+      canDel ? {
+        title: "", width: 32, headerSort: false, hozAlign: "center",
         // delete only from the bottom — X shows on the last row only
         formatter: (cell) => {
           const rows = cell.getTable().getRows();
@@ -438,7 +549,8 @@
         cellClick: (e, cell) => {
           const rows = cell.getTable().getRows();
           if (cell.getRow() === rows[rows.length - 1]) deleteLogRow(cell.getRow());
-        }} : null
+        }
+      } : null
     ].filter(Boolean);
   }
 
@@ -447,15 +559,15 @@
     subTables[pid] = new Tabulator(`#log-table-${pid}`, {
       layout: "fitData", height: 220,
       ajaxURL: `/api/module/LUEU01/log/${pid}`,
-      columnDefaults: {headerSort: false},
+      columnDefaults: { headerSort: false },
       columns: logColumns(pid),
-      rowFormatter: function(row) {
+      rowFormatter: function (row) {
         if (row.getData().is_shortclose) {
           row.getElement().style.background = '#fef3c7';
           row.getElement().title = 'Short-close: leftover quantity written off (excluded from Avg rate). Use “Revert Short-close” to undo.';
         }
       },
-      dataLoaded: function() { recomputeTotals(pid); }
+      dataLoaded: function () { recomputeTotals(pid); }
     });
     // open scrolled to the latest (bottom) entry: wait for the first render
     // that actually has rows — dataLoaded fires before rows hit the DOM.
@@ -518,7 +630,7 @@
       shift: currentShift(),
       medium: equip ? 'Equipment' : 'Direct Pipe', equipment_name: equip,
       quantity_uom: masters.uom.default, berth_name: defaultBerth
-    }, false).then(row => { recomputeTotals(pid); row.scrollTo().catch(() => {}); });
+    }, false).then(row => { recomputeTotals(pid); row.scrollTo().catch(() => { }); });
   }
 
   async function saveLog(pid) {
@@ -527,11 +639,11 @@
     for (const row of t.getRows()) {
       const d = row.getData();
       const res = await fetch('/api/module/LUEU01/log/save', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({...d, parcel_op_id: pid})
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...d, parcel_op_id: pid })
       });
       const j = await res.json();
-      if (j.id && !d.id) row.update({id: j.id});
+      if (j.id && !d.id) row.update({ id: j.id });
     }
     await maybeAutoEnd(pid);   // auto-set End when the parcel is completed
     renderParcels();           // refresh progress bars + metrics + End
@@ -542,8 +654,8 @@
     if (!d.id) { row.delete(); return; }
     if (!confirm('Delete this row?')) return;
     await fetch('/api/module/LUEU01/log/delete', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ids: [d.id]})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [d.id] })
     });
     row.delete();
     await maybeAutoEnd(d.parcel_op_id);  // re-evaluate completion after removal
@@ -566,8 +678,8 @@
 
   async function setParcelRemoved(pid, parcelIds, removed, reason) {
     const res = await fetch('/api/module/LUEU01/parcel/removed', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid, parcel_ids: parcelIds, removed, reason})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid, parcel_ids: parcelIds, removed, reason })
     });
     const j = await res.json();
     if (!j.success) { alert(j.error || 'Could not update the parcel'); return; }
@@ -598,8 +710,8 @@
     if (!(qty > 0)) return show('Enter an additional quantity greater than zero.');
     if (!reason) return show('A reason is required.');
     const res = await fetch('/api/module/LUEU01/parcel/additional', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid, quantity: qty, reason})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid, quantity: qty, reason })
     });
     const j = await res.json();
     if (!j.success) return show(j.error || 'Could not record the additional quantity');
@@ -610,8 +722,8 @@
   async function clearAdditional(pid) {
     if (!confirm('Remove the additional quantity?\nThe target drops back to the declared BL, and any quantity logged above it stops counting.')) return;
     const res = await fetch('/api/module/LUEU01/parcel/additional/clear', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid })
     });
     const j = await res.json();
     if (!j.success) { alert(j.error || 'Could not remove it'); return; }
@@ -621,8 +733,8 @@
   async function shortcloseParcel(pid, remaining) {
     if (!confirm(`Short-close the remaining ${remaining} MT for this parcel?\nThis records the leftover with no time so Remaining becomes 0. It's excluded from the Avg rate and can be reverted.`)) return;
     const res = await fetch('/api/module/LUEU01/parcel/shortclose', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid })
     });
     const j = await res.json();
     if (!j.success) { alert(j.error || 'Short-close failed'); return; }
@@ -632,8 +744,8 @@
   async function revertShortclose(pid) {
     if (!confirm('Revert the short-close and restore the remaining quantity?')) return;
     const res = await fetch('/api/module/LUEU01/parcel/shortclose/revert', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({parcel_op_id: pid})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parcel_op_id: pid })
     });
     const j = await res.json();
     if (!j.success) { alert(j.error || 'Revert failed'); return; }
@@ -653,7 +765,8 @@
   })();
 </script>
 <!-- Additional Quantity (BL amendment) Modal -->
-<div id="addlModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;">
+<div id="addlModal"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;">
   <div style="background:#fff;border-radius:10px;padding:24px;width:440px;max-width:94vw;">
     <h3 style="margin:0 0 4px;font-size:16px;font-weight:600;">+ Additional Quantity</h3>
     <p style="margin:0 0 14px;font-size:12px;color:#64748b;">
@@ -663,14 +776,20 @@
       The VCN declaration is <strong>not</strong> changed.
     </p>
     <input type="hidden" id="addlPid">
-    <label style="display:block;font-size:12px;font-weight:600;color:#334155;margin:0 0 4px;">Additional quantity (MT) <span style="color:#dc2626;">*</span></label>
-    <input type="number" id="addlQty" step="0.001" min="0" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;">
-    <label style="display:block;font-size:12px;font-weight:600;color:#334155;margin:14px 0 4px;">Reason <span style="color:#dc2626;">*</span></label>
-    <textarea id="addlReason" rows="3" placeholder="e.g. Shipping bill amended &mdash; vessel discharged in excess of declared quantity" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:inherit;"></textarea>
+    <label style="display:block;font-size:12px;font-weight:600;color:#334155;margin:0 0 4px;">Additional quantity (MT)
+      <span style="color:#dc2626;">*</span></label>
+    <input type="number" id="addlQty" step="0.001" min="0"
+      style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;">
+    <label style="display:block;font-size:12px;font-weight:600;color:#334155;margin:14px 0 4px;">Reason <span
+        style="color:#dc2626;">*</span></label>
+    <textarea id="addlReason" rows="3"
+      placeholder="e.g. Shipping bill amended &mdash; vessel discharged in excess of declared quantity"
+      style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:inherit;"></textarea>
     <p id="addlError" style="display:none;margin:10px 0 0;font-size:12px;color:#b91c1c;font-weight:600;"></p>
     <div style="margin-top:18px;text-align:right;">
       <button class="lueu-btn secondary" onclick="closeAdditional()">Cancel</button>
-      <button class="lueu-btn" style="background:#2563eb;color:#fff;" onclick="submitAdditional()">Record Amendment</button>
+      <button class="lueu-btn" style="background:#2563eb;color:#fff;" onclick="submitAdditional()">Record
+        Amendment</button>
     </div>
   </div>
 </div>

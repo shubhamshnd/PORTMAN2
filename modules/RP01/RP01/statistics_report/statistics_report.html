@@ -732,9 +732,15 @@
             const y = mNum >= 4 ? startYear : (startYear + 1);
             const mStr = String(mNum).padStart(2, '0');
             sDateTime = `${y}-${mStr}-01T07:00`;
-            const lastDay = new Date(y, mNum, 0).getDate();
-            const lastDayStr = String(lastDay).padStart(2, '0');
-            eDateTime = `${y}-${mStr}-${lastDayStr}T07:00`;
+            
+            let nextMNum = mNum + 1;
+            let nextY = y;
+            if (nextMNum > 12) {
+                nextMNum = 1;
+                nextY++;
+            }
+            const nextMStr = String(nextMNum).padStart(2, '0');
+            eDateTime = `${nextY}-${nextMStr}-01T07:00`;
         } else {
             if (startYear + 1 < yyyy || (startYear + 1 === yyyy && today.getMonth() >= 3)) {
                 eDateTime = `${startYear + 1}-03-31T07:00`;
