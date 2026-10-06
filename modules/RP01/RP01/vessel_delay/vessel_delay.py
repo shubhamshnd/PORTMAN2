@@ -325,13 +325,13 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
                     })
 
         # Deduplicate identical records if any
-        seen_entries = set()
+        seen_times = set()
         deduped_rows = []
         for row in raw_rows:
-            entry_key = (row["vcn_no"], row["start_time"], row["end_time"], row["delay_name"])
-            if entry_key in seen_entries:
+            time_key = (row["vcn_no"], row["start_time"], row["end_time"])
+            if time_key in seen_times:
                 continue
-            seen_entries.add(entry_key)
+            seen_times.add(time_key)
             deduped_rows.append(row)
 
         # =========================================================================
