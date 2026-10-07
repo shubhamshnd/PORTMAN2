@@ -369,7 +369,7 @@ def _fetch_live_rows(year_str, month_str):
             = UPPER(TRIM(lpo.cargo_name))
             
         LEFT JOIN vessels v
-            ON v.doc_num = vh.vessel_master_doc
+            ON v.doc_num = SPLIT_PART(vh.vessel_master_doc, '/', 1)
             
         LEFT JOIN vessel_flags vf
             ON UPPER(TRIM(vf.name)) = UPPER(TRIM(v.nationality))
