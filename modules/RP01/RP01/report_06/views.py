@@ -319,22 +319,6 @@ def _fetch_live_rows(year_str, month_str):
     """
     LIVE fallback for the current / not-yet-reconciled month.
     Reads from vcn_header -> ldud_header -> ldud_parcel_ops -> lueu_parcel_log.
-
-    CHANGE FROM PREVIOUS VERSION:
-      - Added `WHERE lpl.is_deleted = false` so soft-deleted parcel log
-        entries are excluded from totals (previously not filtered at all).
-      - Category matching kept as simple exact-then-fuzzy against
-        vessel_cargo, unchanged, since diagnostics confirmed this join
-        does NOT duplicate rows for the vessels checked.
-
-    STILL UNCONFIRMED / NOT HANDLED HERE:
-      - quantity_uom is not inspected or converted. If rows are stored
-        in mixed units (e.g. some in KL, some in MT), this will still
-        produce wrong totals. Run:
-            SELECT id, quantity, quantity_uom FROM lueu_parcel_log
-            WHERE id IN (123,124,125,126,127,128);
-        before trusting this output, and tell me what comes back so a
-        conversion can be added if needed.
     """
     y, m = month_str.split('-')
     y, m = int(y), int(m)
@@ -354,6 +338,11 @@ def _fetch_live_rows(year_str, month_str):
             vc.cargo_category,
             vc.cargo_sub_category,
             vc.cargo_sub_category_2,
+
+            CASE 
+                WHEN vf.flag_type = 'IF' THEN 'I'
+                WHEN vf.flag_type = 'FF' THEN 'F'
+            END AS foreign_indian,
 
             SUM(
                 CASE
@@ -378,6 +367,12 @@ def _fetch_live_rows(year_str, month_str):
         LEFT JOIN vessel_cargo vc
             ON UPPER(TRIM(vc.cargo_name))
             = UPPER(TRIM(lpo.cargo_name))
+            
+        LEFT JOIN vessels v
+            ON v.doc_num = vh.vessel_master_doc
+            
+        LEFT JOIN vessel_flags vf
+            ON UPPER(TRIM(vf.name)) = UPPER(TRIM(v.nationality))
 
         WHERE COALESCE(lpl.is_deleted,false)=false
         AND COALESCE(lpl.is_shortclose,false)=false
@@ -390,7 +385,8 @@ def _fetch_live_rows(year_str, month_str):
             vh.operation_type,
             vc.cargo_category,
             vc.cargo_sub_category,
-            vc.cargo_sub_category_2
+            vc.cargo_sub_category_2,
+            vf.flag_type
     """, [start, end])
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
@@ -399,7 +395,7 @@ def _fetch_live_rows(year_str, month_str):
     for r in rows:
         lines.append({
             "overseas_coastal": r["overseas_coastal"],
-            "foreign_indian": "I",
+            "foreign_indian": r["foreign_indian"],
             "import_export": r["import_export"],
 
             "cargo_category": r["cargo_category"],
@@ -434,7 +430,7 @@ def get_report1_data(year_str, month_str, debug=False):
     if not lines:
         lines = _fetch_live_rows(year_str, month_str)
         source = 'live'
-        fi_placeholder = True
+        fi_placeholder = False
 
     rows, totals, debug_block = _aggregate(
         lines, debug=debug, month_label=month_label,

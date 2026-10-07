@@ -135,12 +135,6 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
               AND (
                   (vd.delay_name IS NOT NULL AND TRIM(vd.delay_name) != '')
                   OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) != '')
-                  OR ((COALESCE(NULLIF(TRIM(lh.anchored_datetime), ''), NULLIF(TRIM(lh.nor_tendered), '')) IS NOT NULL)
-                      AND (NULLIF(TRIM(lh.pilot_pickup_time), '') IS NOT NULL))
-                  OR ((NULLIF(TRIM(lh.pilot_pickup_time), '') IS NOT NULL)
-                      AND (NULLIF(TRIM(lh.alongside_datetime), '') IS NOT NULL))
-                  OR ((NULLIF(TRIM(lh.cast_off_datetime), '') IS NOT NULL)
-                      AND (NULLIF(TRIM(lh.pilot_disembarked), '') IS NOT NULL))
               )
         """)
         fys = set()
@@ -220,109 +214,7 @@ def fetch_vessel_delay_data(year_filter=None, month_filter=None):
                 "hours": hrs_val
             })
 
-        # =========================================================================
-        # 2b. MILESTONE DELAYS from ldud_header (shown after original delays)
-        #     - Berth Not availeb: Anchorage/NOR -> Pilot Pickup
-        #     - Pilot pick up- along side: Pilot Pickup -> Alongside
-        #     - cast of time - Pilot disemberd: Cast Off -> Pilot Disembarked
-        # =========================================================================
-        cur.execute("""
-            SELECT
-                lh.id AS ldud_id,
-                lh.vcn_id,
-                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
-                COALESCE(vh.vessel_name, lh.vessel_name, '') AS vessel_name,
-                lh.cast_off_datetime,
-                lh.anchored_datetime,
-                lh.nor_tendered,
-                lh.pilot_pickup_time,
-                lh.alongside_datetime,
-                lh.pilot_disembarked
-            FROM ldud_header lh
-            LEFT JOIN vcn_header vh ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
-            WHERE lh.is_deleted IS NOT TRUE
-              AND lh.cast_off_datetime IS NOT NULL
-              AND TRIM(lh.cast_off_datetime) != ''
-            ORDER BY lh.id ASC
-        """)
-        for r in cur.fetchall():
-            d_cast_off = _parse_datetime(r['cast_off_datetime'])
-            if not d_cast_off:
-                continue
 
-            ref_dt = d_cast_off
-            fy, m_idx = _date_to_fin_year_and_idx(ref_dt)
-            m_str = ref_dt.strftime("%b-%y")
-            v_vcn = r['vcn_no'] or (f"VCN-{r['vcn_id']}" if r['vcn_id'] else "")
-            v_vessel = r['vessel_name'] or ""
-
-            d_anchored = _parse_datetime(r['anchored_datetime']) or _parse_datetime(r['nor_tendered'])
-            d_pilot = _parse_datetime(r['pilot_pickup_time'])
-            d_alongside = _parse_datetime(r['alongside_datetime'])
-            d_pilot_dis = _parse_datetime(r['pilot_disembarked'])
-
-            # 1) Berth Not availeb (Anchorage / NOR -> Pilot Pickup)
-            if d_anchored and d_pilot:
-                diff_sec = (d_pilot - d_anchored).total_seconds()
-                if diff_sec > 0:
-                    raw_rows.append({
-                        "sort_dt": ref_dt,
-                        "delay_dt": d_anchored,
-                        "source_priority": 2,
-                        "fin_year": fy,
-                        "month_idx": m_idx,
-                        "vcn_no": v_vcn,
-                        "vessel_name": v_vessel,
-                        "month": m_str,
-                        "delay_name": "Berth Not availeb",
-                        "delay_type": "Port",
-                        "delay_account": "Port",
-                        "start_time": _format_datetime(d_anchored),
-                        "end_time": _format_datetime(d_pilot),
-                        "hours": _format_duration_hh_mm(diff_sec)
-                    })
-
-            # 2) Pilot pick up- along side (Pilot Pickup -> Alongside)
-            if d_pilot and d_alongside:
-                diff_sec = (d_alongside - d_pilot).total_seconds()
-                if diff_sec > 0:
-                    raw_rows.append({
-                        "sort_dt": ref_dt,
-                        "delay_dt": d_pilot,
-                        "source_priority": 3,
-                        "fin_year": fy,
-                        "month_idx": m_idx,
-                        "vcn_no": v_vcn,
-                        "vessel_name": v_vessel,
-                        "month": m_str,
-                        "delay_name": "Pilot pick up- along side",
-                        "delay_type": "Pilot",
-                        "delay_account": "Port",
-                        "start_time": _format_datetime(d_pilot),
-                        "end_time": _format_datetime(d_alongside),
-                        "hours": _format_duration_hh_mm(diff_sec)
-                    })
-
-            # 3) cast of time - Pilot disemberd (Cast Off -> Pilot Disembarked)
-            if d_cast_off and d_pilot_dis:
-                diff_sec = (d_pilot_dis - d_cast_off).total_seconds()
-                if diff_sec > 0:
-                    raw_rows.append({
-                        "sort_dt": ref_dt,
-                        "delay_dt": d_cast_off,
-                        "source_priority": 4,
-                        "fin_year": fy,
-                        "month_idx": m_idx,
-                        "vcn_no": v_vcn,
-                        "vessel_name": v_vessel,
-                        "month": m_str,
-                        "delay_name": "cast of time - Pilot disemberd",
-                        "delay_type": "Pilot",
-                        "delay_account": "Port",
-                        "start_time": _format_datetime(d_cast_off),
-                        "end_time": _format_datetime(d_pilot_dis),
-                        "hours": _format_duration_hh_mm(diff_sec)
-                    })
 
         # Deduplicate identical records if any
         seen_times = set()
