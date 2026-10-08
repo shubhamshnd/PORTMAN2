@@ -123,6 +123,7 @@ def _load_live_pipeline_rows():
                        JOIN port_delay_types pdt
                          ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
                        WHERE vd.vcn_id = h.id
+                         AND COALESCE(vd.is_deleted, FALSE) = FALSE
                          AND vd.delay_start IS NOT NULL
                          AND vd.delay_end IS NOT NULL
                          AND pdt.type = 'Pre-Berthing Delays'
@@ -138,6 +139,7 @@ def _load_live_pipeline_rows():
                        JOIN port_delay_types pdt
                          ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
                        WHERE vd.vcn_id = h.id
+                         AND COALESCE(vd.is_deleted, FALSE) = FALSE
                          AND vd.delay_start IS NOT NULL
                          AND vd.delay_end IS NOT NULL
                          AND pdt.type = 'Pre-Berthing Delays'
@@ -147,7 +149,9 @@ def _load_live_pipeline_rows():
             JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
             JOIN ldud_header ld ON ld.id = po.ldud_id
             JOIN vcn_header h ON h.id = ld.vcn_id
-            WHERE l.is_deleted IS NOT TRUE
+            WHERE COALESCE(l.is_deleted, FALSE) = FALSE
+              AND COALESCE(ld.is_deleted, FALSE) = FALSE
+              AND COALESCE(po.is_deleted, FALSE) = FALSE
               AND COALESCE(l.is_shortclose, FALSE) = FALSE
             GROUP BY ld.id,
                      ld.cast_off_datetime,
