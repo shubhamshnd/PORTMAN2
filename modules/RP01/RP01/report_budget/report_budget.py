@@ -278,6 +278,7 @@ def load_all_actuals_and_budgets(fin_year: str, detailed: bool = False, column: 
                       AND NULLIF(TRIM(ld.cast_off_datetime), '') IS NOT NULL
                       AND REPLACE(TRIM(ld.cast_off_datetime), 'T', ' ')::timestamp >= %s::timestamp
                       AND REPLACE(TRIM(ld.cast_off_datetime), 'T', ' ')::timestamp < %s::timestamp
+                      AND COALESCE(ld.is_deleted, false) = false
                       AND COALESCE(l.is_deleted, false) = false
                       AND COALESCE(l.is_shortclose, false) = false
                     GROUP BY po.cargo_name, vc.cargo_type, vc.cargo_category, vc.cargo_category_2, vc.cargo_sub_category, vc.cargo_sub_category_2;
