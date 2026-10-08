@@ -97,7 +97,7 @@ def _period_bounds(fin_year: str, month: str):
     """Return (start_dt, end_dt, is_all_months) as datetime objects."""
     start_y = _get_fy_start_year(fin_year)
     if not month or month.lower() == 'all':
-        return datetime(start_y, 4, 1, 0, 0, 0), datetime(start_y + 1, 4, 1, 0, 0, 0), True
+        return datetime(start_y, 4, 1, 7, 0, 0), datetime(start_y + 1, 4, 1, 7, 0, 0), True
     
     m_num = MONTH_MAP.get(month.capitalize())
     if not m_num:
@@ -109,11 +109,11 @@ def _period_bounds(fin_year: str, month: str):
         m_num = 4
     
     y = start_y if m_num >= 4 else start_y + 1
-    start_dt = datetime(y, m_num, 1, 0, 0, 0)
+    start_dt = datetime(y, m_num, 1, 7, 0, 0)
     if m_num == 12:
-        end_dt = datetime(y + 1, 1, 1, 0, 0, 0)
+        end_dt = datetime(y + 1, 1, 1, 7, 0, 0)
     else:
-        end_dt = datetime(y, m_num + 1, 1, 0, 0, 0)
+        end_dt = datetime(y, m_num + 1, 1, 7, 0, 0)
     return start_dt, end_dt, False
 
 
@@ -1525,7 +1525,10 @@ def get_detailed_analytics_data(
             if not dt_val:
                 continue
 
-            if dt_val < start_dt or dt_val > end_dt:
+            if dt_val < start_dt or dt_val >= end_dt:
+                continue
+
+            if dt_val < datetime.combine(CUTOFF_DATE, datetime.min.time()):
                 continue
 
             po_id = r['po_id']
@@ -2074,14 +2077,14 @@ def get_detailed_analytics_data(
         cur.execute("""
             SELECT
 
-                mh.terminal,
-                mh.cargo_name,
+                COALESCE(mh.terminal, mvm.unloading_terminal) AS terminal,
+                COALESCE(mh.cargo_name, mh.cargo_type, mvm.cargo) AS cargo_name,
                 mh.cargo_type,
                 mh.cargo_sub_category_2,
                 mh.customer,
                 mh.payment_by,
-                mh.quantity,
-                mh.overseas_coastal,
+                COALESCE(mh.quantity, mvm.quantity) AS quantity,
+                COALESCE(mh.overseas_coastal, mvm.overseas_coastal) AS overseas_coastal,
                 mh.import_export,
 
                 mvm.month,
@@ -2094,12 +2097,12 @@ def get_detailed_analytics_data(
                 mvm.cast_off,
                 mvm.sail_cast_off
 
-            FROM mis_history mh
+            FROM mis_vessel_master mvm
 
-            LEFT JOIN mis_vessel_master mvm
-                ON mvm.vcn_no = mh.vcn_no
+            LEFT JOIN mis_history mh
+                ON mh.vcn_no = mvm.vcn_no
 
-            WHERE mh.fin_year = %s
+            WHERE mvm.fin_year = %s
 
         """, [fin_year])
 
@@ -2123,8 +2126,11 @@ def get_detailed_analytics_data(
                 if (
                     dt_val < start_dt
                     or
-                    dt_val > end_dt
+                    dt_val >= end_dt
                 ):
+                    continue
+
+                if dt_val >= datetime.combine(CUTOFF_DATE, datetime.min.time()):
                     continue
 
             else:
