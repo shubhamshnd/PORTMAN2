@@ -489,6 +489,9 @@ def build_report7_data(fin_year: str, selected_month: str = "Jun-26"):
     else:
         filtered_rows = all_dataset_rows
 
+    # Only include vessels where cast off is complete (exclude partial data)
+    filtered_rows = [r for r in filtered_rows if r.get('cast_off')]
+
     def is_liquid(r):
         b = str(r.get('berth_no') or '').strip().upper()
         c = str(r.get('cargo') or '').strip().upper()
