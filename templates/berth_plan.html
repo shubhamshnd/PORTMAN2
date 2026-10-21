@@ -498,10 +498,12 @@
                         const td = document.createElement('td');
                         td.className = 'value' + (v ? '' : ' empty-berth');
                         td.textContent = fieldValue(v, field);
-                        if (v && v.is_planned && (field === 'present_flow_rate' || field === 'expected_completion')) {
+                        const isEtcPlanned = v && (v.etc_is_planned !== undefined ? v.etc_is_planned : v.is_planned);
+                        const isRatePlanned = v && v.is_planned;
+                        if ((field === 'present_flow_rate' && isRatePlanned) || (field === 'expected_completion' && isEtcPlanned && td.textContent && td.textContent !== '-')) {
                             td.classList.add('planned');
                             td.title = 'Planned (Expected Start/Rate) — no operating data logged yet';
-                            if (field === 'expected_completion' && td.textContent) td.textContent += ' (Exp)';
+                            if (field === 'expected_completion') td.textContent += ' (Exp)';
                         }
                         tr.appendChild(td);
                     });
