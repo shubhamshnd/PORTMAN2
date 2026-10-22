@@ -80,15 +80,51 @@ def month_options_for(fin_year: str):
 def _parse_dt(s):
     if not s:
         return None
-    if isinstance(s, (datetime, date)):
+    if isinstance(s, datetime):
         return s
-    try:
-        return datetime.strptime(str(s).replace('T', ' ')[:16], '%Y-%m-%d %H:%M')
-    except Exception:
-        try:
-            return datetime.strptime(str(s)[:10], '%Y-%m-%d')
-        except Exception:
-            return None
+    if isinstance(s, date):
+        return datetime(s.year, s.month, s.day)
+    clean = str(s).strip().replace('T', ' ')
+    for length in (19, 16, 10):
+        sub = clean[:length]
+        for fmt in (
+            '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d',
+            '%d-%m-%Y %H:%M:%S', '%d-%m-%Y %H:%M', '%d-%m-%Y',
+            '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d/%m/%Y'
+        ):
+            try:
+                return datetime.strptime(sub, fmt)
+            except Exception:
+                pass
+    return None
+
+
+def _merge_and_sum_intervals(intervals):
+    """
+    Given a list of (start_datetime, end_datetime) tuples,
+    merges overlapping and contiguous time intervals to avoid duplicate counting,
+    and returns the total unique duration in hours.
+    """
+    valid = [(s, e) for s, e in intervals if s and e and e > s]
+    if not valid:
+        return 0.0
+
+    valid.sort(key=lambda x: (x[0], x[1]))
+
+    merged = []
+    cur_start, cur_end = valid[0]
+
+    for s, e in valid[1:]:
+        if s <= cur_end:
+            if e > cur_end:
+                cur_end = e
+        else:
+            merged.append((cur_start, cur_end))
+            cur_start, cur_end = s, e
+
+    merged.append((cur_start, cur_end))
+    total_seconds = sum((e - s).total_seconds() for s, e in merged)
+    return total_seconds / 3600.0
 
 
 def _load_live_pipeline_rows():
@@ -113,21 +149,6 @@ def _load_live_pipeline_rows():
                    SUM(l.quantity) AS quantity,
                    MIN(po.start_dt) AS first_parcel_start,
                    MAX(po.end_dt) AS last_parcel_end,
-                   COALESCE((
-                       SELECT SUM(
-                           EXTRACT(EPOCH FROM (
-                               vd.delay_end::timestamp - vd.delay_start::timestamp
-                           )) / 3600.0
-                       )
-                       FROM vcn_delays vd
-                       JOIN port_delay_types pdt
-                         ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
-                       WHERE vd.vcn_id = h.id
-                         AND vd.delay_start IS NOT NULL
-                         AND vd.delay_end IS NOT NULL
-                         AND pdt.type = 'Pre-Berthing Delays'
-                         AND pdt.responsibility = 'Port'
-                   ), 0.0) AS port_preberthing_delay_hrs,
                    COALESCE((
                        SELECT SUM(
                            EXTRACT(EPOCH FROM (
@@ -166,6 +187,25 @@ def _load_live_pipeline_rows():
                      h.operation_type
         """)
         live_raw = cur.fetchall()
+
+        # Operational Port pre-berthing delays from vcn_delays
+        cur.execute("""
+            SELECT vd.vcn_id, vd.delay_start, vd.delay_end
+            FROM vcn_delays vd
+            JOIN port_delay_types pdt
+              ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
+            WHERE vd.delay_start IS NOT NULL
+              AND vd.delay_end IS NOT NULL
+              AND pdt.type = 'Pre-Berthing Delays'
+              AND pdt.responsibility = 'Port'
+        """)
+        port_delays_raw = cur.fetchall()
+        port_delays_by_vcn = {}
+        for d in port_delays_raw:
+            ds = _parse_dt(d['delay_start'])
+            de = _parse_dt(d['delay_end'])
+            if ds and de and de > ds:
+                port_delays_by_vcn.setdefault(d['vcn_id'], []).append((ds, de))
     finally:
         conn.close()
 
@@ -184,9 +224,7 @@ def _load_live_pipeline_rows():
             p_pick = _parse_dt(r['pilot_pickup_time'])
             p_dis = _parse_dt(r['pilot_disembarked'])
 
-            port_preberthing_delay_hrs = float(
-                r.get('port_preberthing_delay_hrs') or 0.0
-            )
+            # Non-Port pre-berthing delays (Agent responsibility) - unchanged
             non_port_preberthing_delay_hrs = float(
                 r.get('non_port_preberthing_delay_hrs') or 0.0
             )
@@ -206,30 +244,18 @@ def _load_live_pipeline_rows():
 
             # 3. Pre-Berthing Waiting Time
             #
-            # Excel/reference logic:
-            #   Base Port waiting = Pilot Pickup - Anchorage
-            #                        (use NOR Tendered when Anchorage is unavailable)
-            #   Port a/c          = Base Port waiting + Port pre-berthing delays
-            #   Non-Port a/c      = Agent pre-berthing delays
-            #   Total             = Port a/c + Non-Port a/c
-            #
-            # For August-2026 this produces:
-            #   Base Port waiting = 460.07 Hrs
-            #   Port delays       = 159.63 Hrs
-            #   Port a/c          = 619.70 Hrs
-            #   Non-Port a/c      = 287.67 Hrs
-            #   Total             = 907.37 Hrs
+            # Port a/c: Base waiting interval [Anchorage/NOR to Pilot Pickup]
+            #           combined with Port delay records from vcn_delays.
+            #           Overlapping intervals are merged to prevent duplicate counting.
+            # Non-Port a/c: Agent pre-berthing delays (unchanged)
+            # Total: Port a/c + Non-Port a/c
             pbw_start = anchored or _parse_dt(r['nor_tendered'])
+            port_intervals = list(port_delays_by_vcn.get(r['vcn_id'], []))
 
-            base_port_waiting_hrs = (
-                (p_pick - pbw_start).total_seconds() / 3600.0
-                if pbw_start and p_pick and p_pick > pbw_start
-                else 0.0
-            )
+            if pbw_start and p_pick and p_pick > pbw_start:
+                port_intervals.append((pbw_start, p_pick))
 
-            waiting_port_hrs = (
-                base_port_waiting_hrs + port_preberthing_delay_hrs
-            )
+            waiting_port_hrs = _merge_and_sum_intervals(port_intervals)
             waiting_non_port_hrs = non_port_preberthing_delay_hrs
             pbw_hrs = waiting_port_hrs + waiting_non_port_hrs
 
@@ -467,12 +493,25 @@ def build_report7_data(fin_year: str, selected_month: str = "Jun-26"):
     finally:
         conn.close()
 
-    covered_months = set(str(r.get('month') or '').strip() for r in mv_rows if r.get('month'))
-
     live_pipeline_rows = _load_live_pipeline_rows()
-    live_uncovered = [r for r in live_pipeline_rows if r['fin_year'] == fin_year and r['month'] not in covered_months]
+    live_months = set(
+        str(r.get('month') or '').strip()
+        for r in live_pipeline_rows
+        if r.get('month') and r.get('fin_year') == fin_year
+    )
 
-    all_dataset_rows = list(mv_rows) + live_uncovered
+    # Use live data for months where live pipeline data is available;
+    # use mis_vessel_master only for historical months not present in live data
+    historical_rows = [
+        r for r in mv_rows
+        if str(r.get('month') or '').strip() not in live_months
+    ]
+    current_live_rows = [
+        r for r in live_pipeline_rows
+        if r['fin_year'] == fin_year
+    ]
+
+    all_dataset_rows = historical_rows + current_live_rows
 
     live_fys = set(r['fin_year'] for r in live_pipeline_rows)
     for fy in live_fys:
