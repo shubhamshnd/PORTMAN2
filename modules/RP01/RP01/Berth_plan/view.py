@@ -323,8 +323,9 @@ def _per_parcel_completion(cur, ldud_id, window_end):
     minimum-hours gate) so it matches LUEU01's live ETC exactly. Falls back to
     Expected Start/Rate only when there's no actual logged data at all yet."""
     from modules.LUEU01.model import current_etc
+
     cur.execute('''
-        SELECT id, quantity, start_dt, expected_start, expected_flow_rate
+        SELECT id, quantity, start_dt, end_dt, expected_start, expected_flow_rate
         FROM ldud_parcel_ops
         WHERE ldud_id = %s
     ''', [ldud_id])
@@ -334,6 +335,11 @@ def _per_parcel_completion(cur, ldud_id, window_end):
     for po in pos:
         po_id = po['id']
         target = float(po['quantity'] or 0)
+
+        # If parcel already has an end_dt, it has completed and has no ongoing ETC
+        if po.get('end_dt') and str(po['end_dt']).strip():
+            results.append((None, False))
+            continue
 
         cur.execute('''
             SELECT entry_date, from_time, to_time, COALESCE(quantity, 0) AS quantity
@@ -345,9 +351,21 @@ def _per_parcel_completion(cur, ldud_id, window_end):
               AND (remarks IS NULL OR remarks NOT ILIKE '%%short%%close%%')
             ORDER BY entry_date, from_time NULLS LAST, id
         ''', [po_id])
-        rows = cur.fetchall()
+        rows = [dict(r) for r in cur.fetchall()]
         logged_qty = sum(float(r['quantity'] or 0) for r in rows)
-        balance = target - logged_qty
+
+        # Count shortclose quantity towards target completion (matching LUEU01)
+        cur.execute('''
+            SELECT COALESCE(SUM(quantity), 0) AS sc_qty
+            FROM lueu_parcel_log
+            WHERE parcel_op_id = %s
+              AND is_deleted IS NOT TRUE
+              AND (is_shortclose IS TRUE
+                   OR UPPER(TRIM(remarks)) = 'SHORT CLOSE'
+                   OR remarks ILIKE '%%short%%close%%')
+        ''', [po_id])
+        sc_qty = float(cur.fetchone()['sc_qty'] or 0)
+        balance = target - (logged_qty + sc_qty)
 
         etc, planned = None, False
         if balance > 0:
@@ -527,7 +545,7 @@ def _enrich_vessel(cur, vcn_id, ldud_id, window_start, window_end):
     ''', [ldud_id, window_start, window_end])
     last_24hr_qty = round(float(cur.fetchone()['q'] or 0), 3)
 
-    expected_completion = ''
+    expected_completion = '-'
     is_planned = False
     display_rate = present_flow_rate   # default: show the real actual rate (as-of this date)
 
@@ -553,24 +571,64 @@ def _enrich_vessel(cur, vcn_id, ldud_id, window_start, window_end):
     # enough to use as-is
     has_actual = present_flow_rate > 0 and total_hours >= MIN_HOURS_FOR_ACTUAL
 
-    per_line = _per_parcel_completion(cur, ldud_id, window_end)
-    active_lines = [(etc, planned) for (etc, planned) in per_line if etc is not None]
+    def _parse_completion_dt(v):
+        if not v:
+            return None
+        if isinstance(v, datetime):
+            return v
+        s = str(v).replace('T', ' ').strip()
+        for fmt in ('%Y-%m-%d %H:%M', '%d-%m-%Y %H:%M'):
+            try:
+                return datetime.strptime(s[:16], fmt)
+            except ValueError:
+                pass
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
 
+    active_lines = []
+    for p in parcels:
+        if p.get('is_removed'):
+            continue
+
+        # 1. Parcel has a live ETC
+        if p.get('etc'):
+            dt = _parse_completion_dt(p['etc'])
+            if dt:
+                active_lines.append((dt, False))
+                continue
+
+        # 2. Parcel has an actual completion end time
+        if p.get('end_dt'):
+            dt = _parse_completion_dt(p['end_dt'])
+            if dt:
+                active_lines.append((dt, False))
+                continue
+
+        # 3. Parcel has planned start & expected flow rate (not started yet)
+        rate = float(p.get('expected_flow_rate') or 0)
+        start = p.get('expected_start')
+        tgt = float(p.get('target_qty') or 0)
+        if rate and start and tgt:
+            start_dt = _parse_completion_dt(start)
+            if start_dt:
+                active_lines.append((start_dt + timedelta(hours=tgt / rate), True))
+
+    completion_is_planned = False
     if active_lines:
+        # Pick the maximum (latest) completion time among all parcels (ETCs and end times)
         etc, completion_is_planned = max(active_lines, key=lambda x: x[0])
         expected_completion = etc.strftime('%d-%m-%Y %H:%M')
-        if completion_is_planned:
-            is_planned = True
+    else:
+        expected_completion = '-'
 
-    # ── Flow-rate display: SAME rule for BOTH Section A (berthed) and
-    #    Section B (sailed) rows — no longer gated on balance_qty>0.
-    #    Use the real actual rate whenever there's enough logged data (as of
-    #    this report's date); otherwise fall back to the planned/expected rate. ──
+    rate_is_planned = False
     if not has_actual:
         _, best_rate = _planned_etc()
         if best_rate:
             display_rate = best_rate
-            is_planned = True   # amber highlight, same as before
+            rate_is_planned = True
 
     res = {
         'consigner': consigner,
@@ -582,7 +640,8 @@ def _enrich_vessel(cur, vcn_id, ldud_id, window_start, window_end):
         'balance': balance_qty,
         'expected_completion': expected_completion,
         'present_flow_rate': display_rate,
-        'is_planned': is_planned,
+        'is_planned': rate_is_planned,
+        'etc_is_planned': completion_is_planned,
         'remarks': remarks,
     }
     if cargo_code_str:
@@ -892,7 +951,7 @@ def _xl_field_value(row, field):
     val = row.get(field)
     if val is None:
         return ''
-    if field == 'expected_completion' and row.get('is_planned') and val:
+    if field == 'expected_completion' and row.get('etc_is_planned') and val and val != '-':
         return f"{val} (Exp)"
     return val
 
