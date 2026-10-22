@@ -497,11 +497,13 @@
     for (const r of table.getRows()) { cum += parseFloat(r.getData().quantity || 0) || 0; if (r === row) break; }
     return cum;
   }
-  const _totalFmt = function (c) { return r3(_cumQty(c.getTable(), c.getRow())); };
+  const f3 = n => (+n).toFixed(3);
+  const _qtyFmt = function (c) { const v = c.getValue(); return v === '' || v == null ? '' : f3(v); };
+  const _totalFmt = function (c) { return f3(_cumQty(c.getTable(), c.getRow())); };
   const _remFmt = function (c) {
     const target = parcelTargets[c.getRow().getData().parcel_op_id] || 0;
     const rem = r3(target - _cumQty(c.getTable(), c.getRow()));
-    return `<span style="color:${rem < 0 ? '#dc2626' : '#1f2937'}">${rem}</span>`;
+    return `<span style="color:${rem < 0 ? '#dc2626' : '#1f2937'}">${f3(rem)}</span>`;
   };
 
   function logColumns(pid) {
@@ -519,11 +521,11 @@
       { title: "From", field: "from_time", editor: ed ? "input" : false, width: 60, cellEdited: validateTimeCell },
       { title: "To", field: "to_time", editor: ed ? "input" : false, width: 60, cellEdited: validateTimeCell },
       {
-        title: "Last Hr", field: "quantity", editor: ed ? "number" : false, hozAlign: "right", width: 70,
-        editorParams: { min: 0, step: 0.01 }, cellEdited: clampQty
+        title: "Last Hr", field: "quantity", editor: ed ? "number" : false, hozAlign: "right", width: 80,
+        editorParams: { min: 0, step: 0.001 }, cellEdited: clampQty, formatter: _qtyFmt
       },
-      { title: "Total", field: "_total", hozAlign: "right", width: 70, formatter: _totalFmt },
-      { title: "Rem", field: "_remaining", hozAlign: "right", width: 72, formatter: _remFmt },
+      { title: "Total", field: "_total", hozAlign: "right", width: 84, formatter: _totalFmt },
+      { title: "Rem", field: "_remaining", hozAlign: "right", width: 84, formatter: _remFmt },
       {
         title: "Press", field: "pressure", editor: ed ? "number" : false, hozAlign: "right", width: 58,
         editorParams: { step: 0.01 }
