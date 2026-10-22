@@ -162,6 +162,22 @@ def _is_milestone_duplicate(existing_delays, ms_start, ms_end, ms_type="berth"):
     return False
 
 
+def _parse_delay_hours(h_str):
+    if not h_str:
+        return 0.0
+    s = str(h_str).strip()
+    if ':' in s:
+        try:
+            parts = s.split(':')
+            return int(parts[0]) + int(parts[1]) / 60.0
+        except Exception:
+            return 0.0
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
 def _load_live_pipeline_rows():
     conn = get_db()
     try:
@@ -177,6 +193,7 @@ def _load_live_pipeline_rows():
                    ld.pilot_pickup_time,
                    ld.pilot_disembarked,
                    h.id AS vcn_id,
+                   COALESCE(h.vcn_doc_num, h.via_number, ld.vcn_doc_num, '') AS vcn_doc_num,
                    h.vessel_name,
                    h.berth_name,
                    h.cargo_type,
@@ -216,91 +233,37 @@ def _load_live_pipeline_rows():
                      ld.pilot_pickup_time,
                      ld.pilot_disembarked,
                      h.id,
+                     COALESCE(h.vcn_doc_num, h.via_number, ld.vcn_doc_num, ''),
                      h.vessel_name,
                      h.berth_name,
                      h.cargo_type,
                      h.operation_type
         """)
         live_raw = cur.fetchall()
-
-        # Operational Port pre-berthing delays reusing Vessel Delay Report query logic
-        cur.execute("""
-            SELECT
-                vd.id,
-                vd.vcn_id,
-                lh.id AS ldud_id,
-                COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_no,
-                lh.cast_off_datetime,
-                vd.delay_name,
-                vd.delay_start,
-                vd.delay_end,
-                pdt.type AS delay_type,
-                COALESCE(NULLIF(TRIM(pdt.responsibility), ''), 'Port') AS delay_account
-            FROM vcn_delays vd
-            JOIN vcn_header vh ON vd.vcn_id = vh.id
-            JOIN ldud_header lh ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num)
-                 AND lh.is_deleted IS NOT TRUE
-                 AND lh.cast_off_datetime IS NOT NULL
-                 AND TRIM(lh.cast_off_datetime) != ''
-            LEFT JOIN port_delay_types pdt ON LOWER(TRIM(vd.delay_name)) = LOWER(TRIM(pdt.name))
-            WHERE ((vd.delay_name IS NOT NULL AND TRIM(vd.delay_name) != '')
-               OR (vd.delay_start IS NOT NULL AND TRIM(vd.delay_start) != ''))
-            ORDER BY vd.id ASC
-        """)
-        all_delays_raw = cur.fetchall()
-
-        all_delays_by_vcn = {}
-        port_delays_by_vcn = {}
-
-        for d in all_delays_raw:
-            ds = _parse_dt(d['delay_start'])
-            de = _parse_dt(d['delay_end'])
-            delay_name = d.get('delay_name') or ''
-            delay_type = (d.get('delay_type') or '').strip()
-            delay_acc = (d.get('delay_account') or '').strip().lower()
-
-            entry = {
-                'delay_name': delay_name,
-                'start': ds,
-                'end': de
-            }
-            if d['vcn_id']:
-                all_delays_by_vcn.setdefault(d['vcn_id'], []).append(entry)
-            if d.get('ldud_id'):
-                all_delays_by_vcn.setdefault(f"ldud_{d['ldud_id']}", []).append(entry)
-
-            # Pre-Berthing Delays with responsibility = 'Port'
-            if delay_type == 'Pre-Berthing Delays' and delay_acc == 'port':
-                if ds and de and de > ds:
-                    if d['vcn_id']:
-                        port_delays_by_vcn.setdefault(d['vcn_id'], []).append((ds, de))
-                    if d.get('ldud_id'):
-                        port_delays_by_vcn.setdefault(f"ldud_{d['ldud_id']}", []).append((ds, de))
-
-        # Direct vcn_delays fallback to capture any additional pre-berthing Port delays
-        cur.execute("""
-            SELECT vd.vcn_id, vd.delay_name, vd.delay_start, vd.delay_end
-            FROM vcn_delays vd
-            JOIN port_delay_types pdt ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
-            WHERE vd.delay_start IS NOT NULL
-              AND vd.delay_end IS NOT NULL
-              AND pdt.type = 'Pre-Berthing Delays'
-              AND pdt.responsibility = 'Port'
-        """)
-        for fb in cur.fetchall():
-            ds = _parse_dt(fb['delay_start'])
-            de = _parse_dt(fb['delay_end'])
-            if ds and de and de > ds and fb['vcn_id']:
-                existing_intervals = port_delays_by_vcn.get(fb['vcn_id'], [])
-                if not any(e[0] == ds and e[1] == de for e in existing_intervals):
-                    port_delays_by_vcn.setdefault(fb['vcn_id'], []).append((ds, de))
-                    all_delays_by_vcn.setdefault(fb['vcn_id'], []).append({
-                        'delay_name': fb.get('delay_name') or '',
-                        'start': ds,
-                        'end': de
-                    })
     finally:
         conn.close()
+
+    # Reuse existing Vessel Delay Report Port delay rows directly
+    # ensuring exact match with the Vessel Delay Report displayed total
+    from ..vessel_delay.vessel_delay import fetch_vessel_delay_data
+    vd_data = fetch_vessel_delay_data('ALL', 'ALL')
+    vd_rows = vd_data.get('rows', [])
+
+    port_hours_by_vessel_month = {}
+    port_hours_by_vessel = {}
+    for r_vd in vd_rows:
+        if str(r_vd.get('delay_account') or '').strip().lower() == 'port':
+            hrs = _parse_delay_hours(r_vd.get('hours'))
+            v_no = str(r_vd.get('vcn_no') or '').strip().upper()
+            v_name = str(r_vd.get('vessel_name') or '').strip().upper()
+            m_str = str(r_vd.get('month') or '').strip()
+
+            if v_no:
+                port_hours_by_vessel_month.setdefault((v_no, m_str), []).append(hrs)
+                port_hours_by_vessel.setdefault(v_no, []).append(hrs)
+            if v_name:
+                port_hours_by_vessel_month.setdefault((v_name, m_str), []).append(hrs)
+                port_hours_by_vessel.setdefault(v_name, []).append(hrs)
 
     live_rows = []
     for r in live_raw:
@@ -311,13 +274,12 @@ def _load_live_pipeline_rows():
             idx = dt.month - 4 if dt.month >= 4 else dt.month + 8
             mn_label = f"{MONTH_NAMES[idx]}-{str(dt.year)[-2:]}"
 
-            anchored = _parse_dt(r['anchored_datetime'])
             along = _parse_dt(r['alongside_datetime'])
             cast = _parse_dt(r['cast_off_datetime'])
             p_pick = _parse_dt(r['pilot_pickup_time'])
             p_dis = _parse_dt(r['pilot_disembarked'])
 
-            # Non-Port pre-berthing delays (Agent responsibility) - unchanged
+            # Non-Port pre-berthing delays (Agent responsibility) - strictly unchanged
             non_port_preberthing_delay_hrs = float(
                 r.get('non_port_preberthing_delay_hrs') or 0.0
             )
@@ -337,25 +299,30 @@ def _load_live_pipeline_rows():
 
             # 3. Pre-Berthing Waiting Time
             #
-            # Port a/c:
-            # - Original Port pre-berthing delay records from vcn_delays (responsibility = 'Port')
-            # - Evaluates Anchorage / NOR Tendered to Pilot Pickup milestone.
-            # - Deduplication rule: If an original delay already covers berth unavailability/congestion,
-            #   or matches start/end within 1 hour, the milestone is a duplicate and is omitted.
-            # - If non-duplicate, the milestone interval is included.
-            # - Overlapping intervals are merged to prevent duplicate counting.
-            # Non-Port a/c: Agent pre-berthing delays (unchanged)
+            # Port a/c: Exactly matches the Port delay rows in the Vessel Delay Report
+            # for this vessel and reporting month.
+            # - Does not add Anchorage/NOR-to-Pilot-Pickup base waiting hours separately.
+            # - Does not add extra milestone hours or use a different calculation.
+            # Non-Port a/c: Agent pre-berthing delays (strictly unchanged)
             # Total: Port a/c + Non-Port a/c
-            pbw_start = anchored or _parse_dt(r['nor_tendered'])
-            v_all_delays = all_delays_by_vcn.get(r['vcn_id']) or all_delays_by_vcn.get(f"ldud_{r['ldud_id']}", [])
-            port_intervals = list(port_delays_by_vcn.get(r['vcn_id']) or port_delays_by_vcn.get(f"ldud_{r['ldud_id']}", []))
+            v_doc = str(r.get('vcn_doc_num') or '').strip().upper()
+            v_id = str(r.get('vcn_id') or '').strip()
+            v_name = str(r.get('vessel_name') or '').strip().upper()
 
-            if pbw_start and p_pick and p_pick > pbw_start:
-                if not _is_milestone_duplicate(v_all_delays, pbw_start, p_pick, "berth"):
-                    port_intervals.append((pbw_start, p_pick))
+            hrs_list = (
+                port_hours_by_vessel_month.get((v_doc, mn_label))
+                or port_hours_by_vessel_month.get((f"VCN-{v_id}", mn_label))
+                or port_hours_by_vessel_month.get((v_name, mn_label))
+                or port_hours_by_vessel.get(v_doc)
+                or port_hours_by_vessel.get(f"VCN-{v_id}")
+                or port_hours_by_vessel.get(v_name)
+                or []
+            )
+            waiting_port_hrs = sum(hrs_list)
 
-            waiting_port_hrs = _merge_and_sum_intervals(port_intervals)
+            # Keep the verified Non-Port calculation unchanged.
             waiting_non_port_hrs = non_port_preberthing_delay_hrs
+
             pbw_hrs = waiting_port_hrs + waiting_non_port_hrs
 
             # 5. Total Berth Stay
