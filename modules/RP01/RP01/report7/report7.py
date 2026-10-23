@@ -80,211 +80,384 @@ def month_options_for(fin_year: str):
 def _parse_dt(s):
     if not s:
         return None
-    if isinstance(s, (datetime, date)):
+    if isinstance(s, datetime):
         return s
+    if isinstance(s, date):
+        return datetime(s.year, s.month, s.day)
+    clean = str(s).strip().replace('T', ' ')
+    for length in (19, 16, 10):
+        sub = clean[:length]
+        for fmt in (
+            '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d',
+            '%d-%m-%Y %H:%M:%S', '%d-%m-%Y %H:%M', '%d-%m-%Y',
+            '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d/%m/%Y'
+        ):
+            try:
+                return datetime.strptime(sub, fmt)
+            except Exception:
+                pass
+    return None
+
+
+def _merge_and_sum_intervals(intervals):
+    """
+    Given a list of (start_datetime, end_datetime) tuples,
+    merges overlapping and contiguous time intervals to avoid duplicate counting,
+    and returns the total unique duration in hours.
+    """
+    valid = [(s, e) for s, e in intervals if s and e and e > s]
+    if not valid:
+        return 0.0
+
+    valid.sort(key=lambda x: (x[0], x[1]))
+
+    merged = []
+    cur_start, cur_end = valid[0]
+
+    for s, e in valid[1:]:
+        if s <= cur_end:
+            if e > cur_end:
+                cur_end = e
+        else:
+            merged.append((cur_start, cur_end))
+            cur_start, cur_end = s, e
+
+    merged.append((cur_start, cur_end))
+    total_seconds = sum((e - s).total_seconds() for s, e in merged)
+    return total_seconds / 3600.0
+
+
+def _is_milestone_duplicate(existing_delays, ms_start, ms_end, ms_type="berth"):
+    """
+    Milestone deduplication logic matching vessel_delay.py:
+    1. Specialized overlap check for Berth Not Available / Port Congestion:
+       If an original delay has 'berth' & ('notavail', 'unavail', 'occup') or 'congestion',
+       and its interval overlaps the milestone interval, mark as duplicate.
+    2. Universal exact-match check:
+       If an original delay matches milestone start and end times within 1 hour,
+       mark as duplicate.
+    """
+    if not ms_start or not ms_end or not existing_delays:
+        return False
+    for existing in existing_delays:
+        ex_start = existing.get("start")
+        ex_end = existing.get("end")
+        ex_name = str(existing.get("delay_name") or existing.get("name") or "").lower().replace(" ", "")
+
+        if ex_start and ex_end:
+            # 1. Specialized overlap check for Berth Not Available / Port Congestion
+            if ms_type == "berth":
+                has_berth = "berth" in ex_name
+                has_congestion = "congestion" in ex_name
+                is_unavailable = any(x in ex_name for x in ["notavail", "unavail", "notavaileb", "occup"])
+                if (has_berth and is_unavailable) or has_congestion:
+                    if ex_start <= ms_end and ms_start <= ex_end:
+                        return True
+
+            # 2. Universal exact-match check for ANY milestone (within 1 hour)
+            start_diff = abs((ex_start - ms_start).total_seconds())
+            end_diff = abs((ex_end - ms_end).total_seconds())
+            if start_diff <= 3600 and end_diff <= 3600:
+                return True
+    return False
+
+
+
+def _parse_delay_hours(h_str):
+    """Convert delay duration to decimal hours."""
+    if h_str is None or str(h_str).strip() == "":
+        return 0.0
+
+    s = str(h_str).strip()
+
     try:
-        return datetime.strptime(str(s).replace('T', ' ')[:16], '%Y-%m-%d %H:%M')
-    except Exception:
-        try:
-            return datetime.strptime(str(s)[:10], '%Y-%m-%d')
-        except Exception:
-            return None
+        # HH:MM or HH:MM:SS
+        if ":" in s:
+            parts = s.split(":")
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            seconds = float(parts[2]) if len(parts) > 2 else 0.0
+            return hours + minutes / 60.0 + seconds / 3600.0
+
+        # Vessel Delay Report format: HH.MM, where digits
+        # after the dot represent minutes, not decimal fractions.
+        if "." in s:
+            hours_part, minutes_part = s.split(".", 1)
+            hours = int(hours_part)
+            minutes = int(minutes_part)
+
+            if 0 <= minutes < 60:
+                return hours + minutes / 60.0
+
+        return float(s)
+
+    except (ValueError, TypeError):
+        return 0.0
+
+
 
 
 def _load_live_pipeline_rows():
     conn = get_db()
+
     try:
         cur = get_cursor(conn)
         cur.execute("""
-            SELECT ld.id AS ldud_id,
-                   ld.cast_off_datetime,
-                   ld.alongside_datetime,
-                   ld.anchored_datetime,
-                   ld.nor_tendered,
-                   ld.discharge_commenced,
-                   ld.discharge_completed,
-                   ld.pilot_pickup_time,
-                   ld.pilot_disembarked,
-                   h.id AS vcn_id,
-                   h.vessel_name,
-                   h.berth_name,
-                   h.cargo_type,
-                   h.operation_type,
-                   SUM(l.quantity) AS quantity,
-                   MIN(po.start_dt) AS first_parcel_start,
-                   MAX(po.end_dt) AS last_parcel_end,
-                   COALESCE((
-                       SELECT SUM(
-                           EXTRACT(EPOCH FROM (
-                               vd.delay_end::timestamp - vd.delay_start::timestamp
-                           )) / 3600.0
-                       )
-                       FROM vcn_delays vd
-                       JOIN port_delay_types pdt
-                         ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
-                       WHERE vd.vcn_id = h.id
-                         AND vd.delay_start IS NOT NULL
-                         AND vd.delay_end IS NOT NULL
-                         AND pdt.type = 'Pre-Berthing Delays'
-                         AND pdt.responsibility = 'Port'
-                   ), 0.0) AS port_preberthing_delay_hrs,
-                   COALESCE((
-                       SELECT SUM(
-                           EXTRACT(EPOCH FROM (
-                               vd.delay_end::timestamp - vd.delay_start::timestamp
-                           )) / 3600.0
-                       )
-                       FROM vcn_delays vd
-                       JOIN port_delay_types pdt
-                         ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(vd.delay_name))
-                       WHERE vd.vcn_id = h.id
-                         AND vd.delay_start IS NOT NULL
-                         AND vd.delay_end IS NOT NULL
-                         AND pdt.type = 'Pre-Berthing Delays'
-                         AND pdt.responsibility = 'Agent'
-                   ), 0.0) AS non_port_preberthing_delay_hrs
+            SELECT
+                ld.id AS ldud_id,
+                ld.cast_off_datetime,
+                ld.alongside_datetime,
+                ld.anchored_datetime,
+                ld.nor_tendered,
+                ld.discharge_commenced,
+                ld.discharge_completed,
+                ld.pilot_pickup_time,
+                ld.pilot_disembarked,
+                h.id AS vcn_id,
+                COALESCE(
+                    h.vcn_doc_num,
+                    h.via_number,
+                    ld.vcn_doc_num,
+                    ''
+                ) AS vcn_doc_num,
+                h.vessel_name,
+                h.berth_name,
+                h.cargo_type,
+                h.operation_type,
+                SUM(l.quantity) AS quantity,
+                MIN(po.start_dt) AS first_parcel_start,
+                MAX(po.end_dt) AS last_parcel_end,
+                COALESCE((
+                    SELECT SUM(
+                        EXTRACT(EPOCH FROM (
+                            vd.delay_end::timestamp
+                            - vd.delay_start::timestamp
+                        )) / 3600.0
+                    )
+                    FROM vcn_delays vd
+                    JOIN port_delay_types pdt
+                      ON LOWER(TRIM(pdt.name))
+                       = LOWER(TRIM(vd.delay_name))
+                    WHERE vd.vcn_id = h.id
+                      AND vd.delay_start IS NOT NULL
+                      AND vd.delay_end IS NOT NULL
+                      AND pdt.type = 'Pre-Berthing Delays'
+                      AND pdt.responsibility = 'Agent'
+                ), 0.0) AS non_port_preberthing_delay_hrs
             FROM lueu_parcel_log l
-            JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
-            JOIN ldud_header ld ON ld.id = po.ldud_id
-            JOIN vcn_header h ON h.id = ld.vcn_id
+            JOIN ldud_parcel_ops po
+              ON po.id = l.parcel_op_id
+            JOIN ldud_header ld
+              ON ld.id = po.ldud_id
+            JOIN vcn_header h
+              ON h.id = ld.vcn_id
             WHERE COALESCE(l.is_deleted, FALSE) = FALSE
               AND COALESCE(ld.is_deleted, FALSE) = FALSE
               AND COALESCE(l.is_shortclose, FALSE) = FALSE
-            GROUP BY ld.id,
-                     ld.cast_off_datetime,
-                     ld.alongside_datetime,
-                     ld.anchored_datetime,
-                     ld.nor_tendered,
-                     ld.discharge_commenced,
-                     ld.discharge_completed,
-                     ld.pilot_pickup_time,
-                     ld.pilot_disembarked,
-                     h.id,
-                     h.vessel_name,
-                     h.berth_name,
-                     h.cargo_type,
-                     h.operation_type
+            GROUP BY
+                ld.id,
+                ld.cast_off_datetime,
+                ld.alongside_datetime,
+                ld.anchored_datetime,
+                ld.nor_tendered,
+                ld.discharge_commenced,
+                ld.discharge_completed,
+                ld.pilot_pickup_time,
+                ld.pilot_disembarked,
+                h.id,
+                COALESCE(
+                    h.vcn_doc_num,
+                    h.via_number,
+                    ld.vcn_doc_num,
+                    ''
+                ),
+                h.vessel_name,
+                h.berth_name,
+                h.cargo_type,
+                h.operation_type
         """)
         live_raw = cur.fetchall()
     finally:
         conn.close()
 
+    # Load the same displayed delay rows used by Vessel Delay Report.
+    from ..vessel_delay.vessel_delay import fetch_vessel_delay_data
+
+    vd_data = fetch_vessel_delay_data('ALL', 'ALL')
+    vd_rows = vd_data.get('rows', [])
+
+    # Index Port delay durations by VCN and report month.
+    port_hours_by_vessel_month = {}
+
+    for delay_row in vd_rows:
+        if (
+            str(delay_row.get('delay_account') or '')
+            .strip()
+            .lower() != 'port'
+        ):
+            continue
+
+        vcn_no = str(
+            delay_row.get('vcn_no') or ''
+        ).strip().upper()
+
+        vessel_name = str(
+            delay_row.get('vessel_name') or ''
+        ).strip().upper()
+
+        month_label = str(
+            delay_row.get('month') or ''
+        ).strip()
+
+        if not month_label:
+            continue
+
+        delay_hours = _parse_delay_hours(
+            delay_row.get('hours')
+        )
+
+        # Prefer the VCN identifier to avoid mixing vessels
+        if vcn_no:
+            port_hours_by_vessel_month.setdefault(
+                (vcn_no, month_label), []
+            ).append(delay_hours)
+
+        if vessel_name:
+            port_hours_by_vessel_month.setdefault(
+                (vessel_name, month_label), []
+            ).append(delay_hours)
+
     live_rows = []
+
     for r in live_raw:
-        dt = _parse_dt(r['cast_off_datetime']) or _parse_dt(r['alongside_datetime'])
-        if dt:
-            fy_start = dt.year if dt.month >= 4 else dt.year - 1
-            fy = f"{fy_start}-{(fy_start + 1) % 100:02d}"
-            idx = dt.month - 4 if dt.month >= 4 else dt.month + 8
-            mn_label = f"{MONTH_NAMES[idx]}-{str(dt.year)[-2:]}"
+        dt = (
+            _parse_dt(r.get('cast_off_datetime'))
+            or _parse_dt(r.get('alongside_datetime'))
+        )
 
-            anchored = _parse_dt(r['anchored_datetime'])
-            along = _parse_dt(r['alongside_datetime'])
-            cast = _parse_dt(r['cast_off_datetime'])
-            p_pick = _parse_dt(r['pilot_pickup_time'])
-            p_dis = _parse_dt(r['pilot_disembarked'])
+        if not dt:
+            continue
 
-            port_preberthing_delay_hrs = float(
-                r.get('port_preberthing_delay_hrs') or 0.0
-            )
-            non_port_preberthing_delay_hrs = float(
-                r.get('non_port_preberthing_delay_hrs') or 0.0
-            )
+        fy_start = dt.year if dt.month >= 4 else dt.year - 1
+        fy = f"{fy_start}-{(fy_start + 1) % 100:02d}"
 
-            # Working Time for live pipeline:
-            # First parcel operation start -> Last parcel operation end
-            first_parcel_start = _parse_dt(r.get('first_parcel_start'))
-            last_parcel_end = _parse_dt(r.get('last_parcel_end'))
+        idx = dt.month - 4 if dt.month >= 4 else dt.month + 8
+        mn_label = (
+            f"{MONTH_NAMES[idx]}-{str(dt.year)[-2:]}"
+        )
 
-            wt_hrs = (
-                (last_parcel_end - first_parcel_start).total_seconds() / 3600.0
-                if first_parcel_start
+        along = _parse_dt(r.get('alongside_datetime'))
+        cast = _parse_dt(r.get('cast_off_datetime'))
+        p_pick = _parse_dt(r.get('pilot_pickup_time'))
+        p_dis = _parse_dt(r.get('pilot_disembarked'))
+
+        first_parcel_start = _parse_dt(
+            r.get('first_parcel_start')
+        )
+        last_parcel_end = _parse_dt(
+            r.get('last_parcel_end')
+        )
+
+        # Working Time: first parcel start to last parcel end.
+        wt_hrs = (
+            (last_parcel_end - first_parcel_start).total_seconds()
+            / 3600.0
+            if (
+                first_parcel_start
                 and last_parcel_end
                 and last_parcel_end > first_parcel_start
-                else 0.0
+            )
+            else 0.0
+        )
+
+        # Port A/C: use displayed Vessel Delay Report rows
+        # for this vessel and this report month only.
+        v_doc = str(
+            r.get('vcn_doc_num') or ''
+        ).strip().upper()
+
+        v_name = str(
+            r.get('vessel_name') or ''
+        ).strip().upper()
+
+        v_id = str(r.get('vcn_id') or '').strip()
+
+        # Try the document number first.
+        hrs_list = port_hours_by_vessel_month.get(
+            (v_doc, mn_label)
+        ) if v_doc else None
+
+        # Try the VCN number format used in the delay report.
+        if hrs_list is None and v_id:
+            hrs_list = port_hours_by_vessel_month.get(
+                (f"VCN-{v_id}", mn_label)
             )
 
-            # 3. Pre-Berthing Waiting Time
-            #
-            # Excel/reference logic:
-            #   Base Port waiting = Pilot Pickup - Anchorage
-            #                        (use NOR Tendered when Anchorage is unavailable)
-            #   Port a/c          = Base Port waiting + Port pre-berthing delays
-            #   Non-Port a/c      = Agent pre-berthing delays
-            #   Total             = Port a/c + Non-Port a/c
-            #
-            # For August-2026 this produces:
-            #   Base Port waiting = 460.07 Hrs
-            #   Port delays       = 159.63 Hrs
-            #   Port a/c          = 619.70 Hrs
-            #   Non-Port a/c      = 287.67 Hrs
-            #   Total             = 907.37 Hrs
-            pbw_start = anchored or _parse_dt(r['nor_tendered'])
-
-            base_port_waiting_hrs = (
-                (p_pick - pbw_start).total_seconds() / 3600.0
-                if pbw_start and p_pick and p_pick > pbw_start
-                else 0.0
+        # Use vessel name only if no VCN match exists.
+        if hrs_list is None and v_name:
+            hrs_list = port_hours_by_vessel_month.get(
+                (v_name, mn_label)
             )
 
-            waiting_port_hrs = (
-                base_port_waiting_hrs + port_preberthing_delay_hrs
-            )
-            waiting_non_port_hrs = non_port_preberthing_delay_hrs
-            pbw_hrs = waiting_port_hrs + waiting_non_port_hrs
+        waiting_port_hrs = sum(hrs_list or [])
 
-            # 5. Total Berth Stay
-            # Approved formula:
-            # Total Berth Stay = Cast-off / Sail Date/Time - Alongside Date/Time
-            sab_hrs = (
-                (cast - along).total_seconds() / 3600.0
-                if cast and along and cast > along
-                else 0.0
-            )
+        # Keep the existing Non-Port calculation unchanged.
+        waiting_non_port_hrs = float(
+            r.get('non_port_preberthing_delay_hrs') or 0.0
+        )
 
-            # 7. Navigation Time
-            # Approved formula:
-            # Navigation Time = Alongside Date/Time - Pilot Pick-up Date/Time
-            inward_hrs = (
-                (along - p_pick).total_seconds() / 3600.0
-                if along and p_pick and along > p_pick
-                else 0.0
-            )
+        pbw_hrs = waiting_port_hrs + waiting_non_port_hrs
 
-            # Outward Movement = Pilot Disembarked - Cast-off
-            outward_hrs = (
-                (p_dis - cast).total_seconds() / 3600.0
-                if cast and p_dis and p_dis > cast
-                else 0.0
-            )
+        # Total Berth Stay: Cast-off minus Alongside.
+        sab_hrs = (
+            (cast - along).total_seconds() / 3600.0
+            if cast and along and cast > along
+            else 0.0
+        )
 
-            live_rows.append({
-                'fin_year': fy,
-                'month': mn_label,
-                'berth_no': r['berth_name'],
-                'cargo': r['cargo_type'],
-                'category': 'LIQUID',
-                'new_cat': 'LIQUID',
-                'category1': 'LIQUID',
-                'unloading_terminal': r['berth_name'],
-                'quantity': float(r['quantity'] or 0),
-                'pre_berthing_waiting': pbw_hrs / 24.0,
-                'waiting_port': waiting_port_hrs / 24.0,
-                'waiting_non_port': waiting_non_port_hrs / 24.0,
-                'stay_at_berth': sab_hrs / 24.0,
-                'working_time': wt_hrs / 24.0,
-                'inward_movement': inward_hrs / 24.0,
-                'outward_movement': outward_hrs / 24.0,
-                'overseas_coastal': 'Overseas',
-                'vcn_no': str(r['vcn_id']),
-                'ops_commenced': first_parcel_start,
-                'cargo_completion': last_parcel_end,
-                'alongside': along,
-                'cast_off': cast,
-                'pilot_pickup': p_pick,
-                'pilot_disembarked': p_dis
-            })
+        # Inward movement: Pilot Pickup to Alongside.
+        inward_hrs = (
+            (along - p_pick).total_seconds() / 3600.0
+            if along and p_pick and along > p_pick
+            else 0.0
+        )
+
+        # Outward movement: Cast-off to Pilot Disembarked.
+        outward_hrs = (
+            (p_dis - cast).total_seconds() / 3600.0
+            if cast and p_dis and p_dis > cast
+            else 0.0
+        )
+
+        live_rows.append({
+            'fin_year': fy,
+            'month': mn_label,
+            'berth_no': r.get('berth_name'),
+            'cargo': r.get('cargo_type'),
+            'category': 'LIQUID',
+            'new_cat': 'LIQUID',
+            'category1': 'LIQUID',
+            'unloading_terminal': r.get('berth_name'),
+            'quantity': float(r.get('quantity') or 0),
+            'pre_berthing_waiting': pbw_hrs / 24.0,
+            'waiting_port': waiting_port_hrs / 24.0,
+            'waiting_non_port': waiting_non_port_hrs / 24.0,
+            'stay_at_berth': sab_hrs / 24.0,
+            'working_time': wt_hrs / 24.0,
+            'inward_movement': inward_hrs / 24.0,
+            'outward_movement': outward_hrs / 24.0,
+            'overseas_coastal': 'Overseas',
+            'vcn_no': v_id,
+            'ops_commenced': first_parcel_start,
+            'cargo_completion': last_parcel_end,
+            'alongside': along,
+            'cast_off': cast,
+            'pilot_pickup': p_pick,
+            'pilot_disembarked': p_dis
+        })
+
     return live_rows
+
 
 
 def calculate_section_metrics(rlist):
@@ -467,12 +640,25 @@ def build_report7_data(fin_year: str, selected_month: str = "Jun-26"):
     finally:
         conn.close()
 
-    covered_months = set(str(r.get('month') or '').strip() for r in mv_rows if r.get('month'))
-
     live_pipeline_rows = _load_live_pipeline_rows()
-    live_uncovered = [r for r in live_pipeline_rows if r['fin_year'] == fin_year and r['month'] not in covered_months]
+    live_months = set(
+        str(r.get('month') or '').strip()
+        for r in live_pipeline_rows
+        if r.get('month') and r.get('fin_year') == fin_year
+    )
 
-    all_dataset_rows = list(mv_rows) + live_uncovered
+    # Use live data for months where live pipeline data is available;
+    # use mis_vessel_master only for historical months not present in live data
+    historical_rows = [
+        r for r in mv_rows
+        if str(r.get('month') or '').strip() not in live_months
+    ]
+    current_live_rows = [
+        r for r in live_pipeline_rows
+        if r['fin_year'] == fin_year
+    ]
+
+    all_dataset_rows = historical_rows + current_live_rows
 
     live_fys = set(r['fin_year'] for r in live_pipeline_rows)
     for fy in live_fys:
