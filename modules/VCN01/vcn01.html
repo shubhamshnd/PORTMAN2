@@ -1252,7 +1252,8 @@
     const qtyTopCalc = (values, data) =>
         data.reduce((s, r) => r.is_removed ? s : s + (parseFloat(r.quantity) || 0), 0);
     const QTY_TOTAL = {topCalc: qtyTopCalc, topCalcFormatter: "money",
-                       topCalcFormatterParams: {precision: 3, thousand: ","}};
+                       topCalcFormatterParams: {precision: 3, thousand: ","},
+                       formatter: "money", formatterParams: {precision: 3, thousand: ","}};
 
     // Approved VCN: a Pipeline/Terminal change saves straight away with a mandatory
     // reason (server logs it to the Approval History). Waits while the pipeline
@@ -1419,6 +1420,7 @@
                         return `<span style="font-weight:500;color:#2d3748">${formatMins(mins)}</span>`;
                     }
                 },
+                {title: "Remarks", field: "remarks", widthGrow: 1.5, editor: canDelays ? "input" : false},
                 canDelays ? {title: "", field: "actions", formatter: deleteButtonFormatter, width: 60, widthGrow: 0, hozAlign: "center", headerSort: false,
                     cellClick: function(e, cell) { deleteSubRow('delays', cell.getRow().getData().id, vcnId); }
                 } : null
@@ -1458,6 +1460,7 @@
                         return `<span style="font-weight:500;color:#2d3748">${formatMins(mins)}</span>`;
                     }
                 },
+                {title: "Remarks", field: "remarks", widthGrow: 1.5, editor: canDelays ? "input" : false},
                 canDelays ? {title: "", field: "actions", formatter: deleteButtonFormatter, width: 60, widthGrow: 0, hozAlign: "center", headerSort: false,
                     cellClick: function(e, cell) { deleteSubRow('berth_delays', cell.getRow().getData().id, vcnId); }
                 } : null

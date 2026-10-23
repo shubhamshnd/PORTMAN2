@@ -116,7 +116,10 @@ def save_log():
     if locked:
         return locked
     data['created_by'] = session.get('username')
-    return jsonify({'id': model.save_log(data), 'success': True})
+    try:
+        return jsonify({'id': model.save_log(data), 'success': True})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
 
 
 @bp.route('/api/module/LUEU01/log/delete', methods=['POST'])

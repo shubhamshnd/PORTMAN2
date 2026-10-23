@@ -1588,13 +1588,13 @@
             list.innerHTML = check.missing.map(m => `<li>${m}</li>`).join('');
             document.getElementById('closureMissingSection').style.display = 'block';
         } else {
-            const diff = (check.ops_total - check.bl_total).toFixed(2);
+            const diff = (check.ops_total - check.bl_total).toFixed(3);
             const scNote = check.shortclose_total > 0
-                ? `<br><small style="color:#c05621;">Short-closed (written off, not counted as actual): <strong>${check.shortclose_total.toFixed(2)} MT</strong></small>` : '';
+                ? `<br><small style="color:#c05621;">Short-closed (written off, not counted as actual): <strong>${check.shortclose_total.toFixed(3)} MT</strong></small>` : '';
             const qty = document.getElementById('closureQtyInfo');
             qty.innerHTML = check.can_full_close
-                ? `<strong>✓ Quantities match</strong> — Actual LUEU01 quantity: <strong>${check.ops_total.toFixed(2)} MT</strong> | BL total: <strong>${check.bl_total.toFixed(2)} MT</strong>${scNote}<br><small>Full Close Vessel available.</small>`
-                : `<strong>⚡ Partial quantities</strong> — Actual LUEU01 quantity: <strong>${check.ops_total.toFixed(2)} MT</strong> | BL total: <strong>${check.bl_total.toFixed(2)} MT</strong> | Difference: <strong>${Math.abs(diff)}</strong>${scNote}<br><small>Only Partial Close available for billing cut-off.</small>`;
+                ? `<strong>✓ Quantities match</strong> — Actual LUEU01 quantity: <strong>${check.ops_total.toFixed(3)} MT</strong> | BL total: <strong>${check.bl_total.toFixed(3)} MT</strong>${scNote}<br><small>Full Close Vessel available.</small>`
+                : `<strong>⚡ Partial quantities</strong> — Actual LUEU01 quantity: <strong>${check.ops_total.toFixed(3)} MT</strong> | BL total: <strong>${check.bl_total.toFixed(3)} MT</strong> | Difference: <strong>${Math.abs(diff)}</strong>${scNote}<br><small>Only Partial Close available for billing cut-off.</small>`;
             document.getElementById('btnCloseVessel').style.display = check.can_full_close ? 'block' : 'none';
             document.getElementById('btnPartialClose').style.display = check.can_full_close ? 'none' : 'block';
             document.getElementById('closureEligibleSection').style.display = 'block';
@@ -1605,8 +1605,8 @@
         const res = await fetch(`/api/module/LDUD01/closure_check/${id}`);
         const check = await res.json();
         if (check.eligible) {
-            const sc = check.shortclose_total > 0 ? `\nShort-closed (not counted as actual): ${check.shortclose_total.toFixed(2)} MT` : '';
-            const msg = `✓ All requirements met.\nActual LUEU01 quantity: ${check.ops_total.toFixed(2)} MT | BL total: ${check.bl_total.toFixed(2)} MT${sc}\n${check.can_full_close ? 'Full close available.' : 'Partial close available (quantities differ).'}`;
+            const sc = check.shortclose_total > 0 ? `\nShort-closed (not counted as actual): ${check.shortclose_total.toFixed(3)} MT` : '';
+            const msg = `✓ All requirements met.\nActual LUEU01 quantity: ${check.ops_total.toFixed(3)} MT | BL total: ${check.bl_total.toFixed(3)} MT${sc}\n${check.can_full_close ? 'Full close available.' : 'Partial close available (quantities differ).'}`;
             alert(msg);
         } else {
             alert('Requirements not yet met:\n\n• ' + check.missing.join('\n• '));

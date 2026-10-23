@@ -306,7 +306,31 @@ def get_log(parcel_op_id):
     return rows
 
 
+def _row_end(entry_date, from_time, to_time):
+    """Date + To (To < From wraps to the next day); None if unparseable."""
+    try:
+        day = datetime.strptime(str(entry_date)[:10], '%Y-%m-%d')
+    except (ValueError, TypeError):
+        return None
+    def mins(t):
+        try:
+            h, m = (int(x) for x in str(t).split(':')[:2])
+            return h * 60 + m
+        except ValueError:
+            return None
+    f, t = mins(from_time) if from_time else None, mins(to_time) if to_time else None
+    end_min = t if t is not None else f
+    if end_min is None:
+        return day
+    if t is not None and f is not None and t < f:
+        end_min += 1440
+    return day + timedelta(minutes=end_min)
+
+
 def save_log(data):
+    end = _row_end(data.get('entry_date'), data.get('from_time'), data.get('to_time'))
+    if end and end > datetime.now():
+        raise ValueError('Logbook entry cannot be in the future.')
     # Direct Pipe carries no equipment
     if data.get('medium') == 'Direct Pipe':
         data['equipment_name'] = None

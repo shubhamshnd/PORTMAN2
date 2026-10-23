@@ -354,7 +354,25 @@
     if (d.from_time && d.to_time && d.from_time === d.to_time) {
       alert('"To" must be after "From".'); return revert();
     }
+    if (isFutureRow(d)) { alert('Logbook entry cannot be in the future.'); return revert(); }
     recomputeTotals(pid);
+  }
+  // row end = Date + To (To < From wraps to the next day); same rule as model._row_end
+  function rowEnd(d) {
+    const date = String(d.entry_date || '').slice(0, 10);
+    const t = d.to_time || d.from_time;
+    if (!date) return null;
+    if (!t) return toDT(date, '00:00');
+    const wrapped = d.from_time && d.to_time && _tmin(d.to_time) < _tmin(d.from_time);
+    return toDT(wrapped ? _addDays(date, 1) : date, t);
+  }
+  function isFutureRow(d) { const e = rowEnd(d); return !!e && e > new Date(); }
+  function validateDateCell(cell) {
+    if (_suppress) return;
+    if (isFutureRow(cell.getRow().getData())) {
+      alert('Logbook entry cannot be in the future.');
+      _suppress = true; cell.setValue(cell.getOldValue() || ''); _suppress = false;
+    }
   }
   function mediumEdited(cell) {
     const row = cell.getRow();
@@ -512,7 +530,7 @@
     return [
       // value stays ISO (yyyy-mm-dd) for chaining/validation; display is DD-MM-YYYY
       {
-        title: "Date", field: "entry_date", editor: ed ? "date" : false, width: 96,
+        title: "Date", field: "entry_date", editor: ed ? "date" : false, width: 96, cellEdited: validateDateCell,
         formatter: function (cell) {
           const m = String(cell.getValue() || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
           return m ? `${m[3]}-${m[2]}-${m[1]}` : (cell.getValue() || '');
@@ -648,6 +666,8 @@
   async function saveLog(pid) {
     const t = subTables[pid];
     if (!t) return;
+    const bad = t.getRows().find(r => isFutureRow(r.getData()));
+    if (bad) { bad.scrollTo().catch(() => { }); return alert('Logbook entry cannot be in the future — fix its Date / To before saving.'); }
     for (const row of t.getRows()) {
       const d = row.getData();
       const res = await fetch('/api/module/LUEU01/log/save', {
@@ -655,6 +675,7 @@
         body: JSON.stringify({ ...d, parcel_op_id: pid })
       });
       const j = await res.json();
+      if (j.error) { alert(j.error); break; }
       if (j.id && !d.id) row.update({ id: j.id });
     }
     await maybeAutoEnd(pid);   // auto-set End when the parcel is completed

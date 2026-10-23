@@ -585,12 +585,12 @@ def save_delay(data):
     conn = get_db()
     cur = get_cursor(conn)
     if data.get('id'):
-        cur.execute('UPDATE vcn_delays SET delay_name=%s, delay_start=%s, delay_end=%s WHERE id=%s',
-                   [data.get('delay_name'), data.get('delay_start'), data.get('delay_end'), data['id']])
+        cur.execute('UPDATE vcn_delays SET delay_name=%s, delay_start=%s, delay_end=%s, remarks=%s WHERE id=%s',
+                   [data.get('delay_name'), data.get('delay_start'), data.get('delay_end'), data.get('remarks'), data['id']])
         row_id = data['id']
     else:
-        cur.execute('INSERT INTO vcn_delays (vcn_id, delay_name, delay_start, delay_end) VALUES (%s, %s, %s, %s) RETURNING id',
-                   [data['vcn_id'], data.get('delay_name'), data.get('delay_start'), data.get('delay_end')])
+        cur.execute('INSERT INTO vcn_delays (vcn_id, delay_name, delay_start, delay_end, remarks) VALUES (%s, %s, %s, %s, %s) RETURNING id',
+                   [data['vcn_id'], data.get('delay_name'), data.get('delay_start'), data.get('delay_end'), data.get('remarks')])
         row_id = cur.fetchone()['id']
     conn.commit()
     conn.close()
@@ -619,14 +619,14 @@ def save_berth_delay(data):
     conn = get_db()
     cur = get_cursor(conn)
     vals = [data.get('port_type'), data.get('service_type'),
-            data.get('delay_start'), data.get('delay_end')]
+            data.get('delay_start'), data.get('delay_end'), data.get('remarks')]
     if data.get('id'):
         cur.execute('UPDATE vcn_berth_delays SET port_type=%s, service_type=%s, '
-                    'delay_start=%s, delay_end=%s WHERE id=%s', vals + [data['id']])
+                    'delay_start=%s, delay_end=%s, remarks=%s WHERE id=%s', vals + [data['id']])
         row_id = data['id']
     else:
         cur.execute('INSERT INTO vcn_berth_delays (vcn_id, port_type, service_type, '
-                    'delay_start, delay_end) VALUES (%s, %s, %s, %s, %s) RETURNING id',
+                    'delay_start, delay_end, remarks) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id',
                     [data['vcn_id']] + vals)
         row_id = cur.fetchone()['id']
     conn.commit()
