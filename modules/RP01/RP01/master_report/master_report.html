@@ -1,0 +1,895 @@
+{% extends "base.html" %}
+
+{% block title %}Master Report — RP01{% endblock %}
+
+{% block head %}
+<style>
+    :root {
+        --mr-bg: #F8FAFC;
+        --mr-card-bg: #FFFFFF;
+        --mr-border: #E2E8F0;
+        --mr-border-dark: #CBD5E1;
+        --mr-text-main: #0F172A;
+        --mr-text-muted: #64748B;
+        --mr-primary: #2563EB;
+        --mr-primary-hover: #1D4ED8;
+        --mr-green: #16A34A;
+        --mr-green-hover: #15803D;
+
+        /* Light Section Header Tints */
+        --sec-basic-bg: #EBF3FB;
+        --sec-basic-txt: #1E3A8A;
+        --sec-vessel-bg: #F1F5F9;
+        --sec-vessel-txt: #334155;
+        --sec-cargo-bg: #EFF6FF;
+        --sec-cargo-txt: #1D4ED8;
+        --sec-timing-bg: #F0FDF4;
+        --sec-timing-txt: #166534;
+        --sec-rate-bg: #FEFCE8;
+        --sec-rate-txt: #854D0E;
+        --sec-dim-bg: #FAF5FF;
+        --sec-dim-txt: #6B21A8;
+        --sec-perf-bg: #F0FDFA;
+        --sec-perf-txt: #115E59;
+    }
+
+    .master-report-wrapper {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        padding-bottom: 30px;
+    }
+
+    /* Page Header */
+    .mr-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--mr-border);
+    }
+    .mr-header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .mr-title {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--mr-text-main);
+    }
+    .mr-badge {
+        background: #EBF3FB;
+        color: var(--mr-primary);
+        border: 1px solid #BFDBFE;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+    .mr-subtitle {
+        font-size: 12px;
+        color: var(--mr-text-muted);
+    }
+    .mr-back-link {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--mr-primary);
+        text-decoration: none;
+        transition: color 0.15s;
+    }
+    .mr-back-link:hover {
+        text-decoration: underline;
+    }
+
+    /* Clean Light Toolbar (Only Financial Year and Month) */
+    .mr-toolbar {
+        background: var(--mr-card-bg);
+        border: 1px solid var(--mr-border);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+        flex-wrap: wrap;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    }
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 170px;
+    }
+    .filter-item label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--mr-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+    }
+    .filter-select {
+        font-size: 12.5px;
+        padding: 7px 12px;
+        border: 1px solid var(--mr-border);
+        border-radius: 6px;
+        background: #FFFFFF;
+        color: var(--mr-text-main);
+        outline: none;
+        cursor: pointer;
+        transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .filter-select:focus {
+        border-color: var(--mr-primary);
+        box-shadow: 0 0 0 2px rgba(37,99,235,0.1);
+    }
+    .btn-group {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .btn {
+        font-size: 12px;
+        font-weight: 600;
+        padding: 7px 16px;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.15s, box-shadow 0.15s;
+    }
+    .btn-primary {
+        background: var(--mr-primary);
+        color: #FFFFFF;
+    }
+    .btn-primary:hover {
+        background: var(--mr-primary-hover);
+    }
+    .btn-light {
+        background: #FFFFFF;
+        border: 1px solid var(--mr-border);
+        color: var(--mr-text-muted);
+    }
+    .btn-light:hover {
+        background: var(--mr-bg);
+        color: var(--mr-text-main);
+    }
+    .btn-export {
+        background: var(--mr-green);
+        color: #FFFFFF;
+        margin-left: auto;
+    }
+    .btn-export:hover {
+        background: var(--mr-green-hover);
+    }
+
+    /* Section Toggles & Table Controls */
+    .controls-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .toggle-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    .toggle-group-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--mr-text-muted);
+        text-transform: uppercase;
+        margin-right: 2px;
+    }
+    .sec-chip {
+        font-size: 11px;
+        padding: 4px 10px;
+        border-radius: 16px;
+        border: 1px solid var(--mr-border);
+        background: #FFFFFF;
+        color: var(--mr-text-muted);
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.15s;
+    }
+    .sec-chip.active {
+        background: #EBF3FB;
+        border-color: #BFDBFE;
+        color: var(--mr-primary);
+        font-weight: 600;
+    }
+
+    /* Table Container & Light Layout */
+    .table-card {
+        background: var(--mr-card-bg);
+        border: 1px solid var(--mr-border);
+        border-radius: 8px;
+        overflow: hidden;
+        position: relative;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    .table-scroll {
+        overflow-x: auto;
+        max-height: 720px;
+    }
+    .master-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11.5px;
+        white-space: nowrap;
+        color: var(--mr-text-main);
+    }
+    .master-table th, .master-table td {
+        padding: 7px 10px;
+        border: 1px solid var(--mr-border);
+        vertical-align: middle;
+    }
+
+    /* Section Header Row (Tier 1) - Light Tints */
+    .master-table thead tr.tier-section th {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-align: center;
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--mr-border-dark);
+    }
+    th.sec-basic { background: var(--sec-basic-bg); color: var(--sec-basic-txt); }
+    th.sec-vessel { background: var(--sec-vessel-bg); color: var(--sec-vessel-txt); }
+    th.sec-cargo { background: var(--sec-cargo-bg); color: var(--sec-cargo-txt); }
+    th.sec-timing { background: var(--sec-timing-bg); color: var(--sec-timing-txt); }
+    th.sec-rate { background: var(--sec-rate-bg); color: var(--sec-rate-txt); }
+    th.sec-dim { background: var(--sec-dim-bg); color: var(--sec-dim-txt); }
+    th.sec-perf { background: var(--sec-perf-bg); color: var(--sec-perf-txt); }
+
+    /* Detailed Column Header Row (Tier 2) - Clean Light Slate */
+    .master-table thead tr.tier-columns th {
+        background: #F8FAFC;
+        color: #475569;
+        font-size: 11px;
+        font-weight: 600;
+        text-align: left;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        cursor: pointer;
+        border-bottom: 2px solid var(--mr-border-dark);
+    }
+    .master-table thead tr.tier-columns th:hover {
+        background: #F1F5F9;
+        color: var(--mr-text-main);
+    }
+
+    /* Body Rows */
+    .master-table tbody tr {
+        background: #FFFFFF;
+        transition: background 0.1s;
+    }
+    .master-table tbody tr:nth-child(even) {
+        background: #F8FAFC;
+    }
+    .master-table tbody tr:hover {
+        background: #F1F5F9;
+    }
+
+    /* Cell Alignment & Numbers */
+    .cell-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .cell-center { text-align: center; }
+
+    /* Badges */
+    .badge-status {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+    }
+    .badge-unberth { background: #DCFCE7; color: #15803D; border: 1px solid #BBF7D0; }
+    .badge-berth { background: #DBEAFE; color: #1D4ED8; border: 1px solid #BFDBFE; }
+    .badge-waiting { background: #FEF3C7; color: #B45309; border: 1px solid #FDE68A; }
+
+    .badge-src {
+        display: inline-block;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 9.5px;
+        font-weight: 600;
+        margin-right: 4px;
+    }
+    .badge-src-master { background: #F3E8FF; color: #6B21A8; }
+    .badge-src-actual { background: #E0E7FF; color: #3730A3; }
+
+    /* Footer & Pagination Bar */
+    .pagination-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        background: #FFFFFF;
+        border-top: 1px solid var(--mr-border);
+        font-size: 12px;
+        color: var(--mr-text-muted);
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .page-nav {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .btn-nav {
+        padding: 4px 10px;
+        border: 1px solid var(--mr-border);
+        border-radius: 4px;
+        background: #FFFFFF;
+        color: var(--mr-text-main);
+        font-size: 11.5px;
+        cursor: pointer;
+    }
+    .btn-nav:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .btn-nav:not(:disabled):hover {
+        background: var(--mr-bg);
+    }
+
+    /* Loading Overlay */
+    .loading-overlay {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,0.75);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        font-weight: 600;
+        color: var(--mr-primary);
+        font-size: 13px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="master-report-wrapper">
+
+    <!-- Header -->
+    <div class="mr-header">
+        <div class="mr-header-left">
+            <h2 class="mr-title">Master Report</h2>
+            <span class="mr-badge">MASTER</span>
+            <span class="mr-subtitle">Port Management Comprehensive Operational Log</span>
+        </div>
+        <a href="/module/RP01/" class="mr-back-link">&larr; Back to RP01 Reports</a>
+    </div>
+
+    <!-- Toolbar: Only Year and Month Filters -->
+    <div class="mr-toolbar">
+        <div class="filter-item">
+            <label>Financial Year</label>
+            <select id="filter-fy" class="filter-select">
+                <option value="ALL">All Financial Years</option>
+            </select>
+        </div>
+        <div class="filter-item">
+            <label>Month</label>
+            <select id="filter-month" class="filter-select">
+                <option value="ALL">All Months</option>
+            </select>
+        </div>
+        <div class="btn-group">
+            <button id="btn-filter" class="btn btn-primary">Filter</button>
+            <button id="btn-reset" class="btn btn-light">Reset</button>
+        </div>
+        <button id="btn-export" class="btn btn-export">&#128196; Export Excel</button>
+    </div>
+
+    <!-- Section Visibility Toggles & Controls -->
+    <div class="controls-bar">
+        <div class="toggle-group">
+            <span class="toggle-group-label">Show Sections:</span>
+            <span class="sec-chip active" data-sec="basic">Basic &amp; Vessel</span>
+            <span class="sec-chip active" data-sec="cargo">Cargo Details</span>
+            <span class="sec-chip active" data-sec="timing">Timings</span>
+            <span class="sec-chip active" data-sec="rate">Qty, Rate &amp; Forecast</span>
+            <span class="sec-chip active" data-sec="dim">Dimensions</span>
+            <span class="sec-chip active" data-sec="perf">Performance &amp; Delays</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-size: 11px; color: var(--mr-text-muted); font-weight: 600;">PAGE SIZE:</label>
+            <select id="page-size-select" class="filter-select" style="padding: 3px 8px; font-size: 11.5px;">
+                <option value="25">25 rows</option>
+                <option value="50" selected>50 rows</option>
+                <option value="100">100 rows</option>
+                <option value="all">All rows</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Table Card -->
+    <div class="table-card">
+        <div id="loading" class="loading-overlay" style="display: none;">Loading Master Report Data...</div>
+        <div class="table-scroll">
+            <table class="master-table" id="master-table">
+                <thead>
+                    <!-- Section Headers (Tier 1) -->
+                    <tr class="tier-section">
+                        <th colspan="6" data-sec="basic" class="sec-basic">Basic Details</th>
+                        <th colspan="9" data-sec="basic" class="sec-vessel">Vessel Details</th>
+                        <th colspan="10" data-sec="cargo" class="sec-cargo">Importer &amp; Cargo Details</th>
+                        <th colspan="11" data-sec="timing" class="sec-timing">Vessel Timing Details</th>
+                        <th colspan="9" data-sec="rate" class="sec-rate">Qty, Rate &amp; Forecast</th>
+                        <th colspan="5" data-sec="dim" class="sec-dim">Reporting Dimensions</th>
+                        <th colspan="16" data-sec="perf" class="sec-perf">Turnaround &amp; Operational Performance</th>
+                    </tr>
+                    <!-- Column Headers (Tier 2) -->
+                    <tr class="tier-columns">
+                        <!-- Basic -->
+                        <th data-sec="basic" data-field="status">Status</th>
+                        <th data-sec="basic" data-field="loa" title="Length Overall (m)">LOA</th>
+                        <th data-sec="basic" data-field="berth_no">Berth No</th>
+                        <th data-sec="basic" data-field="vcn_no">Via / VCN</th>
+                        <th data-sec="basic" data-field="vessel_name">Vessel Name</th>
+                        <th data-sec="basic" data-field="cat_7">Cat 7</th>
+
+                        <!-- Vessel -->
+                        <th data-sec="basic" data-field="overseas_coastal">Overseas</th>
+                        <th data-sec="basic" data-field="foreign_indian">F/I</th>
+                        <th data-sec="basic" data-field="imo_no">IMO NO</th>
+                        <th data-sec="basic" data-field="flag">Flag</th>
+                        <th data-sec="basic" data-field="bhc">BHC</th>
+                        <th data-sec="basic" data-field="port_code">Port Code</th>
+                        <th data-sec="basic" data-field="port_of_loading">Port of Loading</th>
+                        <th data-sec="basic" data-field="grt">GRT</th>
+                        <th data-sec="basic" data-field="draft">Draft (m)</th>
+
+                        <!-- Cargo -->
+                        <th data-sec="cargo" data-field="import_export">Import/Export</th>
+                        <th data-sec="cargo" data-field="agent">Agent</th>
+                        <th data-sec="cargo" data-field="unload_pipeline">Unload Pipeline</th>
+                        <th data-sec="cargo" data-field="consigner">Consigner</th>
+                        <th data-sec="cargo" data-field="unloading_terminal">Unloading Terminal</th>
+                        <th data-sec="cargo" data-field="new_cat">New Cat</th>
+                        <th data-sec="cargo" data-field="category1">Category-1</th>
+                        <th data-sec="cargo" data-field="category">Category</th>
+                        <th data-sec="cargo" data-field="cargo">Cargo</th>
+                        <th data-sec="cargo" data-field="quantity">Quantity (MT)</th>
+
+                        <!-- Timings -->
+                        <th data-sec="timing" data-field="nor">NOR</th>
+                        <th data-sec="timing" data-field="anchorage_time">Anchorage</th>
+                        <th data-sec="timing" data-field="pilot_pickup">Pilot Pick Up</th>
+                        <th data-sec="timing" data-field="first_line">First Line</th>
+                        <th data-sec="timing" data-field="alongside">Alongside</th>
+                        <th data-sec="timing" data-field="ops_commenced">Ops Commenced</th>
+                        <th data-sec="timing" data-field="cargo_completion">Cargo Completion</th>
+                        <th data-sec="timing" data-field="sail_cast_off">Sail Cast Off</th>
+                        <th data-sec="timing" data-field="cast_off">Cast Off</th>
+                        <th data-sec="timing" data-field="pilot_board_departure">Pilot Dept</th>
+                        <th data-sec="timing" data-field="pilot_disembarked">Pilot Disembarked</th>
+
+                        <!-- Rate & Forecast -->
+                        <th data-sec="rate" data-field="discharged_till_now">Discharged Qty (MT)</th>
+                        <th data-sec="rate" data-field="till_time">Till Time</th>
+                        <th data-sec="rate" data-field="expected_flow_rate">Expected Flow Rate</th>
+                        <th data-sec="rate" data-field="flow_rate">Flow Rate (MT/hr)</th>
+                        <th data-sec="rate" data-field="present_flow_rate">Present Flow Rate</th>
+                        <th data-sec="rate" data-field="balance_quantity">Balance (MT)</th>
+                        <th data-sec="rate" data-field="balance_time_hrs">Balance Time (hrs)</th>
+                        <th data-sec="rate" data-field="expected_completion">Expected Completion</th>
+                        <th data-sec="rate" data-field="last_24h_qty">Last 24h Qty</th>
+
+                        <!-- Dimensions -->
+                        <th data-sec="dim" data-field="fin_year">FY</th>
+                        <th data-sec="dim" data-field="month">Month</th>
+                        <th data-sec="dim" data-field="dim_via_fi_overseas_imo">VIA/F/OVERSEAS/IMO</th>
+                        <th data-sec="dim" data-field="dim_loa_bhc_dft">LOA/BHC/DFT</th>
+                        <th data-sec="dim" data-field="dim_agt_tf_pl">AGT / TF / PL</th>
+
+                        <!-- Performance -->
+                        <th data-sec="perf" data-field="pre_berthing_waiting_days">Pre-Berthing (Days)</th>
+                        <th data-sec="perf" data-field="pre_berthing_waiting_hrs">Pre-Berthing (Hrs)</th>
+                        <th data-sec="perf" data-field="waiting_port_hrs">Port Delay (Hrs)</th>
+                        <th data-sec="perf" data-field="waiting_non_port_hrs">Non-Port Delay (Hrs)</th>
+                        <th data-sec="perf" data-field="stay_at_berth_days">Stay at Berth (Days)</th>
+                        <th data-sec="perf" data-field="stay_at_berth_hrs">Stay at Berth (Hrs)</th>
+                        <th data-sec="perf" data-field="arrive_to_comm_hrs">Arrive to Comm (Hrs)</th>
+                        <th data-sec="perf" data-field="working_time_days">Working Time (Days)</th>
+                        <th data-sec="perf" data-field="working_time_hrs">Working Time (Hrs)</th>
+                        <th data-sec="perf" data-field="non_working_total_hrs">Non-Working Total (Hrs)</th>
+                        <th data-sec="perf" data-field="inward_movement_hrs">Inward Mov (Hrs)</th>
+                        <th data-sec="perf" data-field="outward_movement_hrs">Outward Mov (Hrs)</th>
+                        <th data-sec="perf" data-field="comp_to_unberth_hrs">Comp to Unberth (Hrs)</th>
+                        <th data-sec="perf" data-field="productivity_per_day">Productivity / Day (MT)</th>
+                        <th data-sec="perf" data-field="turnaround_time_days">Turnaround (Days)</th>
+                        <th data-sec="perf" data-field="turnaround_time_hrs">Turnaround (Hrs)</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <!-- Data populated via JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Bar -->
+        <div class="pagination-bar">
+            <div>
+                Showing <strong id="showing-start">0</strong> to <strong id="showing-end">0</strong> of <strong id="showing-total">0</strong> vessel calls
+            </div>
+            <div class="page-nav">
+                <button id="btn-first" class="btn-nav">&laquo; First</button>
+                <button id="btn-prev" class="btn-nav">&lsaquo; Prev</button>
+                <span style="margin: 0 4px;">Page <strong id="current-page">1</strong> of <strong id="total-pages">1</strong></span>
+                <button id="btn-next" class="btn-nav">Next &rsaquo;</button>
+                <button id="btn-last" class="btn-nav">Last &raquo;</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    let currentPage = 1;
+    let pageSize = 50;
+    let totalPages = 1;
+    let currentSortField = 'sr_no';
+    let currentSortDir = 'asc';
+    let metaMonthsByFY = {};
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        setupEventListeners();
+        await loadMetadata();
+        fetchReportData();
+    });
+
+    function getCurrentFinYear() {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = now.getMonth(); // 0=Jan..11=Dec
+        const fyStart = (m >= 3) ? y : y - 1; // Apr(3) or later => FY starts this calendar year
+        return `${fyStart}-${String(fyStart + 1).slice(-2)}`;
+    }
+
+    function getCurrentMonthStr() {
+        const now = new Date();
+        const mNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const mName = mNames[now.getMonth()];
+        const yShort = String(now.getFullYear()).slice(-2);
+        return `${mName}-${yShort}`;
+    }
+
+    function setupEventListeners() {
+        document.getElementById('btn-filter').addEventListener('click', () => {
+            currentPage = 1;
+            fetchReportData();
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            const curFY = getCurrentFinYear();
+            const curMonth = getCurrentMonthStr();
+            const fySelect = document.getElementById('filter-fy');
+            const mSelect = document.getElementById('filter-month');
+
+            const finYears = Array.from(fySelect.options).map(o => o.value);
+            if (finYears.includes(curFY)) {
+                fySelect.value = curFY;
+            } else {
+                fySelect.value = 'ALL';
+            }
+
+            updateMonthOptions(fySelect.value);
+
+            const months = Array.from(mSelect.options).map(o => o.value);
+            if (months.includes(curMonth)) {
+                mSelect.value = curMonth;
+            } else {
+                mSelect.value = 'ALL';
+            }
+
+            currentPage = 1;
+            fetchReportData();
+        });
+
+        document.getElementById('filter-fy').addEventListener('change', (e) => {
+            updateMonthOptions(e.target.value);
+        });
+
+        document.getElementById('page-size-select').addEventListener('change', (e) => {
+            pageSize = e.target.value;
+            currentPage = 1;
+            fetchReportData();
+        });
+
+        document.getElementById('btn-export').addEventListener('click', () => {
+            const params = buildQueryParams();
+            window.location.href = `/api/module/RP01/master-report/export?${params.toString()}`;
+        });
+
+        document.getElementById('btn-first').addEventListener('click', () => { if (currentPage > 1) { currentPage = 1; fetchReportData(); } });
+        document.getElementById('btn-prev').addEventListener('click', () => { if (currentPage > 1) { currentPage--; fetchReportData(); } });
+        document.getElementById('btn-next').addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; fetchReportData(); } });
+        document.getElementById('btn-last').addEventListener('click', () => { if (currentPage < totalPages) { currentPage = totalPages; fetchReportData(); } });
+
+        // Column Section Visibility Toggles
+        document.querySelectorAll('.sec-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                chip.classList.toggle('active');
+                const sec = chip.dataset.sec;
+                const isVisible = chip.classList.contains('active');
+                toggleSectionVisibility(sec, isVisible);
+            });
+        });
+
+        // Column Sorting
+        document.querySelectorAll('.master-table thead tr.tier-columns th').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.field;
+                if (!field) return;
+                if (currentSortField === field) {
+                    currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSortField = field;
+                }
+                fetchReportData();
+            });
+        });
+    }
+
+    function toggleSectionVisibility(sec, isVisible) {
+        const displayVal = isVisible ? '' : 'none';
+        document.querySelectorAll(`[data-sec="${sec}"]`).forEach(el => {
+            el.style.display = displayVal;
+        });
+    }
+
+    function buildQueryParams() {
+        const params = new URLSearchParams();
+        const fy = document.getElementById('filter-fy').value;
+        const month = document.getElementById('filter-month').value;
+
+        if (fy !== 'ALL') params.set('fin_year', fy);
+        if (month !== 'ALL') params.set('month', month);
+
+        params.set('sort_field', currentSortField);
+        params.set('sort_dir', currentSortDir);
+        params.set('page', currentPage);
+        params.set('size', pageSize);
+        return params;
+    }
+
+    async function loadMetadata() {
+        try {
+            const res = await fetch('/api/module/RP01/master-report/meta');
+            const meta = await res.json();
+
+            metaMonthsByFY = meta.months_by_fy || {};
+
+            const fySelect = document.getElementById('filter-fy');
+            fySelect.innerHTML = '<option value="ALL">All Financial Years</option>';
+            const finYears = meta.fin_years || [];
+            finYears.forEach(fy => {
+                const opt = document.createElement('option');
+                opt.value = fy;
+                opt.textContent = fy;
+                fySelect.appendChild(opt);
+            });
+
+            // Set default Financial Year (current FY if exists, otherwise first/latest available)
+            const curFY = getCurrentFinYear();
+            if (finYears.includes(curFY)) {
+                fySelect.value = curFY;
+            } else if (finYears.length > 0) {
+                fySelect.value = finYears[0];
+            }
+
+            // Populate months for the default selected FY
+            updateMonthOptions(fySelect.value, meta.months || []);
+
+            // Set default Month (current month if exists, otherwise latest available for selected FY)
+            const mSelect = document.getElementById('filter-month');
+            const curMonth = getCurrentMonthStr();
+            const availableMonths = (fySelect.value !== 'ALL' && metaMonthsByFY[fySelect.value]) ? metaMonthsByFY[fySelect.value] : (meta.months || []);
+            if (availableMonths.includes(curMonth)) {
+                mSelect.value = curMonth;
+            } else if (availableMonths.length > 0) {
+                mSelect.value = availableMonths[availableMonths.length - 1];
+            }
+        } catch (e) {
+            console.error('Error loading metadata:', e);
+        }
+    }
+
+    function updateMonthOptions(selectedFY, fallbackMonths=[]) {
+        const mSelect = document.getElementById('filter-month');
+        const prevMonth = mSelect.value;
+        mSelect.innerHTML = '<option value="ALL">All Months</option>';
+
+        let monthsToShow = [];
+        if (selectedFY !== 'ALL' && metaMonthsByFY[selectedFY]) {
+            monthsToShow = metaMonthsByFY[selectedFY];
+        } else {
+            monthsToShow = fallbackMonths.length > 0 ? fallbackMonths : Object.values(metaMonthsByFY).flat();
+            monthsToShow = Array.from(new Set(monthsToShow));
+        }
+
+        monthsToShow.forEach(m => {
+            if (m) {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                mSelect.appendChild(opt);
+            }
+        });
+
+        // Retain previous month selection if still valid; otherwise check current month; otherwise ALL
+        const curMonth = getCurrentMonthStr();
+        if (monthsToShow.includes(prevMonth)) {
+            mSelect.value = prevMonth;
+        } else if (monthsToShow.includes(curMonth)) {
+            mSelect.value = curMonth;
+        } else {
+            mSelect.value = 'ALL';
+        }
+    }
+
+    async function fetchReportData() {
+        const loading = document.getElementById('loading');
+        loading.style.display = 'flex';
+        try {
+            const params = buildQueryParams();
+            const res = await fetch(`/api/module/RP01/master-report/data?${params.toString()}`);
+            const result = await res.json();
+
+            renderTable(result.data);
+
+            totalPages = result.last_page || 1;
+            document.getElementById('current-page').textContent = result.page || 1;
+            document.getElementById('total-pages').textContent = totalPages;
+
+            const total = result.total || 0;
+            const sizeNum = pageSize === 'all' ? total : parseInt(pageSize, 10);
+            const start = total === 0 ? 0 : (currentPage - 1) * sizeNum + 1;
+            const end = Math.min(start + sizeNum - 1, total);
+
+            document.getElementById('showing-start').textContent = start;
+            document.getElementById('showing-end').textContent = end;
+            document.getElementById('showing-total').textContent = total;
+
+            document.getElementById('btn-first').disabled = (currentPage <= 1);
+            document.getElementById('btn-prev').disabled = (currentPage <= 1);
+            document.getElementById('btn-next').disabled = (currentPage >= totalPages);
+            document.getElementById('btn-last').disabled = (currentPage >= totalPages);
+        } catch (e) {
+            console.error('Error fetching report data:', e);
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+
+    function renderTable(rows) {
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = '';
+
+        if (!rows || rows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="75" style="text-align:center; padding:30px; color:var(--mr-text-muted);">No vessel records matching the selected year and month.</td></tr>`;
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        rows.forEach(r => {
+            const tr = document.createElement('tr');
+
+            const statusClass = r.status === 'Unberth' ? 'badge-unberth' : (r.status === 'Berth' ? 'badge-berth' : 'badge-waiting');
+            const sourceClass = r.source === 'Master' ? 'badge-src-master' : 'badge-src-actual';
+
+            tr.innerHTML = `
+                <!-- Basic -->
+                <td data-sec="basic" class="cell-center"><span class="badge-status ${statusClass}">${r.status}</span></td>
+                <td data-sec="basic" class="cell-num">${formatNum(r.loa, 2)}</td>
+                <td data-sec="basic" class="cell-center"><strong>${r.berth_no || ''}</strong></td>
+                <td data-sec="basic">${r.vcn_no || ''}</td>
+                <td data-sec="basic"><strong>${r.vessel_name || ''}</strong></td>
+                <td data-sec="basic" class="cell-center">${r.cat_7 || ''}</td>
+
+                <!-- Vessel -->
+                <td data-sec="basic">${r.overseas_coastal || ''}</td>
+                <td data-sec="basic" class="cell-center">${r.foreign_indian || ''}</td>
+                <td data-sec="basic">${r.imo_no || ''}</td>
+                <td data-sec="basic">${r.flag || ''}</td>
+                <td data-sec="basic">${r.bhc || ''}</td>
+                <td data-sec="basic">${r.port_code || ''}</td>
+                <td data-sec="basic">${r.port_of_loading || ''}</td>
+                <td data-sec="basic" class="cell-num">${formatNum(r.grt, 0)}</td>
+                <td data-sec="basic" class="cell-num">${formatNum(r.draft, 2)}</td>
+
+                <!-- Cargo -->
+                <td data-sec="cargo">${r.import_export || ''}</td>
+                <td data-sec="cargo">${r.agent || ''}</td>
+                <td data-sec="cargo">${r.unload_pipeline || ''}</td>
+                <td data-sec="cargo">${r.consigner || ''}</td>
+                <td data-sec="cargo">${r.unloading_terminal || ''}</td>
+                <td data-sec="cargo">${r.new_cat || ''}</td>
+                <td data-sec="cargo">${r.category1 || ''}</td>
+                <td data-sec="cargo">${r.category || ''}</td>
+                <td data-sec="cargo"><strong>${r.cargo || ''}</strong></td>
+                <td data-sec="cargo" class="cell-num" style="font-weight:700;">${formatNum(r.quantity, 3)}</td>
+
+                <!-- Timings -->
+                <td data-sec="timing">${r.nor || '-'}</td>
+                <td data-sec="timing">${r.anchorage_time || '-'}</td>
+                <td data-sec="timing">${r.pilot_pickup || '-'}</td>
+                <td data-sec="timing">${r.first_line || '-'}</td>
+                <td data-sec="timing">${r.alongside || '-'}</td>
+                <td data-sec="timing">${r.ops_commenced || '-'}</td>
+                <td data-sec="timing">${r.cargo_completion || '-'}</td>
+                <td data-sec="timing">${r.sail_cast_off || '-'}</td>
+                <td data-sec="timing">${r.cast_off || '-'}</td>
+                <td data-sec="timing">${r.pilot_board_departure || '-'}</td>
+                <td data-sec="timing">${r.pilot_disembarked || '-'}</td>
+
+                <!-- Rate & Forecast -->
+                <td data-sec="rate" class="cell-num">${formatNum(r.discharged_till_now, 3)}</td>
+                <td data-sec="rate">${r.till_time || '-'}</td>
+                <td data-sec="rate" class="cell-num">${formatNum(r.expected_flow_rate, 2)}</td>
+                <td data-sec="rate" class="cell-num" style="font-weight:700; color:var(--mr-primary);">${formatNum(r.flow_rate, 2)}</td>
+                <td data-sec="rate" class="cell-num">${formatNum(r.present_flow_rate, 2)}</td>
+                <td data-sec="rate" class="cell-num" style="color:#B45309;">${formatNum(r.balance_quantity, 3)}</td>
+                <td data-sec="rate" class="cell-num">${formatNum(r.balance_time_hrs, 2)}</td>
+                <td data-sec="rate">${r.expected_completion || '-'}</td>
+                <td data-sec="rate" class="cell-num">${formatNum(r.last_24h_qty, 3)}</td>
+
+                <!-- Dimensions -->
+                <td data-sec="dim">${r.fin_year || ''}</td>
+                <td data-sec="dim">${r.month || ''}</td>
+                <td data-sec="dim" style="font-size:10.5px;">${r.dim_via_fi_overseas_imo || ''}</td>
+                <td data-sec="dim" style="font-size:10.5px;">${r.dim_loa_bhc_dft || ''}</td>
+                <td data-sec="dim" style="font-size:10.5px;">${r.dim_agt_tf_pl || ''}</td>
+
+                <!-- Performance -->
+                <td data-sec="perf" class="cell-num">${formatNum(r.pre_berthing_waiting_days, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.pre_berthing_waiting_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.waiting_port_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.waiting_non_port_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.stay_at_berth_days, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.stay_at_berth_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.arrive_to_comm_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.working_time_days, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.working_time_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.non_working_total_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.inward_movement_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.outward_movement_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.comp_to_unberth_hrs, 2)}</td>
+                <td data-sec="perf" class="cell-num" style="font-weight:700;">${formatNum(r.productivity_per_day, 2)}</td>
+                <td data-sec="perf" class="cell-num">${formatNum(r.turnaround_time_days, 2)}</td>
+                <td data-sec="perf" class="cell-num" style="font-weight:700; color:#1E3A8A;">${formatNum(r.turnaround_time_hrs, 2)}</td>
+            `;
+
+            fragment.appendChild(tr);
+        });
+
+        tbody.appendChild(fragment);
+
+        // Apply active section toggles
+        document.querySelectorAll('.sec-chip').forEach(chip => {
+            const sec = chip.dataset.sec;
+            const isVisible = chip.classList.contains('active');
+            toggleSectionVisibility(sec, isVisible);
+        });
+    }
+
+    function formatNum(v, dec) {
+        if (v === null || v === undefined || isNaN(v)) return '-';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    }
+</script>
+{% endblock %}
