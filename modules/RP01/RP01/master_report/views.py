@@ -121,6 +121,245 @@ def _date_to_fin_year_and_month(dt):
     return fy, m_str
 
 
+def _load_port_master_mapping(cur):
+    """
+    Dynamically loads port mappings from the database:
+    1. Historical distinct port mappings from mis_vessel_master
+    2. Authoritative live Port Master table (VPM01 - port_master), taking precedence.
+    No hardcoded port dictionary — completely dynamic from database master data.
+    Returns (port_code_map, port_name_map, known_codes).
+    """
+    port_code_map = {}
+    port_name_map = {}
+    known_codes = set()
+
+    # 1. Historical distinct ports from mis_vessel_master
+    try:
+        cur.execute("""
+            SELECT DISTINCT port_of_loading, port_code 
+            FROM mis_vessel_master 
+            WHERE port_code IS NOT NULL AND TRIM(port_code) != ''
+        """)
+        for m_p in cur.fetchall():
+            p_name = (m_p.get('port_of_loading') or '').strip()
+            p_code = (m_p.get('port_code') or '').strip().upper()
+            if p_code:
+                known_codes.add(p_code)
+                port_code_map[p_code] = p_code
+                if p_name and p_code not in port_name_map:
+                    port_name_map[p_code] = p_name
+            if p_name and p_code:
+                norm_name = p_name.upper()
+                port_code_map[norm_name] = p_code
+                first_token = re.split(r'[,/(-]', norm_name)[0].strip()
+                if first_token and first_token not in port_code_map:
+                    port_code_map[first_token] = p_code
+    except Exception:
+        pass
+
+    # 2. Authoritative live Port Master table (VPM01 - port_master)
+    try:
+        cur.execute("""
+            SELECT name, port_code 
+            FROM port_master 
+            WHERE (port_code IS NOT NULL AND TRIM(port_code) != '')
+               OR (name IS NOT NULL AND TRIM(name) != '')
+        """)
+        for pm in cur.fetchall():
+            p_name = (pm.get('name') or '').strip()
+            p_code = (pm.get('port_code') or '').strip().upper()
+            if p_code:
+                known_codes.add(p_code)
+                port_code_map[p_code] = p_code
+                if p_name:
+                    port_name_map[p_code] = p_name
+            if p_name and p_code:
+                norm_name = p_name.upper()
+                port_code_map[norm_name] = p_code
+                first_token = re.split(r'[,/(-]', norm_name)[0].strip()
+                port_code_map[first_token] = p_code
+    except Exception:
+        pass
+
+    return port_code_map, port_name_map, known_codes
+
+
+def _resolve_port_info(port_loading, existing_port_code, port_code_map, port_name_map, known_codes):
+    """
+    Resolves official port_code and port_of_loading from port_master.
+    """
+    p_code = (existing_port_code or '').strip().upper()
+    p_load = (port_loading or '').strip()
+
+    # If code is already recognized and valid
+    if p_code and p_code in known_codes:
+        if not p_load and p_code in port_name_map:
+            p_load = port_name_map[p_code]
+        return p_code, p_load
+
+    # If port_of_loading is provided
+    if p_load:
+        norm_load = p_load.upper()
+        # 1. Exact match
+        if norm_load in port_code_map:
+            return port_code_map[norm_load], p_load
+
+        # 2. Match primary part before comma / separator
+        first_token = re.split(r'[,/(-]', norm_load)[0].strip()
+        if first_token and first_token in port_code_map:
+            return port_code_map[first_token], p_load
+
+        # 3. Substring match (min length 4)
+        for k, code in port_code_map.items():
+            if len(k) >= 4 and (k in norm_load or norm_load in k):
+                return code, p_load
+
+    return p_code, p_load
+
+
+def _load_vessel_cargo_mapping(cur):
+    """
+    Dynamically loads cargo categorization from vessel_cargo (VCG01 - Vessel Cargo Master)
+    and backfills from mis_vessel_master.
+    No hardcoded mappings — 100% dynamic based on database records.
+    Returns cargo_map: norm_name -> {new_cat, category1, category}.
+    """
+    cargo_map = {}
+
+    def _clean(val, default=''):
+        if not val:
+            return default
+        s = str(val).strip()
+        if s.upper() == 'POL':
+            return 'POL'
+        if s.upper() in ('POL-BLACK', 'POL BLACK'):
+            return 'POL Black'
+        if s.upper() in ('FARM LIQUIDS', 'FARM LIQUID'):
+            return 'Other Liquid'
+        return s.title()
+
+    # 1. Backfill from mis_vessel_master (historical ground truth)
+    try:
+        cur.execute("""
+            SELECT DISTINCT cargo, new_cat, category1, category
+            FROM mis_vessel_master
+            WHERE cargo IS NOT NULL AND TRIM(cargo) != ''
+        """)
+        for m in cur.fetchall():
+            mc = (m.get('cargo') or '').strip().upper()
+            if mc:
+                cargo_map[mc] = {
+                    'new_cat': m.get('new_cat') or '',
+                    'category1': m.get('category1') or '',
+                    'category': m.get('category') or ''
+                }
+    except Exception:
+        pass
+
+    # 2. Authoritative live Vessel Cargo Master (vessel_cargo / VCG01) — overrides and takes priority
+    try:
+        cur.execute("""
+            SELECT 
+                cargo_name, cargo_code, cargo_type, 
+                cargo_category, cargo_category_2, cargo_sub_category, cargo_sub_category_2
+            FROM vessel_cargo
+            WHERE (cargo_name IS NOT NULL AND TRIM(cargo_name) != '')
+               OR (cargo_code IS NOT NULL AND TRIM(cargo_code) != '')
+        """)
+        for r in cur.fetchall():
+            cn = (r.get('cargo_name') or '').strip().upper()
+            cc = (r.get('cargo_code') or '').strip().upper()
+
+            sub2 = (r.get('cargo_sub_category_2') or '').strip()
+            cat2 = (r.get('cargo_category_2') or '').strip()
+            sub1 = (r.get('cargo_sub_category') or '').strip()
+            cat = (r.get('cargo_category') or '').strip()
+            ctype = (r.get('cargo_type') or '').strip()
+
+            new_cat_val = ''
+            for test in (sub2, cat2, cat, ctype):
+                tu = test.upper()
+                if 'CHEM' in tu:
+                    new_cat_val = 'Chemical'
+                    break
+                elif 'EDIBLE' in tu:
+                    new_cat_val = 'Edible Oil'
+                    break
+                elif 'POL' in tu:
+                    new_cat_val = 'POL'
+                    break
+                elif 'FARM' in tu or 'OTHER' in tu:
+                    new_cat_val = 'Other Liquid'
+                    break
+            if not new_cat_val and sub2:
+                new_cat_val = _clean(sub2)
+            elif not new_cat_val and cat:
+                new_cat_val = _clean(cat)
+
+            cat1_val = _clean(cat2 or sub1 or sub2 or 'Other')
+            cat_val = _clean(cat or sub2 or 'Other Liquid')
+
+            existing = cargo_map.get(cn) or cargo_map.get(cc) or {}
+            final_info = {
+                'new_cat': new_cat_val or existing.get('new_cat') or 'Other Liquid',
+                'category1': cat1_val if (cat2 or sub1) else (existing.get('category1') or cat1_val),
+                'category': cat_val if cat else (existing.get('category') or cat_val)
+            }
+
+            if cn:
+                cargo_map[cn] = final_info
+            if cc:
+                cargo_map[cc] = final_info
+    except Exception:
+        pass
+
+    return cargo_map
+
+
+def _resolve_cargo_categories(cargo_str, cargo_map):
+    """
+    Resolves (new_cat, category1, category) from vessel_cargo master.
+    Handles multiple cargos if separated by comma or slash.
+    """
+    if not cargo_str or not str(cargo_str).strip():
+        return '', '', ''
+
+    raw_str = str(cargo_str).strip()
+    parts = [p.strip() for p in re.split(r'[,/]', raw_str) if p.strip()]
+    if not parts:
+        parts = [raw_str]
+
+    res_new_cat = []
+    res_cat1 = []
+    res_cat = []
+
+    for p in parts:
+        pu = p.upper()
+        match = cargo_map.get(pu)
+        if not match:
+            cleaned = re.sub(r'\[.*?\]|\(.*?\)', '', pu).strip()
+            match = cargo_map.get(cleaned)
+        if not match:
+            for k, v in cargo_map.items():
+                if len(k) >= 4 and (k in pu or pu in k):
+                    match = v
+                    break
+
+        if match:
+            if match.get('new_cat') and match['new_cat'] not in res_new_cat:
+                res_new_cat.append(match['new_cat'])
+            if match.get('category1') and match['category1'] not in res_cat1:
+                res_cat1.append(match['category1'])
+            if match.get('category') and match['category'] not in res_cat:
+                res_cat.append(match['category'])
+
+    final_new_cat = ', '.join(res_new_cat) if res_new_cat else 'Other Liquid'
+    final_cat1 = ', '.join(res_cat1) if res_cat1 else 'Other'
+    final_cat = ', '.join(res_cat) if res_cat else 'Other Liquid'
+
+    return final_new_cat, final_cat1, final_cat
+
+
 # ──────────────────────────────────────────────────────────────────
 #  Data Fetching: Historical Master + Live Operations
 # ──────────────────────────────────────────────────────────────────
@@ -136,6 +375,8 @@ def fetch_master_report_records():
 
     try:
         cur = get_cursor(conn)
+        port_code_map, port_name_map, known_codes = _load_port_master_mapping(cur)
+        cargo_map = _load_vessel_cargo_mapping(cur)
 
         # -------------------------------------------------------------
         # 1. Historical Dataset: mis_vessel_master (+ parcel details from mis_history)
@@ -324,6 +565,25 @@ def fetch_master_report_records():
 
             sr_no = r.get('sr_no')
 
+            hist_pc, hist_pol = _resolve_port_info(
+                port_loading=r.get('port_of_loading'),
+                existing_port_code=r.get('port_code'),
+                port_code_map=port_code_map,
+                port_name_map=port_name_map,
+                known_codes=known_codes
+            )
+
+            hist_cargo = r.get('cargo') or ''
+            if not (r.get('new_cat') and r.get('category1') and r.get('category')):
+                f_nc, f_c1, f_c = _resolve_cargo_categories(hist_cargo, cargo_map)
+                hist_new_cat = r.get('new_cat') or f_nc
+                hist_cat1 = r.get('category1') or f_c1
+                hist_cat = r.get('category') or f_c
+            else:
+                hist_new_cat = r.get('new_cat') or ''
+                hist_cat1 = r.get('category1') or ''
+                hist_cat = r.get('category') or ''
+
             records.append({
                 'source': 'Master',
                 'id': f"M-{r['id']}",
@@ -340,8 +600,8 @@ def fetch_master_report_records():
                 'imo_no': r.get('imo_no') or '',
                 'flag': r.get('flag') or '',
                 'bhc': r.get('bhc') or '',
-                'port_code': r.get('port_code') or '',
-                'port_of_loading': r.get('port_of_loading') or '',
+                'port_code': hist_pc,
+                'port_of_loading': hist_pol,
                 'grt': _safe_float(r.get('grt')),
                 'draft': _safe_float(r.get('draft')),
                 'loa': _safe_float(r.get('loa')),
@@ -350,10 +610,10 @@ def fetch_master_report_records():
                 'unload_pipeline': r.get('unload_pipeline') or '',
                 'consigner': r.get('consigner') or '',
                 'unloading_terminal': r.get('unloading_terminal') or '',
-                'new_cat': r.get('new_cat') or '',
-                'category1': r.get('category1') or '',
-                'category': r.get('category') or '',
-                'cargo': r.get('cargo') or '',
+                'new_cat': hist_new_cat,
+                'category1': hist_cat1,
+                'category': hist_cat,
+                'cargo': hist_cargo,
                 'bl_quantity': bl_qty,
                 'operational_quantity': qty,
                 'quantity': qty,
@@ -673,11 +933,21 @@ def fetch_master_report_records():
             pipeline_val = r.get('vcn_pipelines') or ''
             consigner_val = r.get('consigner_names') or r.get('importer_exporter_name') or ''
             cargo_val = r.get('cargo_names') or r.get('cargo_type') or ''
+            live_new_cat, live_cat1, live_cat = _resolve_cargo_categories(cargo_val, cargo_map)
             vessel_run = r.get('vessel_run_type') or 'Overseas'
 
             dim_via_fi_overseas_imo = f"{vcn} / F / {vessel_run} / {imo_val}"
             dim_loa_bhc_dft = f"{loa_val or ''} /  / {dft_val or ''}"
             dim_agt_tf_pl = f"{agent_val} / {terminal_val} / {pipeline_val}"
+
+            live_load_port = r.get('load_port') or (r.get('discharge_port') if (r.get('operation_type') or '').lower() == 'export' else '')
+            live_pc, live_pol = _resolve_port_info(
+                port_loading=live_load_port,
+                existing_port_code='',
+                port_code_map=port_code_map,
+                port_name_map=port_name_map,
+                known_codes=known_codes
+            )
 
             records.append({
                 'source': 'Actual',
@@ -695,8 +965,8 @@ def fetch_master_report_records():
                 'imo_no': imo_val,
                 'flag': flag_val,
                 'bhc': '',
-                'port_code': '',
-                'port_of_loading': r.get('load_port') or '',
+                'port_code': live_pc,
+                'port_of_loading': live_pol,
                 'grt': _safe_float(r.get('grt')),
                 'draft': dft_val,
                 'loa': loa_val,
@@ -705,9 +975,9 @@ def fetch_master_report_records():
                 'unload_pipeline': pipeline_val,
                 'consigner': consigner_val,
                 'unloading_terminal': terminal_val,
-                'new_cat': 'Liquid Bulk',
-                'category1': 'Other',
-                'category': cargo_val,
+                'new_cat': live_new_cat,
+                'category1': live_cat1,
+                'category': live_cat,
                 'cargo': cargo_val,
                 'bl_quantity': bl_qty,
                 'operational_quantity': op_qty,
@@ -823,7 +1093,7 @@ def filter_and_aggregate_records(records, args):
             continue
 
         if search:
-            match_str = f"{r['vessel_name']} {r['vcn_no']} {r['agent']} {r['cargo']} {r['berth_no']} {r['consigner']} {r['code']}".lower()
+            match_str = f"{r['vessel_name']} {r['vcn_no']} {r['agent']} {r['cargo']} {r['berth_no']} {r['consigner']} {r['code']} {r['port_code']} {r['port_of_loading']} {r['new_cat']} {r['category1']} {r['category']}".lower()
             if search not in match_str:
                 continue
 

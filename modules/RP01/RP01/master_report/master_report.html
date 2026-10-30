@@ -190,20 +190,50 @@
     }
     .sec-chip {
         font-size: 11px;
-        padding: 4px 10px;
+        padding: 4px 11px;
         border-radius: 16px;
         border: 1px solid var(--mr-border);
         background: #FFFFFF;
         color: var(--mr-text-muted);
         cursor: pointer;
         user-select: none;
-        transition: all 0.15s;
+        transition: all 0.15s ease;
+    }
+    .sec-chip:hover {
+        background: #F8FAFC;
+        color: var(--mr-text-main);
+        border-color: #CBD5E1;
     }
     .sec-chip.active {
-        background: #EBF3FB;
-        border-color: #BFDBFE;
-        color: var(--mr-primary);
-        font-weight: 600;
+        background: #EBF3FB !important;
+        border-color: #93C5FD !important;
+        color: #1D4ED8 !important;
+        font-weight: 600 !important;
+        box-shadow: 0 1px 2px rgba(29, 78, 216, 0.08);
+    }
+
+    /* Highlighted Section Light Theme Styles (Soft light accent, no dark colors) */
+    .master-table th.sec-highlight-th {
+        border-top: 3px solid #60A5FA !important;
+        background-color: #F0F7FF !important;
+        color: #1E40AF !important;
+        box-shadow: inset 0 1px 0 #BFDBFE;
+    }
+    .master-table thead tr.tier-columns th.sec-highlight-col {
+        background: #F0F7FF !important;
+        color: #1E40AF !important;
+        font-weight: 700 !important;
+        border-left: 1px solid #DBEAFE !important;
+        border-right: 1px solid #DBEAFE !important;
+        border-bottom: 2px solid #93C5FD !important;
+    }
+    .master-table tbody td.sec-highlight-td {
+        background-color: #F8FBFF !important;
+        border-left: 1px solid #E2E8F0 !important;
+        border-right: 1px solid #E2E8F0 !important;
+    }
+    .master-table tbody tr:hover td.sec-highlight-td {
+        background-color: #EFF6FF !important;
     }
 
     /* Table Container & Light Layout */
@@ -394,16 +424,17 @@
         <button id="btn-export" class="btn btn-export">&#128196; Export Excel</button>
     </div>
 
-    <!-- Section Visibility Toggles & Controls -->
+    <!-- Section Highlight Navigation & Controls -->
     <div class="controls-bar">
         <div class="toggle-group">
-            <span class="toggle-group-label">Show Sections:</span>
-            <span class="sec-chip active" data-sec="basic">Basic &amp; Vessel</span>
-            <span class="sec-chip active" data-sec="cargo">Cargo Details</span>
-            <span class="sec-chip active" data-sec="timing">Timings</span>
-            <span class="sec-chip active" data-sec="rate">Qty, Rate &amp; Forecast</span>
-            <span class="sec-chip active" data-sec="dim">Dimensions</span>
-            <span class="sec-chip active" data-sec="perf">Performance &amp; Delays</span>
+            <span class="toggle-group-label">Highlight Section:</span>
+            <span class="sec-chip active" data-sec="all">All Sections</span>
+            <span class="sec-chip" data-sec="basic">Basic &amp; Vessel</span>
+            <span class="sec-chip" data-sec="cargo">Cargo Details</span>
+            <span class="sec-chip" data-sec="timing">Timings</span>
+            <span class="sec-chip" data-sec="rate">Qty, Rate &amp; Forecast</span>
+            <span class="sec-chip" data-sec="dim">Dimensions</span>
+            <span class="sec-chip" data-sec="perf">Performance &amp; Delays</span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
             <label style="font-size: 11px; color: var(--mr-text-muted); font-weight: 600;">PAGE SIZE:</label>
@@ -424,7 +455,7 @@
                 <thead>
                     <!-- Section Headers (Tier 1) -->
                     <tr class="tier-section">
-                        <th colspan="6" data-sec="basic" class="sec-basic">Basic Details</th>
+                        <th colspan="5" data-sec="basic" class="sec-basic">Basic Details</th>
                         <th colspan="9" data-sec="basic" class="sec-vessel">Vessel Details</th>
                         <th colspan="10" data-sec="cargo" class="sec-cargo">Importer &amp; Cargo Details</th>
                         <th colspan="11" data-sec="timing" class="sec-timing">Vessel Timing Details</th>
@@ -440,7 +471,6 @@
                         <th data-sec="basic" data-field="berth_no">Berth No</th>
                         <th data-sec="basic" data-field="vcn_no">Via / VCN</th>
                         <th data-sec="basic" data-field="vessel_name">Vessel Name</th>
-                        <th data-sec="basic" data-field="cat_7">Cat 7</th>
 
                         <!-- Vessel -->
                         <th data-sec="basic" data-field="overseas_coastal">Overseas</th>
@@ -620,13 +650,22 @@
         document.getElementById('btn-next').addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; fetchReportData(); } });
         document.getElementById('btn-last').addEventListener('click', () => { if (currentPage < totalPages) { currentPage = totalPages; fetchReportData(); } });
 
-        // Column Section Visibility Toggles
+        // Section Highlight Navigation
         document.querySelectorAll('.sec-chip').forEach(chip => {
             chip.addEventListener('click', () => {
-                chip.classList.toggle('active');
-                const sec = chip.dataset.sec;
-                const isVisible = chip.classList.contains('active');
-                toggleSectionVisibility(sec, isVisible);
+                const targetSec = chip.dataset.sec;
+                const wasActive = chip.classList.contains('active');
+
+                document.querySelectorAll('.sec-chip').forEach(c => c.classList.remove('active'));
+
+                if (wasActive && targetSec !== 'all') {
+                    const allChip = document.querySelector('.sec-chip[data-sec="all"]');
+                    if (allChip) allChip.classList.add('active');
+                    highlightSection('all');
+                } else {
+                    chip.classList.add('active');
+                    highlightSection(targetSec);
+                }
             });
         });
 
@@ -645,11 +684,28 @@
         });
     }
 
-    function toggleSectionVisibility(sec, isVisible) {
-        const displayVal = isVisible ? '' : 'none';
-        document.querySelectorAll(`[data-sec="${sec}"]`).forEach(el => {
-            el.style.display = displayVal;
-        });
+    function highlightSection(sec, autoScroll = true) {
+        // Clear all previous highlight classes
+        document.querySelectorAll('.sec-highlight-th').forEach(el => el.classList.remove('sec-highlight-th'));
+        document.querySelectorAll('.sec-highlight-col').forEach(el => el.classList.remove('sec-highlight-col'));
+        document.querySelectorAll('.sec-highlight-td').forEach(el => el.classList.remove('sec-highlight-td'));
+
+        if (!sec || sec === 'all') return;
+
+        // Apply light highlight to tier 1 headers
+        document.querySelectorAll(`.tier-section th[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-th'));
+        // Apply light highlight to tier 2 columns
+        document.querySelectorAll(`.tier-columns th[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-col'));
+        // Apply light highlight to body cells
+        document.querySelectorAll(`#table-body td[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-td'));
+
+        // Scroll section smoothly into view
+        if (autoScroll) {
+            const firstHeader = document.querySelector(`.tier-section th[data-sec="${sec}"]`);
+            if (firstHeader) {
+                firstHeader.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            }
+        }
     }
 
     function buildQueryParams() {
@@ -799,7 +855,6 @@
                 <td data-sec="basic" class="cell-center"><strong>${r.berth_no || ''}</strong></td>
                 <td data-sec="basic">${r.vcn_no || ''}</td>
                 <td data-sec="basic"><strong>${r.vessel_name || ''}</strong></td>
-                <td data-sec="basic" class="cell-center">${r.cat_7 || ''}</td>
 
                 <!-- Vessel -->
                 <td data-sec="basic">${r.overseas_coastal || ''}</td>
@@ -807,7 +862,7 @@
                 <td data-sec="basic">${r.imo_no || ''}</td>
                 <td data-sec="basic">${r.flag || ''}</td>
                 <td data-sec="basic">${r.bhc || ''}</td>
-                <td data-sec="basic">${r.port_code || ''}</td>
+                <td data-sec="basic" class="cell-center" style="font-weight:600; color:#1e3a5f;">${r.port_code || ''}</td>
                 <td data-sec="basic">${r.port_of_loading || ''}</td>
                 <td data-sec="basic" class="cell-num">${formatNum(r.grt, 0)}</td>
                 <td data-sec="basic" class="cell-num">${formatNum(r.draft, 2)}</td>
@@ -879,12 +934,10 @@
 
         tbody.appendChild(fragment);
 
-        // Apply active section toggles
-        document.querySelectorAll('.sec-chip').forEach(chip => {
-            const sec = chip.dataset.sec;
-            const isVisible = chip.classList.contains('active');
-            toggleSectionVisibility(sec, isVisible);
-        });
+        // Re-apply active section highlight without scrolling
+        const activeChip = document.querySelector('.sec-chip.active');
+        const activeSec = activeChip ? activeChip.dataset.sec : 'all';
+        highlightSection(activeSec, false);
     }
 
     function formatNum(v, dec) {
