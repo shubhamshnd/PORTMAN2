@@ -467,13 +467,13 @@
                     <tr class="tier-columns">
                         <!-- Basic -->
                         <th data-sec="basic" data-field="status">Status</th>
-                        <th data-sec="basic" data-field="loa" title="Length Overall (m)">LOA</th>
+                        <th data-sec="basic" data-field="vcn_doc_no">VCN Doc No</th>
                         <th data-sec="basic" data-field="berth_no">Berth No</th>
                         <th data-sec="basic" data-field="vcn_no">Via / VCN</th>
                         <th data-sec="basic" data-field="vessel_name">Vessel Name</th>
 
                         <!-- Vessel -->
-                        <th data-sec="basic" data-field="overseas_coastal">Overseas</th>
+                        <th data-sec="basic" data-field="overseas_coastal">Vessel Run Type</th>
                         <th data-sec="basic" data-field="foreign_indian">F/I</th>
                         <th data-sec="basic" data-field="imo_no">IMO NO</th>
                         <th data-sec="basic" data-field="flag">Flag</th>
@@ -851,14 +851,14 @@
             tr.innerHTML = `
                 <!-- Basic -->
                 <td data-sec="basic" class="cell-center"><span class="badge-status ${statusClass}">${r.status}</span></td>
-                <td data-sec="basic" class="cell-num">${formatNum(r.loa, 2)}</td>
+                <td data-sec="basic" class="cell-center" style="font-weight:600; color:#1e3a5f;">${r.vcn_doc_no || r.vcn_doc_num || '-'}</td>
                 <td data-sec="basic" class="cell-center"><strong>${r.berth_no || ''}</strong></td>
                 <td data-sec="basic">${r.vcn_no || ''}</td>
                 <td data-sec="basic"><strong>${r.vessel_name || ''}</strong></td>
 
                 <!-- Vessel -->
-                <td data-sec="basic">${r.overseas_coastal || ''}</td>
-                <td data-sec="basic" class="cell-center">${r.foreign_indian || ''}</td>
+                <td data-sec="basic">${r.overseas_coastal || r.vessel_run_type || ''}</td>
+                <td data-sec="basic" class="cell-center" style="font-weight:600;">${r.foreign_indian || ''}</td>
                 <td data-sec="basic">${r.imo_no || ''}</td>
                 <td data-sec="basic">${r.flag || ''}</td>
                 <td data-sec="basic">${r.bhc || ''}</td>

@@ -163,6 +163,27 @@ def _is_milestone_duplicate(existing_delays, ms_start, ms_end, ms_type="berth"):
 
 
 
+def _is_excluded_port_preberthing_delay(delay_row):
+    """
+    Excludes "Berth Not Available" and "Cast Off Time – Pilot Disembarked"
+    delays from the calculation of (a) Pre-Berthing Waiting Time (Hrs) – Port Account.
+    """
+    d_name = str(delay_row.get('delay_name') or '').strip().lower()
+    norm = d_name.replace(" ", "").replace("-", "").replace("–", "").replace("—", "").replace("_", "")
+
+    # Exclude Berth Not Available / Port Congestion
+    if "berth" in norm and any(x in norm for x in ["notavail", "unavail", "notavaileb", "occup"]):
+        return True
+    if "congestion" in norm:
+        return True
+
+    # Exclude Cast Off Time – Pilot Disembarked
+    if "cast" in norm and ("pilot" in norm or "disemb" in norm):
+        return True
+
+    return False
+
+
 def _parse_delay_hours(h_str):
     """Convert delay duration to decimal hours."""
     if h_str is None or str(h_str).strip() == "":
@@ -295,6 +316,10 @@ def _load_live_pipeline_rows():
             .strip()
             .lower() != 'port'
         ):
+            continue
+
+        # Exclude Berth Not Available and Cast Off Time - Pilot Disembarked
+        if _is_excluded_port_preberthing_delay(delay_row):
             continue
 
         vcn_no = str(

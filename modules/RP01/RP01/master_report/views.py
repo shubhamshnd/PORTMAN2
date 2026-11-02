@@ -559,7 +559,13 @@ def fetch_master_report_records():
             # Dimensions
             berth_no = r.get('berth_no') or ''
             dim_code = f"{berth_no}{status}"
-            dim_via_fi_overseas_imo = f"{vcn} / {r.get('foreign_indian') or ''} / {r.get('overseas_coastal') or ''} / {r.get('imo_no') or ''}"
+            overseas_coastal_val = r.get('overseas_coastal') or ''
+            hist_flag = r.get('flag') or ''
+            is_hist_coastal = str(overseas_coastal_val).strip().lower() in ('costal', 'coastal')
+            hist_run_name = 'Costal' if is_hist_coastal else 'Overseas'
+            hist_fi = 'I' if (is_hist_coastal or str(hist_flag).strip().lower() == 'india') else (r.get('foreign_indian') or 'F')
+
+            dim_via_fi_overseas_imo = f"{vcn} / {hist_fi} / {hist_run_name} / {r.get('imo_no') or ''}"
             dim_loa_bhc_dft = f"{r.get('loa') or ''} / {r.get('bhc') or ''} / {r.get('draft') or ''}"
             dim_agt_tf_pl = f"{r.get('agent') or ''} / {r.get('unloading_terminal') or ''} / {r.get('unload_pipeline') or ''}"
 
@@ -590,13 +596,16 @@ def fetch_master_report_records():
                 'code': dim_code,
                 'status': status,
                 'sr_no': sr_no,
+                'vcn_doc_no': r.get('vcn_doc_num') or '',
+                'vcn_doc_num': r.get('vcn_doc_num') or '',
                 'berth_no': berth_no,
                 'vcn_no': vcn,
                 'vessel_name': r.get('vessel_name') or '',
                 'cat_1': None, 'cat_2': None, 'cat_3': None, 'cat_4': None, 'cat_5': None, 'cat_6': None,
                 'cat_7': sr_no,
-                'overseas_coastal': r.get('overseas_coastal') or '',
-                'foreign_indian': r.get('foreign_indian') or '',
+                'overseas_coastal': hist_run_name,
+                'vessel_run_type': hist_run_name,
+                'foreign_indian': hist_fi,
                 'imo_no': r.get('imo_no') or '',
                 'flag': r.get('flag') or '',
                 'bhc': r.get('bhc') or '',
@@ -935,8 +944,11 @@ def fetch_master_report_records():
             cargo_val = r.get('cargo_names') or r.get('cargo_type') or ''
             live_new_cat, live_cat1, live_cat = _resolve_cargo_categories(cargo_val, cargo_map)
             vessel_run = r.get('vessel_run_type') or 'Overseas'
+            is_actual_coastal = str(vessel_run).strip().lower() in ('costal', 'coastal')
+            live_run_name = 'Costal' if is_actual_coastal else 'Overseas'
+            live_fi = 'I' if (is_actual_coastal or (flag_val and str(flag_val).strip().lower() == 'india')) else 'F'
 
-            dim_via_fi_overseas_imo = f"{vcn} / F / {vessel_run} / {imo_val}"
+            dim_via_fi_overseas_imo = f"{vcn} / {live_fi} / {live_run_name} / {imo_val}"
             dim_loa_bhc_dft = f"{loa_val or ''} /  / {dft_val or ''}"
             dim_agt_tf_pl = f"{agent_val} / {terminal_val} / {pipeline_val}"
 
@@ -949,19 +961,23 @@ def fetch_master_report_records():
                 known_codes=known_codes
             )
 
+            actual_vcn_doc = r.get('vcn_doc_num') or ''
             records.append({
                 'source': 'Actual',
                 'id': f"A-{r['vcn_id']}",
                 'code': dim_code,
                 'status': status,
                 'sr_no': next_sr_no,
+                'vcn_doc_no': actual_vcn_doc,
+                'vcn_doc_num': actual_vcn_doc,
                 'berth_no': berth_no,
                 'vcn_no': vcn,
                 'vessel_name': r.get('vessel_name') or '',
                 'cat_1': None, 'cat_2': None, 'cat_3': None, 'cat_4': None, 'cat_5': None, 'cat_6': None,
                 'cat_7': next_sr_no,
-                'overseas_coastal': vessel_run,
-                'foreign_indian': 'F',
+                'overseas_coastal': live_run_name,
+                'vessel_run_type': live_run_name,
+                'foreign_indian': live_fi,
                 'imo_no': imo_val,
                 'flag': flag_val,
                 'bhc': '',
@@ -1093,7 +1109,7 @@ def filter_and_aggregate_records(records, args):
             continue
 
         if search:
-            match_str = f"{r['vessel_name']} {r['vcn_no']} {r['agent']} {r['cargo']} {r['berth_no']} {r['consigner']} {r['code']} {r['port_code']} {r['port_of_loading']} {r['new_cat']} {r['category1']} {r['category']}".lower()
+            match_str = f"{r['vessel_name']} {r['vcn_no']} {r.get('vcn_doc_no', '')} {r['agent']} {r['cargo']} {r['berth_no']} {r['consigner']} {r['code']} {r['port_code']} {r['port_of_loading']} {r['new_cat']} {r['category1']} {r['category']}".lower()
             if search not in match_str:
                 continue
 
@@ -1272,12 +1288,12 @@ def master_report_export():
         # Basic (1-6)
         ("Basic Details", fill_sec_basic, "Code", "code"),
         ("Basic Details", fill_sec_basic, "Status", "status"),
-        ("Basic Details", fill_sec_basic, "LOA", "loa"),
+        ("Basic Details", fill_sec_basic, "VCN Doc No", "vcn_doc_no"),
         ("Basic Details", fill_sec_basic, "Berth No", "berth_no"),
-        ("Basic Details", fill_sec_basic, "Via", "vcn_no"),
+        ("Basic Details", fill_sec_basic, "Via / VCN", "vcn_no"),
         ("Basic Details", fill_sec_basic, "Vessel Name", "vessel_name"),
         # Vessel Details (7-15)
-        ("Vessel Details", fill_sec_vessel, "Overseas", "overseas_coastal"),
+        ("Vessel Details", fill_sec_vessel, "Vessel Run Type", "overseas_coastal"),
         ("Vessel Details", fill_sec_vessel, "F/I", "foreign_indian"),
         ("Vessel Details", fill_sec_vessel, "IMO NO", "imo_no"),
         ("Vessel Details", fill_sec_vessel, "Flag", "flag"),
