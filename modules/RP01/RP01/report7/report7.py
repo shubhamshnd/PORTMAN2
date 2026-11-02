@@ -84,7 +84,7 @@ def _parse_dt(s):
         return s
     if isinstance(s, date):
         return datetime(s.year, s.month, s.day)
-    clean = str(s).strip().replace('T', ' ')
+    clean = str(s).strip().replace('T', ' ').replace('IST', '').strip()
     for length in (19, 16, 10):
         sub = clean[:length]
         for fmt in (
@@ -165,19 +165,29 @@ def _is_milestone_duplicate(existing_delays, ms_start, ms_end, ms_type="berth"):
 
 def _is_excluded_port_preberthing_delay(delay_row):
     """
-    Excludes "Berth Not Available" and "Cast Off Time – Pilot Disembarked"
-    delays from the calculation of (a) Pre-Berthing Waiting Time (Hrs) – Port Account.
+    Exclude only:
+    1. Berth Not Available
+    2. Cast Off Time - Pilot Disembarked
+
+    Port Congestion / Berth Occupied must be included.
     """
     d_name = str(delay_row.get('delay_name') or '').strip().lower()
-    norm = d_name.replace(" ", "").replace("-", "").replace("–", "").replace("—", "").replace("_", "")
 
-    # Exclude Berth Not Available / Port Congestion
-    if "berth" in norm and any(x in norm for x in ["notavail", "unavail", "notavaileb", "occup"]):
-        return True
-    if "congestion" in norm:
+    norm = (
+        d_name.replace(" ", "")
+        .replace("-", "")
+        .replace("–", "")
+        .replace("—", "")
+        .replace("_", "")
+    )
+
+    # Exclude Berth Not Available only
+    if "berth" in norm and any(
+        x in norm for x in ["notavail", "unavail", "notavaileb"]
+    ):
         return True
 
-    # Exclude Cast Off Time – Pilot Disembarked
+    # Exclude Cast Off Time - Pilot Disembarked
     if "cast" in norm and ("pilot" in norm or "disemb" in norm):
         return True
 
@@ -199,16 +209,6 @@ def _parse_delay_hours(h_str):
             minutes = int(parts[1])
             seconds = float(parts[2]) if len(parts) > 2 else 0.0
             return hours + minutes / 60.0 + seconds / 3600.0
-
-        # Vessel Delay Report format: HH.MM, where digits
-        # after the dot represent minutes, not decimal fractions.
-        if "." in s:
-            hours_part, minutes_part = s.split(".", 1)
-            hours = int(hours_part)
-            minutes = int(minutes_part)
-
-            if 0 <= minutes < 60:
-                return hours + minutes / 60.0
 
         return float(s)
 
@@ -298,8 +298,35 @@ def _load_live_pipeline_rows():
                 h.operation_type
         """)
         live_raw = cur.fetchall()
+
+        # Load berthing delays from vcn_berth_delays (Berthing Delays sub-table)
+        cur.execute("""
+            SELECT vcn_id, port_type, service_type, delay_start, delay_end
+            FROM vcn_berth_delays
+            WHERE delay_start IS NOT NULL AND delay_end IS NOT NULL
+        """)
+        berth_delay_records = cur.fetchall()
     finally:
         conn.close()
+
+    # Aggregate berthing delays by vcn_id into Port and Non-Port hours
+    berth_delays_by_vcn = {}
+    for bdr in (berth_delay_records or []):
+        vid = bdr.get('vcn_id')
+        if not vid:
+            continue
+        s_dt = _parse_dt(bdr.get('delay_start'))
+        e_dt = _parse_dt(bdr.get('delay_end'))
+        if s_dt and e_dt and e_dt > s_dt:
+            dur_hrs = (e_dt - s_dt).total_seconds() / 3600.0
+            ptype = str(bdr.get('port_type') or '').strip().lower()
+            is_port = (ptype == 'port')
+
+            entry = berth_delays_by_vcn.setdefault(vid, {'port_hrs': 0.0, 'non_port_hrs': 0.0})
+            if is_port:
+                entry['port_hrs'] += dur_hrs
+            else:
+                entry['non_port_hrs'] += dur_hrs
 
     # Load the same displayed delay rows used by Vessel Delay Report.
     from ..vessel_delay.vessel_delay import fetch_vessel_delay_data
@@ -309,6 +336,8 @@ def _load_live_pipeline_rows():
 
     # Index Port delay durations by VCN and report month.
     port_hours_by_vessel_month = {}
+    port_hours_by_vcn = {}
+    port_hours_by_vessel = {}
 
     for delay_row in vd_rows:
         if (
@@ -334,23 +363,26 @@ def _load_live_pipeline_rows():
             delay_row.get('month') or ''
         ).strip()
 
-        if not month_label:
-            continue
-
         delay_hours = _parse_delay_hours(
             delay_row.get('hours')
         )
 
-        # Prefer the VCN identifier to avoid mixing vessels
+        if month_label:
+            if vcn_no:
+                port_hours_by_vessel_month.setdefault(
+                    (vcn_no, month_label), []
+                ).append(delay_hours)
+
+            if vessel_name:
+                port_hours_by_vessel_month.setdefault(
+                    (vessel_name, month_label), []
+                ).append(delay_hours)
+
         if vcn_no:
-            port_hours_by_vessel_month.setdefault(
-                (vcn_no, month_label), []
-            ).append(delay_hours)
+            port_hours_by_vcn.setdefault(vcn_no, []).append(delay_hours)
 
         if vessel_name:
-            port_hours_by_vessel_month.setdefault(
-                (vessel_name, month_label), []
-            ).append(delay_hours)
+            port_hours_by_vessel.setdefault(vessel_name, []).append(delay_hours)
 
     live_rows = []
 
@@ -396,35 +428,42 @@ def _load_live_pipeline_rows():
         )
 
         # Port A/C: use displayed Vessel Delay Report rows
-        # for this vessel and this report month only.
-        v_doc = str(
-            r.get('vcn_doc_num') or ''
-        ).strip().upper()
-
-        v_name = str(
-            r.get('vessel_name') or ''
-        ).strip().upper()
-
+        v_doc = str(r.get('vcn_doc_num') or '').strip().upper()
+        v_name = str(r.get('vessel_name') or '').strip().upper()
         v_id = str(r.get('vcn_id') or '').strip()
 
-        # Try the document number first.
-        hrs_list = port_hours_by_vessel_month.get(
-            (v_doc, mn_label)
-        ) if v_doc else None
+        hrs_list = None
+        # 1. Match by document number and month, then document number alone
+        if v_doc:
+            hrs_list = port_hours_by_vessel_month.get((v_doc, mn_label)) or port_hours_by_vcn.get(v_doc)
 
-        # Try the VCN number format used in the delay report.
-        if hrs_list is None and v_id:
-            hrs_list = port_hours_by_vessel_month.get(
-                (f"VCN-{v_id}", mn_label)
+        # 2. Match by VCN-id format
+        if not hrs_list and v_id:
+            hrs_list = (
+                port_hours_by_vessel_month.get((f"VCN-{v_id}", mn_label))
+                or port_hours_by_vcn.get(f"VCN-{v_id}")
+                or port_hours_by_vcn.get(v_id)
             )
 
-        # Use vessel name only if no VCN match exists.
-        if hrs_list is None and v_name:
-            hrs_list = port_hours_by_vessel_month.get(
-                (v_name, mn_label)
-            )
+        # 3. Match by vessel name
+        if not hrs_list and v_name:
+            hrs_list = port_hours_by_vessel_month.get((v_name, mn_label)) or port_hours_by_vessel.get(v_name)
+            if not hrs_list:
+                clean_vname = v_name.replace('[PR]', '').replace('MT ', '').strip()
+                hrs_list = port_hours_by_vessel.get(clean_vname)
 
         waiting_port_hrs = sum(hrs_list or [])
+
+        # Inward movement: Pilot Pickup to Alongside (Pilot pick up - along side)
+        inward_hrs = (
+            (along - p_pick).total_seconds() / 3600.0
+            if along and p_pick and along > p_pick
+            else 0.0
+        )
+
+        # Ensure Pilot pick up - along side delay is included in Port Delay
+        if inward_hrs > 0 and (waiting_port_hrs < inward_hrs or not hrs_list):
+            waiting_port_hrs = max(waiting_port_hrs, inward_hrs)
 
         # Keep the existing Non-Port calculation unchanged.
         waiting_non_port_hrs = float(
@@ -440,19 +479,19 @@ def _load_live_pipeline_rows():
             else 0.0
         )
 
-        # Inward movement: Pilot Pickup to Alongside.
-        inward_hrs = (
-            (along - p_pick).total_seconds() / 3600.0
-            if along and p_pick and along > p_pick
-            else 0.0
-        )
-
         # Outward movement: Cast-off to Pilot Disembarked.
         outward_hrs = (
             (p_dis - cast).total_seconds() / 3600.0
             if cast and p_dis and p_dis > cast
             else 0.0
         )
+
+        # Extract berthing delays for this vessel call
+        v_id_int = r.get('vcn_id')
+        bd = berth_delays_by_vcn.get(v_id_int, {'port_hrs': 0.0, 'non_port_hrs': 0.0})
+        nwp_hrs = bd['port_hrs']
+        nwnp_hrs = bd['non_port_hrs']
+        nwt_hrs = nwp_hrs + nwnp_hrs
 
         live_rows.append({
             'fin_year': fy,
@@ -469,6 +508,12 @@ def _load_live_pipeline_rows():
             'waiting_non_port': waiting_non_port_hrs / 24.0,
             'stay_at_berth': sab_hrs / 24.0,
             'working_time': wt_hrs / 24.0,
+            'non_working_port': nwp_hrs / 24.0,
+            'non_working_non_port': nwnp_hrs / 24.0,
+            'non_working_total': nwt_hrs / 24.0,
+            'non_working_port_hrs': nwp_hrs,
+            'non_working_non_port_hrs': nwnp_hrs,
+            'non_working_total_hrs': nwt_hrs,
             'inward_movement': inward_hrs / 24.0,
             'outward_movement': outward_hrs / 24.0,
             'overseas_coastal': 'Overseas',
@@ -570,10 +615,23 @@ def calculate_section_metrics(rlist):
     nw_working_port = nw_working_total
     nw_working_non_port = 0.0
 
-    # 6. Time at Non working berth
-    nw_non_working_total = 0.0
-    nw_non_working_port = 0.0
-    nw_non_working_non_port = 0.0
+    # 6. Time at Non working berth (calculated from berthing delays checking Port vs Non-Port)
+    nw_nwp_hrs_sum = 0.0
+    nw_nwnp_hrs_sum = 0.0
+    for r in rlist:
+        if r.get('non_working_port_hrs') is not None:
+            nw_nwp_hrs_sum += float(r.get('non_working_port_hrs') or 0.0)
+        elif r.get('non_working_port') is not None:
+            nw_nwp_hrs_sum += float(r.get('non_working_port') or 0.0) * 24.0
+
+        if r.get('non_working_non_port_hrs') is not None:
+            nw_nwnp_hrs_sum += float(r.get('non_working_non_port_hrs') or 0.0)
+        elif r.get('non_working_non_port') is not None:
+            nw_nwnp_hrs_sum += float(r.get('non_working_non_port') or 0.0) * 24.0
+
+    nw_non_working_port = round(nw_nwp_hrs_sum, 2)
+    nw_non_working_non_port = round(nw_nwnp_hrs_sum, 2)
+    nw_non_working_total = round(nw_non_working_port + nw_non_working_non_port, 2)
 
     # 7. Navigation Time (Hrs)
     in_ts_sum = 0.0
@@ -652,7 +710,7 @@ def build_report7_data(fin_year: str, selected_month: str = "Jun-26"):
         cur.execute("""
             SELECT fin_year, month, berth_no, cargo, category, new_cat, category1, unloading_terminal,
                    quantity, pre_berthing_waiting, waiting_port, waiting_non_port,
-                   stay_at_berth, working_time, non_working_port, inward_movement, outward_movement,
+                   stay_at_berth, working_time, non_working_port, non_working_non_port, non_working_total, inward_movement, outward_movement,
                    overseas_coastal, cast_off, vcn_no, ops_commenced, cargo_completion, alongside,
                    pilot_pickup, pilot_disembarked, nor
             FROM mis_vessel_master
@@ -831,9 +889,9 @@ def report7_export():
             ("5. N.W Time at working berth(Hrs)-Total", "nw_working_total", "#,##0.00", True, True),
             ("    a) N.W Time at working berth(Hrs)-Port a/c", "nw_working_port", "#,##0.00", False, True),
             ("    b) N.W Time at working berth(Hrs)-N.P a/c", "nw_working_non_port", "#,##0.00", False, False),
-            ("6. Time at Non working berth(Hrs)-Total", "nw_non_working_total", "#,##0.00", True, False),
-            ("    a) Time at Non working berth(Hrs)-Port a/c", "nw_non_working_port", "#,##0.00", False, False),
-            ("    b) Time at Non working berth(Hrs)-N.P a/c", "nw_non_working_non_port", "#,##0.00", False, False),
+            ("6. Time at Non working berth(Hrs)-Total", "nw_non_working_total", "#,##0.00", True, True),
+            ("    a) Time at Non working berth(Hrs)-Port a/c", "nw_non_working_port", "#,##0.00", False, True),
+            ("    b) Time at Non working berth(Hrs)-N.P a/c", "nw_non_working_non_port", "#,##0.00", False, True),
             ("7. Navigation Time (Hrs)-Total", "nav_total", "#,##0.00", True, True),
             ("    a) Inward Movement (Hrs)", "inward_movement", "#,##0.00", False, True),
             ("    b) Outward Movement (Hrs)", "outward_movement", "#,##0.00", False, True),

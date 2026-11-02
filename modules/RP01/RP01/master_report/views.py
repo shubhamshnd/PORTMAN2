@@ -893,6 +893,18 @@ def fetch_master_report_records():
             waiting_np_days = waiting_np_hrs / 24.0
 
             waiting_port_hrs = max(0.0, (pbw_hrs - waiting_np_hrs)) if pbw_hrs is not None else 0.0
+
+            # Inward movement (Pilot pick up to Alongside)
+            inward_days = _dt_diff_days(alongside, pilot_pick)
+            inward_hrs = (inward_days * 24.0) if inward_days is not None else None
+
+            # Include Pilot pick up - along side delay in Port Delay (waiting_port_hrs)
+            if inward_hrs and inward_hrs > 0:
+                waiting_port_hrs = max(waiting_port_hrs, inward_hrs)
+                if pbw_hrs is None or pbw_hrs < (waiting_port_hrs + waiting_np_hrs):
+                    pbw_hrs = waiting_port_hrs + waiting_np_hrs
+                    pbw_days = pbw_hrs / 24.0
+
             waiting_port_days = waiting_port_hrs / 24.0
 
             stay_berth_days = _dt_diff_days(sail_cast, alongside)
@@ -909,9 +921,6 @@ def fetch_master_report_records():
 
             nw_np_hrs = max(0.0, (nw_total_hrs - nw_port_hrs)) if nw_total_hrs is not None else 0.0
             nw_np_days = nw_np_hrs / 24.0
-
-            inward_days = _dt_diff_days(alongside, pilot_pick)
-            inward_hrs = (inward_days * 24.0) if inward_days is not None else None
 
             outward_days = _dt_diff_days(pilot_dis, sail_cast)
             outward_hrs = (outward_days * 24.0) if outward_days is not None else None
