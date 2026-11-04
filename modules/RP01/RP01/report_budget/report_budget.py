@@ -155,6 +155,13 @@ def load_all_actuals_and_budgets(fin_year: str, detailed: bool = False, column: 
         """)
         vc_rows = cur.fetchall() or []
 
+        # Map normalized cargo_name -> first matching master row to avoid 1-to-many join fan-outs
+        vc_by_name = {}
+        for r in vc_rows:
+            cn_key = (r.get("cargo_name") or "").strip().lower()
+            if cn_key and cn_key not in vc_by_name:
+                vc_by_name[cn_key] = r
+
         def resolve_column_val(src_val, fallback_cn=""):
             if not target_col or target_col == "ALL":
                 return src_val or fallback_cn
@@ -244,17 +251,17 @@ def load_all_actuals_and_budgets(fin_year: str, detailed: bool = False, column: 
         for m_idx in range(12):
             mlabel = month_label_from_idx(fin_year, m_idx)
             
-            # Check if JNPT mis_history exists for this month
+            # Check if JNPT mis_history exists for this month (or already loaded into jnpt_data)
             cur.execute("""
                 SELECT COUNT(*) AS cnt FROM mis_history WHERE fin_year = %s AND month_jnpt = %s;
             """, (fin_year, mlabel))
-            has_mis_jnpt = (cur.fetchone()["cnt"] > 0)
+            has_mis_jnpt = (cur.fetchone()["cnt"] > 0) or bool(jnpt_data[m_idx])
 
-            # Check if JSW mis_history exists for this month
+            # Check if JSW mis_history exists for this month (or already loaded into jsw_data)
             cur.execute("""
                 SELECT COUNT(*) AS cnt FROM mis_history WHERE fin_year = %s AND month_jsw = %s;
             """, (fin_year, mlabel))
-            has_mis_jsw = (cur.fetchone()["cnt"] > 0)
+            has_mis_jsw = (cur.fetchone()["cnt"] > 0) or bool(jsw_data[m_idx])
 
             start_dt, end_dt = get_month_date_range(fin_year, m_idx)
             jnpt_start_ts, jnpt_end_ts = get_jnpt_0700_date_range(fin_year, m_idx)
@@ -264,16 +271,10 @@ def load_all_actuals_and_budgets(fin_year: str, detailed: bool = False, column: 
                 cur.execute("""
                     SELECT 
                         po.cargo_name,
-                        vc.cargo_type,
-                        vc.cargo_category,
-                        vc.cargo_category_2,
-                        vc.cargo_sub_category AS sub,
-                        vc.cargo_sub_category_2 AS sub2,
                         SUM(COALESCE(l.quantity, 0)) AS total_qty
                     FROM lueu_parcel_log l
                     JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
                     JOIN ldud_header ld ON ld.id = po.ldud_id
-                    LEFT JOIN vessel_cargo vc ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(po.cargo_name))
                     WHERE ld.cast_off_datetime IS NOT NULL
                       AND NULLIF(TRIM(ld.cast_off_datetime), '') IS NOT NULL
                       AND REPLACE(TRIM(ld.cast_off_datetime), 'T', ' ')::timestamp >= %s::timestamp
@@ -281,18 +282,19 @@ def load_all_actuals_and_budgets(fin_year: str, detailed: bool = False, column: 
                       AND COALESCE(ld.is_deleted, false) = false
                       AND COALESCE(l.is_deleted, false) = false
                       AND COALESCE(l.is_shortclose, false) = false
-                    GROUP BY po.cargo_name, vc.cargo_type, vc.cargo_category, vc.cargo_category_2, vc.cargo_sub_category, vc.cargo_sub_category_2;
+                    GROUP BY po.cargo_name;
                 """, (jnpt_start_ts, jnpt_end_ts))
                 for r in cur.fetchall():
                     cn = (r["cargo_name"] or "").strip()
-                    sub = (r["sub"] or "").strip()
-                    sub2 = (r["sub2"] or "").strip()
+                    vc_info = vc_by_name.get(cn.lower(), {})
+                    sub = (vc_info.get("cargo_sub_category") or "").strip()
+                    sub2 = (vc_info.get("cargo_sub_category_2") or "").strip()
                     qty = float(r["total_qty"] or 0.0)
 
                     if detailed:
                         cat = cn or sub2 or sub or "Other Cargo"
                     elif target_col != "cargo_sub_category_2":
-                        t_val = (r.get(target_col) or "").strip() if target_col in r else ""
+                        t_val = (vc_info.get(target_col) or "").strip() if target_col in vc_info else ""
                         cat = t_val or resolve_column_val(sub2 or sub or cn)
                     else:
                         cat = classify_commodity(cn, sub, sub2)
@@ -305,34 +307,30 @@ def load_all_actuals_and_budgets(fin_year: str, detailed: bool = False, column: 
                 cur.execute("""
                     SELECT 
                         po.cargo_name,
-                        vc.cargo_type,
-                        vc.cargo_category,
-                        vc.cargo_category_2,
-                        vc.cargo_sub_category AS sub,
-                        vc.cargo_sub_category_2 AS sub2,
                         SUM(COALESCE(l.quantity, 0)) AS total_qty
                     FROM lueu_parcel_log l
                     JOIN ldud_parcel_ops po ON po.id = l.parcel_op_id
                     JOIN ldud_header ld ON ld.id = po.ldud_id
-                    LEFT JOIN vessel_cargo vc ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(po.cargo_name))
                     WHERE l.entry_date IS NOT NULL
                       AND NULLIF(TRIM(l.entry_date::text), '') IS NOT NULL
                       AND CONCAT(SPLIT_PART(TRIM(l.entry_date::text), 'T', 1), ' ', COALESCE(NULLIF(TRIM(l.from_time), ''), '00:00'))::timestamp >= %s::timestamp
                       AND CONCAT(SPLIT_PART(TRIM(l.entry_date::text), 'T', 1), ' ', COALESCE(NULLIF(TRIM(l.from_time), ''), '00:00'))::timestamp < %s::timestamp
+                      AND COALESCE(ld.is_deleted, false) = false
                       AND COALESCE(l.is_deleted, false) = false
                       AND COALESCE(l.is_shortclose, false) = false
-                    GROUP BY po.cargo_name, vc.cargo_type, vc.cargo_category, vc.cargo_category_2, vc.cargo_sub_category, vc.cargo_sub_category_2;
+                    GROUP BY po.cargo_name;
                 """, (jsw_start_ts, jsw_end_ts))
                 for r in cur.fetchall():
                     cn = (r["cargo_name"] or "").strip()
-                    sub = (r["sub"] or "").strip()
-                    sub2 = (r["sub2"] or "").strip()
+                    vc_info = vc_by_name.get(cn.lower(), {})
+                    sub = (vc_info.get("cargo_sub_category") or "").strip()
+                    sub2 = (vc_info.get("cargo_sub_category_2") or "").strip()
                     qty = float(r["total_qty"] or 0.0)
 
                     if detailed:
                         cat = cn or sub2 or sub or "Other Cargo"
                     elif target_col != "cargo_sub_category_2":
-                        t_val = (r.get(target_col) or "").strip() if target_col in r else ""
+                        t_val = (vc_info.get(target_col) or "").strip() if target_col in vc_info else ""
                         cat = t_val or resolve_column_val(sub2 or sub or cn)
                     else:
                         cat = classify_commodity(cn, sub, sub2)
