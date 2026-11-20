@@ -180,6 +180,14 @@
     table.vt-table tbody tr:hover {
         background: #f1f5f9;
     }
+    table.vt-table tr.total-row td {
+        background: #D9D9D9;
+        font-weight: bold;
+        border: 1px solid #444;
+    }
+    table.vt-table tbody tr.total-row:hover td {
+        background: #cfcfcf;
+    }
     table.vt-table td.center { text-align: center; }
     table.vt-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
     table.vt-table td.vsl-name { font-weight: 600; }
@@ -210,7 +218,11 @@
         <select id="monthSelect" onchange="loadData()"></select>
 
         <button class="jjltpl-load-btn" onclick="loadData()">Load</button>
-        <button class="jjltpl-export-btn" onclick="downloadExcel()">📊 Download Excel</button>
+        <div id="vtSumBadge" style="font-size: 12.5px; font-weight: 700; color: #1E3A8A; background: #EFF6FF; border: 1px solid #BFDBFE; padding: 6px 14px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; margin-left: auto;">
+            <span>Sum of Quantity in MT:</span>
+            <span id="vtSumQty" style="color: #1D4ED8;">0.00 MT</span>
+        </div>
+        <button class="jjltpl-export-btn" style="margin-left: 0;" onclick="downloadExcel()">📊 Download Excel</button>
     </div>
 
     <div id="vtStatus"></div>
@@ -226,7 +238,7 @@
                     <tr class="header-row">
                         <th style="width: 50px;">Sr No</th>
                         <th>Vessel Name</th>
-                        <th>Qty</th>
+                        <th>Qty (MT)</th>
                         <th>Arrival</th>
                         <th>NOR</th>
                         <th>NOR Accepted</th>
@@ -333,11 +345,21 @@
                 );
             }
 
-            renderTable(data.rows);
+            renderTable(data.rows, data.total_quantity);
 
             const monthObj = data.months ? data.months.find(m => String(m.idx) === String(month)) : null;
             const monthLabel = (month === 'ALL' || (monthObj && monthObj.idx === 'ALL')) ? 'All Months' : (monthObj ? monthObj.label : month);
-            statusEl.textContent = `Showing ${data.rows.length} vessel records for ${monthLabel} (${year}).`;
+
+            const totalVal = (data.total_quantity !== undefined && data.total_quantity !== null)
+                ? Number(data.total_quantity)
+                : (data.rows ? data.rows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0) : 0);
+            const totalValMT = toMT(totalVal);
+            const totalMTFormatted = totalValMT.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' MT';
+
+            const sumBadge = document.getElementById('vtSumQty');
+            if (sumBadge) sumBadge.textContent = totalMTFormatted;
+
+            statusEl.innerHTML = `Showing ${data.rows.length} vessel records for ${monthLabel} (${year}). &nbsp;|&nbsp; <strong>Sum of Quantity in MT:</strong> <span style="color:#1E3A8A; font-weight:700;">${totalMTFormatted}</span>`;
             statusEl.style.color = '#16A34A';
         } catch (err) {
             console.error(err);
@@ -347,7 +369,12 @@
         }
     }
 
-    function renderTable(rows) {
+    function toMT(v) {
+        if (v === null || v === undefined || isNaN(v)) return null;
+        return Number(v) / 1000.0;
+    }
+
+    function renderTable(rows, totalQuantity) {
         const tbody = document.getElementById('vtTbody');
         tbody.innerHTML = '';
 
@@ -356,9 +383,13 @@
             return;
         }
 
+        let computedTotalQty = 0;
         rows.forEach((r, index) => {
             const tr = document.createElement('tr');
-            const qtyFormatted = r.quantity ? Number(r.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+            const rawQty = Number(r.quantity) || 0;
+            computedTotalQty += rawQty;
+            const qtyVal = toMT(rawQty);
+            const qtyFormatted = r.quantity ? qtyVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
             const srNo = r.sr_no !== undefined ? r.sr_no : (index + 1);
 
             tr.innerHTML = `
@@ -381,6 +412,33 @@
             `;
             tbody.appendChild(tr);
         });
+
+        // Total row at the bottom
+        const finalTotal = (totalQuantity !== undefined && totalQuantity !== null)
+            ? Number(totalQuantity)
+            : computedTotalQty;
+        const totalQtyMT = toMT(finalTotal);
+        const totalQtyFormatted = totalQtyMT.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const trTotal = document.createElement('tr');
+        trTotal.className = 'total-row';
+        trTotal.innerHTML = `
+            <td colspan="2" class="center" style="font-weight: bold; background: #D9D9D9;">Total</td>
+            <td class="right" style="font-weight: bold; background: #D9D9D9; color: #1E3A8A;">${totalQtyFormatted} MT</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+            <td class="center" style="background: #D9D9D9;">-</td>
+        `;
+        tbody.appendChild(trTotal);
     }
 
     function downloadExcel() {

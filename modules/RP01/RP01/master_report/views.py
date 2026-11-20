@@ -696,32 +696,69 @@ def fetch_master_report_records():
         # 2. Live Operational Dataset: vcn_header + ldud_header + ldud_parcel_ops + lueu_parcel_log
         # -------------------------------------------------------------
         cur.execute("""
-            WITH parcel_logs_agg AS (
+            WITH parcel_logs_per_op AS (
                 SELECT 
-                    po.ldud_id,
-                    SUM(CASE WHEN COALESCE(lg.is_shortclose, FALSE) = FALSE THEN lg.quantity ELSE 0 END) AS discharged_qty,
-                    MAX(lg.entry_date || ' ' || lg.to_time) AS latest_log_time,
+                    l.parcel_op_id,
+                    MIN(l.entry_date || ' ' || l.from_time) AS log_start,
+                    MAX(CASE 
+                        WHEN COALESCE(l.is_shortclose, FALSE) = FALSE 
+                         AND LOWER(COALESCE(l.remarks, '')) NOT LIKE '%short%' 
+                        THEN l.entry_date || ' ' || l.to_time 
+                    END) AS log_end,
                     SUM(CASE 
-                        WHEN lg.entry_date IS NOT NULL 
-                         AND lg.entry_date::text >= (CURRENT_DATE - INTERVAL '1 day')::text
-                        THEN lg.quantity ELSE 0 
+                        WHEN COALESCE(l.is_shortclose, FALSE) = FALSE 
+                         AND LOWER(COALESCE(l.remarks, '')) NOT LIKE '%short%' 
+                        THEN l.quantity 
+                        ELSE 0 
+                    END) AS log_actual_qty,
+                    SUM(CASE 
+                        WHEN COALESCE(l.is_shortclose, FALSE) = TRUE 
+                          OR LOWER(COALESCE(l.remarks, '')) LIKE '%short%' 
+                        THEN l.quantity 
+                        ELSE 0 
+                    END) AS log_short_qty,
+                    MAX(l.entry_date || ' ' || l.to_time) AS latest_log_time,
+                    SUM(CASE 
+                        WHEN l.entry_date IS NOT NULL 
+                         AND l.entry_date::text >= (CURRENT_DATE - INTERVAL '1 day')::text
+                        THEN l.quantity ELSE 0 
                     END) AS last_24h_qty
-                FROM ldud_parcel_ops po
-                JOIN lueu_parcel_log lg ON lg.parcel_op_id = po.id
-                WHERE lg.is_deleted IS NOT TRUE
-                GROUP BY po.ldud_id
+                FROM lueu_parcel_log l
+                WHERE l.is_deleted IS NOT TRUE
+                GROUP BY l.parcel_op_id
             ),
-            parcels_agg AS (
+            resolved_parcels AS (
                 SELECT 
+                    po.id,
                     po.ldud_id,
-                    MIN(NULLIF(TRIM(po.start_dt), '')) AS ops_commenced,
-                    MAX(NULLIF(TRIM(po.end_dt), '')) AS cargo_completion,
-                    SUM(po.quantity) AS operational_qty,
-                    AVG(po.expected_flow_rate) AS exp_flow_rate,
-                    string_agg(DISTINCT po.cargo_name, ', ') AS cargo_names,
-                    string_agg(DISTINCT po.terminal_name, ', ') AS terminal_names
+                    po.cargo_name,
+                    po.terminal_name,
+                    po.expected_flow_rate,
+                    po.quantity AS po_qty,
+                    COALESCE(pl.log_short_qty, 0) AS short_qty,
+                    COALESCE(NULLIF(REPLACE(po.start_dt, 'T', ' '), ''), pl.log_start) AS parcel_start,
+                    COALESCE(NULLIF(REPLACE(po.end_dt, 'T', ' '), ''), pl.log_end) AS parcel_end,
+                    pl.log_actual_qty,
+                    pl.latest_log_time,
+                    pl.last_24h_qty
                 FROM ldud_parcel_ops po
-                GROUP BY po.ldud_id
+                LEFT JOIN parcel_logs_per_op pl ON pl.parcel_op_id = po.id
+            ),
+            vessel_parcels_agg AS (
+                SELECT 
+                    rp.ldud_id,
+                    MIN(rp.parcel_start) AS ops_commenced,
+                    MAX(rp.parcel_end) AS cargo_completion,
+                    SUM(rp.po_qty) AS operational_qty,
+                    SUM(rp.short_qty) AS short_close_qty,
+                    SUM(COALESCE(rp.log_actual_qty, 0)) AS discharged_qty,
+                    AVG(rp.expected_flow_rate) AS exp_flow_rate,
+                    string_agg(DISTINCT rp.cargo_name, ', ') AS cargo_names,
+                    string_agg(DISTINCT rp.terminal_name, ', ') AS terminal_names,
+                    MAX(rp.latest_log_time) AS latest_log_time,
+                    SUM(COALESCE(rp.last_24h_qty, 0)) AS last_24h_qty
+                FROM resolved_parcels rp
+                GROUP BY rp.ldud_id
             ),
             vcn_parcels AS (
                 SELECT 
@@ -793,15 +830,16 @@ def fetch_master_report_records():
                 ves.gt AS grt,
                 ves.loa AS ves_loa,
                 ves.vessel_category_name,
-                pa.ops_commenced AS pa_ops_commenced,
-                pa.cargo_completion AS pa_cargo_completion,
-                pa.operational_qty,
-                pa.exp_flow_rate,
-                pa.cargo_names,
-                pa.terminal_names,
-                pla.discharged_qty,
-                pla.latest_log_time,
-                pla.last_24h_qty,
+                vpa.ops_commenced AS pa_ops_commenced,
+                vpa.cargo_completion AS pa_cargo_completion,
+                vpa.operational_qty,
+                vpa.short_close_qty,
+                vpa.discharged_qty,
+                vpa.exp_flow_rate,
+                vpa.cargo_names,
+                vpa.terminal_names,
+                vpa.latest_log_time,
+                vpa.last_24h_qty,
                 vp.bl_qty,
                 vp.consigner_names,
                 vp.vcn_terminals,
@@ -811,8 +849,7 @@ def fetch_master_report_records():
             FROM vcn_header vh
             LEFT JOIN ldud_header lh ON (lh.vcn_id = vh.id OR lh.vcn_doc_num = vh.vcn_doc_num) AND lh.is_deleted IS NOT TRUE
             LEFT JOIN vessels ves ON ves.doc_num = split_part(COALESCE(vh.vessel_master_doc, ''), '/', 1)
-            LEFT JOIN parcels_agg pa ON pa.ldud_id = lh.id
-            LEFT JOIN parcel_logs_agg pla ON pla.ldud_id = lh.id
+            LEFT JOIN vessel_parcels_agg vpa ON vpa.ldud_id = lh.id
             LEFT JOIN vcn_parcels vp ON vp.vcn_id = vh.id
             LEFT JOIN delays_agg da ON da.vcn_id = vh.id
             ORDER BY vh.id DESC
@@ -846,16 +883,29 @@ def fetch_master_report_records():
             ref_dt = sail_cast or alongside or ops_comm or nor or _parse_dt(r.get('doc_date'))
 
             # Quantities
-            bl_qty = _safe_float(r.get('bl_qty'), 0.0)
-            op_qty = _safe_float(r.get('operational_qty')) or _safe_float(r.get('initial_draft_survey_quantity'), bl_qty)
+            raw_bl_qty = _safe_float(r.get('bl_qty'), 0.0)
+            op_qty = _safe_float(r.get('operational_qty')) or _safe_float(r.get('initial_draft_survey_quantity'), raw_bl_qty)
+            short_close_qty = _safe_float(r.get('short_close_qty'), 0.0)
             discharged_qty = _safe_float(r.get('discharged_qty'), 0.0)
             last_24h = _safe_float(r.get('last_24h_qty'), 0.0)
 
-            # If vessel completed, discharged quantity is at least the operational quantity
-            if status == 'Unberth' and discharged_qty <= 0:
-                discharged_qty = op_qty
+            # Apply Short Shipment and Excess Quantity effect
+            if status == 'Unberth':
+                # Completed vessel: actual discharged quantity from LUEU reflects short shipment and excess quantity
+                if discharged_qty > 0:
+                    reported_qty = discharged_qty
+                else:
+                    reported_qty = max(0.0, op_qty - short_close_qty)
+                discharged_till_now = reported_qty
+                balance_qty = 0.0
+            else:
+                # In progress / waiting
+                base_qty = max(0.0, op_qty - short_close_qty)
+                reported_qty = max(base_qty, discharged_qty)
+                discharged_till_now = discharged_qty
+                balance_qty = max(0.0, reported_qty - discharged_qty)
 
-            balance_qty = max(0.0, op_qty - discharged_qty)
+            bl_qty = max(0.0, raw_bl_qty - short_close_qty) if raw_bl_qty > 0 else reported_qty
 
             # Flow rates
             working_time_days = _dt_diff_days(cargo_comp, ops_comm)
@@ -1005,9 +1055,9 @@ def fetch_master_report_records():
                 'category': live_cat,
                 'cargo': cargo_val,
                 'bl_quantity': bl_qty,
-                'operational_quantity': op_qty,
-                'quantity': op_qty,
-                'discharged_till_now': discharged_qty,
+                'operational_quantity': reported_qty,
+                'quantity': reported_qty,
+                'discharged_till_now': discharged_till_now,
                 'till_time': _format_dt(till_dt),
                 'expected_flow_rate': exp_flow_rate,
                 'present_flow_rate': present_flow_rate,
@@ -1065,7 +1115,7 @@ def fetch_master_report_records():
                 'comp_to_unberth_hrs': round(comp_unberth_hrs, 2) if comp_unberth_hrs is not None else None,
                 'productivity_per_day': productivity_day,
                 'vessel_count': 1,
-                'cargo_qty': op_qty,
+                'cargo_qty': reported_qty,
                 'turnaround_time_days': round(tat_days, 2) if tat_days is not None else None,
                 'turnaround_time_hrs': round(tat_hrs, 2) if tat_hrs is not None else None,
                 'turnaround_non_port_days': 0.0,
@@ -1142,6 +1192,7 @@ def filter_and_aggregate_records(records, args):
 
     # Calculate summary KPIs
     total_qty = sum(r['quantity'] or 0.0 for r in filtered)
+    total_discharged = sum(r['discharged_till_now'] or 0.0 for r in filtered)
     import_qty = sum(r['quantity'] or 0.0 for r in filtered if r['import_export'].lower() == 'import')
     export_qty = sum(r['quantity'] or 0.0 for r in filtered if r['import_export'].lower() == 'export')
     total_balance = sum(r['balance_quantity'] or 0.0 for r in filtered)
@@ -1161,6 +1212,7 @@ def filter_and_aggregate_records(records, args):
     summary = {
         'total_vessels': len(filtered),
         'total_quantity': round(total_qty, 3),
+        'total_discharged': round(total_discharged, 3),
         'import_quantity': round(import_qty, 3),
         'export_quantity': round(export_qty, 3),
         'total_balance': round(total_balance, 3),
@@ -1415,6 +1467,25 @@ def master_report_export():
             else:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
         row_idx += 1
+
+    # Total Row at bottom
+    total_font = Font(name="Calibri", size=9, bold=True, color="000000")
+    total_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+
+    for col_idx, (_, _, _, field_key) in enumerate(columns_def, start=1):
+        cell = ws.cell(row=row_idx, column=col_idx)
+        cell.font = total_font
+        cell.fill = total_fill
+        cell.border = border_thin
+        if col_idx == 1:
+            cell.value = "Total"
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        elif field_key in ('quantity', 'discharged_till_now', 'balance_quantity', 'last_24h_qty'):
+            col_sum = sum(r.get(field_key) or 0.0 for r in filtered if isinstance(r.get(field_key), (int, float)))
+            cell.value = round(col_sum, 3)
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+        else:
+            cell.value = ""
 
     # Auto-adjust column widths
     for col in ws.columns:

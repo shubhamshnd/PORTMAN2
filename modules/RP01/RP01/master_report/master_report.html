@@ -339,6 +339,15 @@
     .badge-src-master { background: #F3E8FF; color: #6B21A8; }
     .badge-src-actual { background: #E0E7FF; color: #3730A3; }
 
+    /* Total Row Styling */
+    .master-table tfoot tr.total-row td {
+        font-weight: 700;
+        background: #E2E8F0;
+        border-top: 2px solid #94A3B8;
+        border-bottom: 2px solid #94A3B8;
+        padding: 8px 10px;
+    }
+
     /* Footer & Pagination Bar */
     .pagination-bar {
         display: flex;
@@ -436,14 +445,17 @@
             <span class="sec-chip" data-sec="dim">Dimensions</span>
             <span class="sec-chip" data-sec="perf">Performance &amp; Delays</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <label style="font-size: 11px; color: var(--mr-text-muted); font-weight: 600;">PAGE SIZE:</label>
-            <select id="page-size-select" class="filter-select" style="padding: 3px 8px; font-size: 11.5px;">
-                <option value="25">25 rows</option>
-                <option value="50" selected>50 rows</option>
-                <option value="100">100 rows</option>
-                <option value="all">All rows</option>
-            </select>
+        <div style="display: flex; align-items: center; gap: 14px;">
+
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-size: 11px; color: var(--mr-text-muted); font-weight: 600;">PAGE SIZE:</label>
+                <select id="page-size-select" class="filter-select" style="padding: 3px 8px; font-size: 11.5px;">
+                    <option value="25">25 rows</option>
+                    <option value="50" selected>50 rows</option>
+                    <option value="100">100 rows</option>
+                    <option value="all">All rows</option>
+                </select>
+            </div>
         </div>
     </div>
 
@@ -548,6 +560,17 @@
                 <tbody id="table-body">
                     <!-- Data populated via JavaScript -->
                 </tbody>
+                <tfoot id="table-foot">
+                    <tr class="total-row">
+                        <td colspan="23" style="text-align: center; font-weight: 700; background: #E2E8F0; color: #0F172A;">Total</td>
+                        <td class="cell-num" data-sec="cargo" id="foot-total-qty" style="font-weight: 700; background: #E2E8F0; color: #1E3A8A;">0.000</td>
+                        <td colspan="11" style="background: #E2E8F0;"></td>
+                        <td class="cell-num" data-sec="rate" id="foot-discharged-qty" style="font-weight: 700; background: #E2E8F0; color: #0F172A;">0.000</td>
+                        <td colspan="4" style="background: #E2E8F0;"></td>
+                        <td class="cell-num" data-sec="rate" id="foot-balance-qty" style="font-weight: 700; background: #E2E8F0; color: #B45309;">0.000</td>
+                        <td colspan="24" style="background: #E2E8F0;"></td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
 
@@ -555,6 +578,7 @@
         <div class="pagination-bar">
             <div>
                 Showing <strong id="showing-start">0</strong> to <strong id="showing-end">0</strong> of <strong id="showing-total">0</strong> vessel calls
+                &nbsp;
             </div>
             <div class="page-nav">
                 <button id="btn-first" class="btn-nav">&laquo; First</button>
@@ -696,8 +720,8 @@
         document.querySelectorAll(`.tier-section th[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-th'));
         // Apply light highlight to tier 2 columns
         document.querySelectorAll(`.tier-columns th[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-col'));
-        // Apply light highlight to body cells
-        document.querySelectorAll(`#table-body td[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-td'));
+        // Apply light highlight to body and footer cells
+        document.querySelectorAll(`#table-body td[data-sec="${sec}"], #table-foot td[data-sec="${sec}"]`).forEach(el => el.classList.add('sec-highlight-td'));
 
         // Scroll section smoothly into view
         if (autoScroll) {
@@ -808,6 +832,33 @@
 
             renderTable(result.data);
 
+            const summary = result.summary || {};
+            const totalQty = summary.total_quantity || 0;
+            const totalDischarged = summary.total_discharged || 0;
+            const totalBalance = summary.total_balance || 0;
+
+            const totalQtyMT = toMT(totalQty);
+            const totalDischargedMT = toMT(totalDischarged);
+            const totalBalanceMT = toMT(totalBalance);
+
+            const totalQtyFormatted = formatNum(totalQtyMT, 3) + ' MT';
+            const sumEl = document.getElementById('summary-total-qty');
+            if (sumEl) sumEl.textContent = totalQtyFormatted;
+            const pageTotEl = document.getElementById('page-total-qty');
+            if (pageTotEl) pageTotEl.textContent = totalQtyFormatted;
+
+            const footTotEl = document.getElementById('foot-total-qty');
+            if (footTotEl) footTotEl.textContent = formatNum(totalQtyMT, 3);
+            const footDisEl = document.getElementById('foot-discharged-qty');
+            if (footDisEl) footDisEl.textContent = formatNum(totalDischargedMT, 3);
+            const footBalEl = document.getElementById('foot-balance-qty');
+            if (footBalEl) footBalEl.textContent = formatNum(totalBalanceMT, 3);
+
+            const tfoot = document.getElementById('table-foot');
+            if (tfoot) {
+                tfoot.style.display = (!result.data || result.data.length === 0) ? 'none' : '';
+            }
+
             totalPages = result.last_page || 1;
             document.getElementById('current-page').textContent = result.page || 1;
             document.getElementById('total-pages').textContent = totalPages;
@@ -877,7 +928,7 @@
                 <td data-sec="cargo">${r.category1 || ''}</td>
                 <td data-sec="cargo">${r.category || ''}</td>
                 <td data-sec="cargo"><strong>${r.cargo || ''}</strong></td>
-                <td data-sec="cargo" class="cell-num" style="font-weight:700;">${formatNum(r.quantity, 3)}</td>
+                <td data-sec="cargo" class="cell-num" style="font-weight:700;">${formatNum(toMT(r.quantity), 3)}</td>
 
                 <!-- Timings -->
                 <td data-sec="timing">${r.nor || '-'}</td>
@@ -893,15 +944,15 @@
                 <td data-sec="timing">${r.pilot_disembarked || '-'}</td>
 
                 <!-- Rate & Forecast -->
-                <td data-sec="rate" class="cell-num">${formatNum(r.discharged_till_now, 3)}</td>
+                <td data-sec="rate" class="cell-num">${formatNum(toMT(r.discharged_till_now), 3)}</td>
                 <td data-sec="rate">${r.till_time || '-'}</td>
                 <td data-sec="rate" class="cell-num">${formatNum(r.expected_flow_rate, 2)}</td>
                 <td data-sec="rate" class="cell-num" style="font-weight:700; color:var(--mr-primary);">${formatNum(r.flow_rate, 2)}</td>
                 <td data-sec="rate" class="cell-num">${formatNum(r.present_flow_rate, 2)}</td>
-                <td data-sec="rate" class="cell-num" style="color:#B45309;">${formatNum(r.balance_quantity, 3)}</td>
+                <td data-sec="rate" class="cell-num" style="color:#B45309;">${formatNum(toMT(r.balance_quantity), 3)}</td>
                 <td data-sec="rate" class="cell-num">${formatNum(r.balance_time_hrs, 2)}</td>
                 <td data-sec="rate">${r.expected_completion || '-'}</td>
-                <td data-sec="rate" class="cell-num">${formatNum(r.last_24h_qty, 3)}</td>
+                <td data-sec="rate" class="cell-num">${formatNum(toMT(r.last_24h_qty), 3)}</td>
 
                 <!-- Dimensions -->
                 <td data-sec="dim">${r.fin_year || ''}</td>
@@ -938,6 +989,11 @@
         const activeChip = document.querySelector('.sec-chip.active');
         const activeSec = activeChip ? activeChip.dataset.sec : 'all';
         highlightSection(activeSec, false);
+    }
+
+    function toMT(v) {
+        if (v === null || v === undefined || isNaN(v)) return null;
+        return Number(v) / 1000.0;
     }
 
     function formatNum(v, dec) {
