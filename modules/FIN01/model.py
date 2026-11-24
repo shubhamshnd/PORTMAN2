@@ -1253,7 +1253,22 @@ def get_customer_billables(customer_type, customer_id):
     actual_by_vcn = {}
     for vcn_id, plist in by_vcn.items():
         if plist[0]['ldud_status'] in _CARGO_GATE and plist[0]['ldud_id']:
-            declared = {p['id']: p['quantity'] for p in plist}
+            # The billables query above is payer-filtered, but an LDUD op can
+            # cover parcels belonging to different payers. Allocation weights
+            # must include every parcel on this VCN or the selected payer's
+            # parcel can incorrectly receive the entire merged-op quantity.
+            cur.execute('SELECT operation_type FROM vcn_header WHERE id=%s', [vcn_id])
+            vcn = cur.fetchone() or {}
+            parcel_table = ('vcn_export_cargo_declaration'
+                            if vcn.get('operation_type') == 'Export'
+                            else 'vcn_consigners')
+            cur.execute(f'''SELECT id, quantity,
+                                   COALESCE(is_removed, FALSE) AS is_removed
+                            FROM {parcel_table} WHERE vcn_id=%s''', [vcn_id])
+            declared = {
+                r['id']: (0.0 if r['is_removed'] else _to_float(r['quantity']))
+                for r in cur.fetchall()
+            }
             actual_by_vcn[vcn_id] = _actual_qty_map(cur, plist[0]['ldud_id'], declared)
 
     # Ledger + rates in two batch queries on this connection. Doing them per
