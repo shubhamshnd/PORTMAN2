@@ -14,7 +14,7 @@
         --rp-border: #DDE3EA;
         --rp-bg: #F6F8FA;
         --rp-card: #FFFFFF;
-        --rp-highlight: #FDF3D0;
+        --rp-highlight: #FEF9C3;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
@@ -187,7 +187,7 @@
     .pivot-table th,
     .pivot-table td {
         border: 1px solid var(--rp-border);
-        padding: 8px 10px;
+        padding: 7px 10px;
         font-size: 13px;
         box-sizing: border-box;
     }
@@ -195,21 +195,32 @@
     .pivot-table thead {
         position: sticky;
         top: 0;
-        z-index: 10;
+        z-index: 20;
     }
 
     .pivot-table thead th {
-        background: #F2F4F8 !important;
-        color: var(--rp-ink);
+        background: #F1F5F9 !important;
+        color: #1E293B;
         font-weight: 700;
         text-align: center;
         position: sticky;
         top: 0;
-        z-index: 10;
+        z-index: 20;
+        padding: 8px 10px;
+        border: 1px solid #CBD5E1;
     }
 
-    .pivot-table tbody td {
-        color: var(--rp-ink);
+    .pivot-table th.particular-hdr {
+        position: sticky;
+        left: 0;
+        top: 0;
+        z-index: 40 !important;
+        background: #E2E8F0 !important;
+        min-width: 220px;
+        width: 220px;
+        max-width: 220px;
+        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.08);
+        text-align: center;
     }
 
     .pivot-table td.particular {
@@ -218,25 +229,11 @@
         background: #FFFFFF !important;
         position: sticky;
         left: 0;
-        z-index: 5;
-        min-width: 240px;
-        width: 240px;
-        max-width: 240px;
-        box-shadow: 2px 0 5px rgba(0, 0, 0, 0.08);
-    }
-
-    .pivot-table th.particular-hdr {
-        position: sticky;
-        left: 0;
-        top: 0;
-        z-index: 30 !important;
-        background: #F2F4F8 !important;
-        min-width: 240px;
-        width: 240px;
-        max-width: 240px;
-        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.08);
-        vertical-align: middle;
-        text-align: center;
+        z-index: 10;
+        min-width: 220px;
+        width: 220px;
+        max-width: 220px;
+        box-shadow: 2px 0 5px rgba(0, 0, 0, 0.06);
     }
 
     .pivot-table td.val {
@@ -244,35 +241,86 @@
         font-variant-numeric: tabular-nums;
     }
 
-    .pivot-table tr.total-row td {
-        font-weight: 700;
-        background: var(--rp-highlight);
+    /* Section Banner Rows */
+    .pivot-table tr.section-banner-row td {
+        background: #E2E8F0 !important;
+        color: #0F172A !important;
+        font-weight: 800 !important;
+        font-size: 13px;
+        padding: 6px 10px;
+        letter-spacing: 0.5px;
+        border-top: 2px solid #94A3B8;
+        border-bottom: 2px solid #94A3B8;
+    }
+
+    .pivot-table tr.section-banner-row td.particular {
+        background: #E2E8F0 !important;
+        text-align: left;
+    }
+
+    .pivot-table tr.section-banner-row td.section-banner-cell {
+        text-align: center;
         font-size: 13.5px;
     }
 
-    /* Selected Month Column Highlight */
-    .pivot-table th.selected-month-hdr {
-        background: #2563EB !important;
-        color: #FFFFFF !important;
+    /* Highlight Column Headers */
+    .pivot-table th.till-date-hdr {
+        background: #E0F2FE !important;
+        color: #0369A1 !important;
         font-weight: 800 !important;
     }
 
-    .pivot-table th.selected-month-subhdr {
-        background: #DBEAFE !important;
-        color: #1E40AF !important;
-        font-weight: 700 !important;
+    .pivot-table th.diff-hdr {
+        background: #F8FAFC !important;
+        color: #334155 !important;
     }
 
-    .pivot-table td.selected-month-cell {
-        background: #EFF6FF !important;
-        font-weight: 600 !important;
-        color: #1E3A8A !important;
-    }
-
-    .pivot-table tr.total-row td.selected-month-cell {
-        background: #FDE68A !important;
-        color: #92400E !important;
+    .pivot-table th.fy-total-hdr {
+        background: #E2E8F0 !important;
+        color: #1E293B !important;
         font-weight: 800 !important;
+    }
+
+    /* Column Cells */
+    .pivot-table td.till-date-cell {
+        background: #F0F9FF !important;
+        font-weight: 700;
+        color: #0369A1;
+    }
+
+    .pivot-table td.diff-cell {
+        font-weight: 600;
+    }
+
+    .pivot-table td.diff-cell.negative {
+        color: #DC2626;
+    }
+
+    .pivot-table td.diff-cell.positive {
+        color: #16A34A;
+    }
+
+    .pivot-table td.fy-total-cell {
+        background: #F8FAFC !important;
+        font-weight: 700;
+    }
+
+    /* Total Rows */
+    .pivot-table tr.total-row td {
+        font-weight: 700;
+        background: var(--rp-highlight) !important;
+        color: #713F12;
+        border-top: 1.5px solid #CA8A04;
+        border-bottom: 2px solid #CA8A04;
+    }
+
+    .pivot-table tr.total-row td.particular {
+        background: var(--rp-highlight) !important;
+    }
+
+    .pivot-table tr.total-row td.till-date-cell {
+        background: #FEF08A !important;
+        color: #854D0E !important;
     }
 
     /* Toggle Switch Styling */
@@ -333,11 +381,11 @@
 
         <div class="filter-item">
             <label for="monthSelect">Month</label>
-            <select id="monthSelect"></select>
+            <select id="monthSelect" onchange="onMonthChange()"></select>
         </div>
 
         <div class="filter-item">
-            <label for="columnSelect">Column Filter</label>
+            <label for="columnSelect" id="columnSelectLabel">Column Filter</label>
             <select id="columnSelect" onchange="onColumnChange()">
                 <option value="cargo_sub_category_2">Cargo Sub Category 2</option>
                 <option value="cargo_sub_category">Cargo Sub Category</option>
@@ -349,12 +397,12 @@
 
         <div class="filter-item">
             <label for="commoditySelect" id="commoditySelectLabel">Commodity / Cargo Sub Category-2</label>
-            <select id="commoditySelect"></select>
+            <select id="commoditySelect" onchange="onCommodityChange()"></select>
         </div>
 
         <div class="filter-item">
             <label for="portSelect">Port (JSW / JNPT)</label>
-            <select id="portSelect">
+            <select id="portSelect" onchange="onPortChange()">
                 <option value="ALL">All (JNPT + JSW)</option>
                 <option value="JNPT">JNPT Only</option>
                 <option value="JSW">JSW Only</option>
@@ -363,7 +411,7 @@
 
         <div style="display:flex;align-items:flex-end;gap:12px;margin-left:auto;">
             <div class="filter-item">
-                <label for="detailToggle">show All</label>
+                <label for="detailToggle">Show All</label>
                 <div style="display:flex;align-items:center;gap:8px;height:32px;">
                     <label class="rp-switch">
                         <input type="checkbox" id="detailToggle" onchange="onToggleChange()">
@@ -373,8 +421,8 @@
                 </div>
             </div>
 
-            <button class="jjltpl-load-btn" onclick="loadReport()">Load Report</button>
-            <button class="jjltpl-export-btn" onclick="exportReport()">Export to Excel</button>
+            <button type="button" class="jjltpl-load-btn" onclick="loadReport()">Load Report</button>
+            <button type="button" class="jjltpl-export-btn" onclick="exportReport()">Export to Excel</button>
         </div>
     </div>
 
@@ -387,7 +435,7 @@
         <div class="rp-table-header">
             <div>
                 <div class="rp-title">Budget vs. Actual Quantity Handled</div>
-                <div class="rp-subtitle">Side-by-side monthly breakdown of Budget, JNPT Actual, and JSW Actual</div>
+                <div class="rp-subtitle">Multi-month breakdown separated by Budget, JNPT Actual, and JSW Actual</div>
             </div>
         </div>
 
@@ -411,9 +459,10 @@
 
     const MONTH_NAMES = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
 
-    function fmtNum(v) {
-        if (v === null || v === undefined || v === 0) return "0";
-        return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+    function fmtNum(v, decimals = 3) {
+        if (v === null || v === undefined || isNaN(v)) return "";
+        const num = Number(v);
+        return num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
     }
 
     function getFyStartYear(fy) {
@@ -440,30 +489,56 @@
     function populateMonthSelect() {
         const sel = document.getElementById("monthSelect");
         const year = document.getElementById("yearSelect").value;
-        const maxIdx = year === META.current_fy ? META.current_month_idx : 11;
+        const currentVal = sel.value;
+        const defaultIdx = (year === META.current_fy && META.current_month_idx !== undefined) ? META.current_month_idx : 11;
 
         let html = "";
-        for (let i = 0; i <= maxIdx; i++) {
+        for (let i = 0; i < 12; i++) {
             html += `<option value="${i}">${getMonthLabel(year, i)}</option>`;
         }
         sel.innerHTML = html;
-        if (maxIdx >= 0) {
-            sel.value = maxIdx;
+        if (currentVal !== "" && parseInt(currentVal) >= 0 && parseInt(currentVal) < 12) {
+            sel.value = currentVal;
+        } else if (defaultIdx >= 0 && defaultIdx < 12) {
+            sel.value = defaultIdx;
+        }
+    }
+
+    function updateCommoditySelectOptions(comms, currentVal) {
+        const sel = document.getElementById("commoditySelect");
+        const targetVal = (currentVal !== undefined && currentVal !== "") ? currentVal : (sel.value || "ALL");
+        let html = '<option value="ALL">All Commodities</option>';
+        (comms || []).forEach(c => {
+            html += `<option value="${c}">${c}</option>`;
+        });
+        sel.innerHTML = html;
+        if (targetVal === "ALL" || (comms || []).includes(targetVal)) {
+            sel.value = targetVal;
+        } else {
+            const match = (comms || []).find(c => c.toLowerCase() === targetVal.toLowerCase());
+            sel.value = match || "ALL";
         }
     }
 
     function populateCommoditySelect() {
-        const sel = document.getElementById("commoditySelect");
-        let html = '<option value="ALL">All Commodities</option>';
-        const comms = META.canonical_commodities || [];
-        for (let i = 0; i < comms.length; i++) {
-            html += '<option value="' + comms[i] + '">' + comms[i] + '</option>';
-        }
-        sel.innerHTML = html;
+        updateCommoditySelectOptions(META.canonical_commodities || [], "ALL");
     }
 
     function onYearChange() {
         populateMonthSelect();
+        loadReport();
+    }
+
+    function onMonthChange() {
+        loadReport();
+    }
+
+    function onCommodityChange() {
+        loadReport();
+    }
+
+    function onPortChange() {
+        loadReport();
     }
 
     function onColumnChange() {
@@ -477,30 +552,15 @@
         };
         const commLbl = document.getElementById("commoditySelectLabel");
         if (commLbl) {
-            commLbl.textContent = (colLblMap[col] || "Commodity");
+            commLbl.textContent = "Commodity / " + (colLblMap[col] || "Category");
         }
 
-        fetch(`/api/module/RP01/report-budget/cargo-master-values?column=${col}`)
-            .then(r => r.json())
-            .then(j => {
-                const sel = document.getElementById("commoditySelect");
-                let html = '<option value="ALL">All Items</option>';
-                if (j.values && j.values.length > 0) {
-                    j.values.forEach(v => {
-                        html += `<option value="${v}">${v}</option>`;
-                    });
-                } else {
-                    (META.canonical_commodities || []).forEach(c => {
-                        html += `<option value="${c}">${c}</option>`;
-                    });
-                }
-                sel.innerHTML = html;
-                loadReport();
-            })
-            .catch(err => {
-                console.error(err);
-                loadReport();
-            });
+        const commSel = document.getElementById("commoditySelect");
+        if (commSel) {
+            commSel.value = "ALL";
+        }
+
+        loadReport();
     }
 
     function loadMetaThenReport() {
@@ -523,86 +583,184 @@
             });
     }
 
-    function renderHeader(months, finYear, port, selectedMonthIdx) {
-        const showJnpt = port === "ALL" || port === "JNPT";
-        const showJsw = port === "ALL" || port === "JSW";
-        const actCols = (showJnpt ? 1 : 0) + (showJsw ? 1 : 0);
-        const mColspan = 1 + actCols;
+    function renderHeader(pastMonths, futureMonths, finYear) {
+        let h = `<tr>`;
+        h += `<th class="particular-hdr" style="min-width:220px;width:220px;vertical-align:middle;text-align:center;">Particular</th>`;
 
-        let row1 = `<tr><th rowspan="2" class="particular-hdr" style="min-width:240px;width:240px;vertical-align:middle;text-align:center;">Particular</th>`;
-        let row2 = `<tr>`;
+        pastMonths.forEach(m => {
+            h += `<th>${m.label}</th>`;
+        });
 
-        months.forEach(m => {
-            const isSel = (m.idx === selectedMonthIdx);
-            const hdrCls = isSel ? "selected-month-hdr" : "";
-            const subhdrCls = isSel ? "selected-month-subhdr" : "";
+        h += `<th class="till-date-hdr">Total (${finYear}) Till Date</th>`;
+        h += `<th class="diff-hdr">Diff in MT</th>`;
+        h += `<th class="diff-hdr">Diff in %</th>`;
 
-            row1 += `<th colspan="${mColspan}" class="${hdrCls}">${m.label}</th>`;
-            row2 += `<th class="${subhdrCls}">Budget</th>`;
-            if (actCols > 1) {
-                if (showJnpt) row2 += `<th class="${subhdrCls}">JNPT Actual</th>`;
-                if (showJsw) row2 += `<th class="${subhdrCls}">JSW Actual</th>`;
+        futureMonths.forEach(m => {
+            h += `<th>${m.label}</th>`;
+        });
+
+        h += `<th class="fy-total-hdr">Total (${finYear})</th>`;
+        h += `</tr>`;
+        return h;
+    }
+
+    function renderSection(sectionTitle, valKey, rows, monthTotals, grandTotal, pastMonths, futureMonths, isBudget) {
+        const totalCols = 1 + pastMonths.length + 3 + futureMonths.length + 1;
+        let html = "";
+
+        // Section banner row
+        html += `<tr class="section-banner-row">`;
+        html += `<td class="particular">${sectionTitle}</td>`;
+        html += `<td colspan="${totalCols - 1}" class="section-banner-cell">${sectionTitle}</td>`;
+        html += `</tr>`;
+
+        if (!rows || rows.length === 0) {
+            html += `<tr><td class="particular" style="color:var(--rp-muted);font-style:italic;">No records found</td><td colspan="${totalCols - 1}" style="text-align:center;color:var(--rp-muted);font-style:italic;">No data available for the selected filters</td></tr>`;
+            return html;
+        }
+
+        // Commodity rows
+        rows.forEach(r => {
+            let tillDateVal = 0;
+            let tillDateBudget = 0;
+            let fyVal = 0;
+
+            for (let i = 0; i < 12; i++) {
+                const mData = (r.months || {})[i] || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
+                const v = Number(mData[valKey] || 0);
+                fyVal += v;
+                if (pastMonths.some(m => m.idx === i)) {
+                    tillDateVal += v;
+                    tillDateBudget += Number(mData.budget || 0);
+                }
+            }
+
+            html += `<tr>`;
+            html += `<td class="particular">${r.particular}</td>`;
+
+            // Past months
+            pastMonths.forEach(m => {
+                const mData = (r.months || {})[m.idx] || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
+                const v = Number(mData[valKey] || 0);
+                html += `<td class="val">${fmtNum(v, 3)}</td>`;
+            });
+
+            // Till Date
+            html += `<td class="val till-date-cell">${fmtNum(tillDateVal, 3)}</td>`;
+
+            // Diff in MT & Diff in %
+            if (isBudget) {
+                html += `<td class="val diff-cell"></td>`;
+                html += `<td class="val diff-cell"></td>`;
             } else {
-                row2 += `<th class="${subhdrCls}">Actual (${port})</th>`;
+                const diffMt = tillDateVal - tillDateBudget;
+                const diffPct = (tillDateBudget > 0) ? ((diffMt / tillDateBudget) * 100) : null;
+                const diffCls = diffMt < 0 ? 'negative' : (diffMt > 0 ? 'positive' : '');
+                const pctCls = (diffPct !== null && diffPct < 0) ? 'negative' : ((diffPct !== null && diffPct > 0) ? 'positive' : '');
+
+                html += `<td class="val diff-cell ${diffCls}">${fmtNum(diffMt, 3)}</td>`;
+                html += `<td class="val diff-cell ${pctCls}">${diffPct !== null ? diffPct.toFixed(2) + '%' : ''}</td>`;
+            }
+
+            // Future months
+            futureMonths.forEach(m => {
+                if (isBudget) {
+                    const mData = (r.months || {})[m.idx] || { budget: 0 };
+                    const v = Number(mData.budget || 0);
+                    html += `<td class="val">${fmtNum(v, 3)}</td>`;
+                } else {
+                    html += `<td class="val"></td>`;
+                }
+            });
+
+            // FY Total
+            html += `<td class="val fy-total-cell">${fmtNum(fyVal, 0)}</td>`;
+            html += `</tr>`;
+        });
+
+        // Total row
+        let grandTillDateVal = 0;
+        let grandTillDateBudget = 0;
+        let grandFyVal = 0;
+
+        for (let i = 0; i < 12; i++) {
+            const mTot = monthTotals[i] || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
+            const v = Number(mTot[valKey] || 0);
+            grandFyVal += v;
+            if (pastMonths.some(m => m.idx === i)) {
+                grandTillDateVal += v;
+                grandTillDateBudget += Number(mTot.budget || 0);
+            }
+        }
+
+        html += `<tr class="total-row">`;
+        html += `<td class="particular">Total</td>`;
+
+        // Past months
+        pastMonths.forEach(m => {
+            const mTot = monthTotals[m.idx] || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
+            const v = Number(mTot[valKey] || 0);
+            html += `<td class="val">${fmtNum(v, 3)}</td>`;
+        });
+
+        // Till Date
+        html += `<td class="val till-date-cell">${fmtNum(grandTillDateVal, 3)}</td>`;
+
+        // Diff in MT & Diff in %
+        if (isBudget) {
+            html += `<td class="val diff-cell"></td>`;
+            html += `<td class="val diff-cell"></td>`;
+        } else {
+            const grandDiffMt = grandTillDateVal - grandTillDateBudget;
+            const grandDiffPct = (grandTillDateBudget > 0) ? ((grandDiffMt / grandTillDateBudget) * 100) : null;
+            const diffCls = grandDiffMt < 0 ? 'negative' : (grandDiffMt > 0 ? 'positive' : '');
+            const pctCls = (grandDiffPct !== null && grandDiffPct < 0) ? 'negative' : ((grandDiffPct !== null && grandDiffPct > 0) ? 'positive' : '');
+
+            html += `<td class="val diff-cell ${diffCls}">${fmtNum(grandDiffMt, 3)}</td>`;
+            html += `<td class="val diff-cell ${pctCls}">${grandDiffPct !== null ? grandDiffPct.toFixed(2) + '%' : ''}</td>`;
+        }
+
+        // Future months
+        futureMonths.forEach(m => {
+            if (isBudget) {
+                const mTot = monthTotals[m.idx] || { budget: 0 };
+                const v = Number(mTot.budget || 0);
+                html += `<td class="val">${fmtNum(v, 3)}</td>`;
+            } else {
+                html += `<td class="val">${fmtNum(0, 3)}</td>`;
             }
         });
 
-        row1 += `<th colspan="${mColspan}">Total (${finYear})</th></tr>`;
-        row2 += `<th>Budget</th>`;
-        if (actCols > 1) {
-            if (showJnpt) row2 += `<th>JNPT Actual</th>`;
-            if (showJsw) row2 += `<th>JSW Actual</th></tr>`;
-        } else {
-            row2 += `<th>Actual (${port})</th></tr>`;
-        }
+        // FY Total
+        html += `<td class="val fy-total-cell">${fmtNum(grandFyVal, isBudget ? 3 : 0)}</td>`;
+        html += `</tr>`;
 
-        return row1 + row2;
+        return html;
     }
 
-    function renderBody(data, selectedMonthIdx) {
-        const months = data.visible_months || [];
+    function renderBody(data, pastMonths, futureMonths) {
         const rows = data.rows || [];
         const monthTotals = data.month_totals || {};
         const grandTotal = data.grand_total || {};
-        const port = data.port || "ALL";
+        const port = (data.port || document.getElementById("portSelect")?.value || "ALL").toUpperCase();
 
         const showJnpt = port === "ALL" || port === "JNPT";
         const showJsw = port === "ALL" || port === "JSW";
 
         let bodyHtml = "";
 
-        rows.forEach(r => {
-            bodyHtml += `<tr><td class="particular">${r.particular}</td>`;
-            months.forEach(m => {
-                const isSel = (m.idx === selectedMonthIdx);
-                const cellCls = isSel ? "val selected-month-cell" : "val";
+        // 1. Budget Section
+        bodyHtml += renderSection("Budget", "budget", rows, monthTotals, grandTotal, pastMonths, futureMonths, true);
 
-                const mData = (r.months || {})[m.idx] || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
-                bodyHtml += `<td class="${cellCls}">${fmtNum(mData.budget)}</td>`;
-                if (showJnpt) bodyHtml += `<td class="${cellCls}">${fmtNum(mData.jnpt_actual)}</td>`;
-                if (showJsw) bodyHtml += `<td class="${cellCls}">${fmtNum(mData.jsw_actual)}</td>`;
-            });
-            const tot = r.total || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
-            bodyHtml += `<td class="val" style="font-weight:600;">${fmtNum(tot.budget)}</td>`;
-            if (showJnpt) bodyHtml += `<td class="val" style="font-weight:600;">${fmtNum(tot.jnpt_actual)}</td>`;
-            if (showJsw) bodyHtml += `<td class="val" style="font-weight:600;">${fmtNum(tot.jsw_actual)}</td>`;
-            bodyHtml += `</tr>`;
-        });
+        // 2. JNPT Actual Section
+        if (showJnpt) {
+            bodyHtml += renderSection("JNPT Actual", "jnpt_actual", rows, monthTotals, grandTotal, pastMonths, futureMonths, false);
+        }
 
-        bodyHtml += `<tr class="total-row"><td class="particular" style="background:var(--rp-highlight);">Total</td>`;
-        months.forEach(m => {
-            const isSel = (m.idx === selectedMonthIdx);
-            const cellCls = isSel ? "val selected-month-cell" : "val";
-
-            const mTot = monthTotals[m.idx] || { budget: 0, jnpt_actual: 0, jsw_actual: 0 };
-            bodyHtml += `<td class="${cellCls}">${fmtNum(mTot.budget)}</td>`;
-            if (showJnpt) bodyHtml += `<td class="${cellCls}">${fmtNum(mTot.jnpt_actual)}</td>`;
-            if (showJsw) bodyHtml += `<td class="${cellCls}">${fmtNum(mTot.jsw_actual)}</td>`;
-        });
-        bodyHtml += `<td class="val">${fmtNum(grandTotal.budget)}</td>`;
-        if (showJnpt) bodyHtml += `<td class="val">${fmtNum(grandTotal.jnpt_actual)}</td>`;
-        if (showJsw) bodyHtml += `<td class="val">${fmtNum(grandTotal.jsw_actual)}</td>`;
-        bodyHtml += `</tr>`;
+        // 3. JSW Actual Section
+        if (showJsw) {
+            bodyHtml += renderSection("JSW Actual", "jsw_actual", rows, monthTotals, grandTotal, pastMonths, futureMonths, false);
+        }
 
         return bodyHtml;
     }
@@ -621,17 +779,17 @@
     }
 
     function loadReport() {
-        const fin_year = document.getElementById("yearSelect").value;
-        const month_idx = document.getElementById("monthSelect").value;
-        const column = document.getElementById("columnSelect").value;
-        const commodity = document.getElementById("commoditySelect").value;
-        const port = document.getElementById("portSelect").value;
-        const detailed = document.getElementById("detailToggle").checked;
+        const fin_year = document.getElementById("yearSelect")?.value || "";
+        const month_idx = document.getElementById("monthSelect")?.value || "";
+        const column = document.getElementById("columnSelect")?.value || "cargo_sub_category_2";
+        const commodity = document.getElementById("commoditySelect")?.value || "ALL";
+        const port = document.getElementById("portSelect")?.value || "ALL";
+        const detailed = document.getElementById("detailToggle")?.checked || false;
 
         const status = document.getElementById("reportStatus");
 
-        if (!fin_year) { status.textContent = "Select a financial year."; return; }
-        status.textContent = "Loading multi-month report...";
+        if (!fin_year) { if (status) status.textContent = "Select a financial year."; return; }
+        if (status) status.textContent = "Loading multi-month report...";
 
         let url = `/api/module/RP01/report-budget/report?fin_year=${fin_year}&column=${column}&commodity=${encodeURIComponent(commodity)}&port=${port}&detailed=${detailed}`;
         if (month_idx !== "") {
@@ -641,33 +799,36 @@
         fetch(url)
             .then(r => r.json().then(j => ({ ok: r.ok, j })))
             .then(({ ok, j }) => {
-                if (!ok) { status.textContent = j.error || "Failed to load budget report."; return; }
+                if (!ok) { if (status) status.textContent = j.error || "Failed to load budget report."; return; }
                 REPORT_DATA = j;
 
-                let selIdx = -1;
-                if (month_idx !== "") {
-                    selIdx = parseInt(month_idx);
-                } else if (j.visible_months && j.visible_months.length > 0) {
-                    selIdx = j.visible_months[j.visible_months.length - 1].idx;
+                if (j.available_commodities && j.available_commodities.length > 0) {
+                    updateCommoditySelectOptions(j.available_commodities, commodity);
                 }
 
-                document.getElementById("tableHeader").innerHTML = renderHeader(j.visible_months, j.fin_year, j.port, selIdx);
-                document.getElementById("tableBody").innerHTML = renderBody(j, selIdx);
-                status.textContent = "";
+                const allMonths = j.all_months || [];
+                let selIdx = (j.selected_month_idx !== undefined) ? j.selected_month_idx : (month_idx !== "" ? parseInt(month_idx) : 11);
+
+                const pastMonths = allMonths.filter(m => m.idx <= selIdx);
+                const futureMonths = allMonths.filter(m => m.idx > selIdx);
+
+                document.getElementById("tableHeader").innerHTML = renderHeader(pastMonths, futureMonths, j.fin_year);
+                document.getElementById("tableBody").innerHTML = renderBody(j, pastMonths, futureMonths);
+                if (status) status.textContent = "";
             })
             .catch(err => {
-                status.textContent = "Failed to load report data.";
+                if (status) status.textContent = "Failed to load report data.";
                 console.error(err);
             });
     }
 
     function exportReport() {
-        const fin_year = document.getElementById("yearSelect").value;
-        const month_idx = document.getElementById("monthSelect").value;
-        const column = document.getElementById("columnSelect").value;
-        const commodity = document.getElementById("commoditySelect").value;
-        const port = document.getElementById("portSelect").value;
-        const detailed = document.getElementById("detailToggle").checked;
+        const fin_year = document.getElementById("yearSelect")?.value || "";
+        const month_idx = document.getElementById("monthSelect")?.value || "";
+        const column = document.getElementById("columnSelect")?.value || "cargo_sub_category_2";
+        const commodity = document.getElementById("commoditySelect")?.value || "ALL";
+        const port = document.getElementById("portSelect")?.value || "ALL";
+        const detailed = document.getElementById("detailToggle")?.checked || false;
 
         if (!fin_year) return;
         let url = `/api/module/RP01/report-budget/export?fin_year=${fin_year}&column=${column}&commodity=${encodeURIComponent(commodity)}&port=${port}&detailed=${detailed}`;

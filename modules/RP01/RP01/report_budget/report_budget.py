@@ -405,9 +405,14 @@ def report_budget_api_report():
 
         if month_idx_arg is not None and month_idx_arg != "":
             target_m_idx = int(month_idx_arg)
-            max_m_idx = min(target_m_idx, cur_m_idx if fin_year == cur_fy else 11)
+            max_m_idx = min(target_m_idx, 11)
         else:
             max_m_idx = cur_m_idx if fin_year == cur_fy else 11
+
+        all_months = [
+            {"idx": idx, "label": month_label_from_idx(fin_year, idx)}
+            for idx in range(12)
+        ]
 
         visible_months = [
             {"idx": idx, "label": month_label_from_idx(fin_year, idx)}
@@ -427,8 +432,11 @@ def report_budget_api_report():
         else:
             all_comms_list = sorted(list(all_comms))
 
-        if commodity != "ALL":
-            selected_commodities = [c for c in all_comms_list if c.lower() == commodity.lower()]
+        if commodity and commodity.strip().upper() != "ALL":
+            comm_clean = commodity.strip().lower()
+            selected_commodities = [c for c in all_comms_list if c.strip().lower() == comm_clean]
+            if not selected_commodities:
+                selected_commodities = [c for c in all_comms if c.strip().lower() == comm_clean]
             if not selected_commodities:
                 selected_commodities = [commodity]
         else:
@@ -436,19 +444,24 @@ def report_budget_api_report():
 
         rows = []
         month_totals = {
-            m["idx"]: {"budget": 0.0, "jnpt_actual": 0.0, "jsw_actual": 0.0}
-            for m in visible_months
+            idx: {"budget": 0.0, "jnpt_actual": 0.0, "jsw_actual": 0.0}
+            for idx in range(12)
         }
-        grand_total = {"budget": 0.0, "jnpt_actual": 0.0, "jsw_actual": 0.0}
+        grand_total = {
+            "budget": 0.0, "jnpt_actual": 0.0, "jsw_actual": 0.0,
+            "till_date_budget": 0.0, "till_date_jnpt": 0.0, "till_date_jsw": 0.0
+        }
 
         for comm in selected_commodities:
             row_months = {}
             row_tot_budget = 0.0
             row_tot_jnpt = 0.0
             row_tot_jsw = 0.0
+            row_till_budget = 0.0
+            row_till_jnpt = 0.0
+            row_till_jsw = 0.0
 
-            for m in visible_months:
-                idx = m["idx"]
+            for idx in range(12):
                 b_qty = budget_data[idx].get(comm, 0.0)
                 jnpt_q = jnpt_data[idx].get(comm, 0.0) if port in ("ALL", "JNPT") else 0.0
                 jsw_q = jsw_data[idx].get(comm, 0.0) if port in ("ALL", "JSW") else 0.0
@@ -463,6 +476,11 @@ def report_budget_api_report():
                 row_tot_jnpt += jnpt_q
                 row_tot_jsw += jsw_q
 
+                if idx <= max_m_idx:
+                    row_till_budget += b_qty
+                    row_till_jnpt += jnpt_q
+                    row_till_jsw += jsw_q
+
                 month_totals[idx]["budget"] += b_qty
                 month_totals[idx]["jnpt_actual"] += jnpt_q
                 month_totals[idx]["jsw_actual"] += jsw_q
@@ -470,6 +488,9 @@ def report_budget_api_report():
             grand_total["budget"] += row_tot_budget
             grand_total["jnpt_actual"] += row_tot_jnpt
             grand_total["jsw_actual"] += row_tot_jsw
+            grand_total["till_date_budget"] += row_till_budget
+            grand_total["till_date_jnpt"] += row_till_jnpt
+            grand_total["till_date_jsw"] += row_till_jsw
 
             rows.append({
                 "particular": comm,
@@ -478,6 +499,9 @@ def report_budget_api_report():
                     "budget": row_tot_budget,
                     "jnpt_actual": row_tot_jnpt,
                     "jsw_actual": row_tot_jsw,
+                    "till_date_budget": row_till_budget,
+                    "till_date_jnpt": row_till_jnpt,
+                    "till_date_jsw": row_till_jsw,
                 }
             })
 
@@ -485,7 +509,10 @@ def report_budget_api_report():
             "fin_year": fin_year,
             "port": port,
             "commodity": commodity,
+            "selected_month_idx": max_m_idx,
+            "all_months": all_months,
             "visible_months": visible_months,
+            "available_commodities": all_comms_list,
             "rows": rows,
             "month_totals": month_totals,
             "grand_total": grand_total
@@ -540,14 +567,16 @@ def report_budget_api_export():
 
         if month_idx_arg is not None and month_idx_arg != "":
             target_m_idx = int(month_idx_arg)
-            max_m_idx = min(target_m_idx, cur_m_idx if fin_year == cur_fy else 11)
+            max_m_idx = min(target_m_idx, 11)
         else:
             max_m_idx = cur_m_idx if fin_year == cur_fy else 11
 
-        visible_months = [
+        all_months = [
             {"idx": idx, "label": month_label_from_idx(fin_year, idx)}
-            for idx in range(max_m_idx + 1)
+            for idx in range(12)
         ]
+        past_months = [m for m in all_months if m["idx"] <= max_m_idx]
+        future_months = [m for m in all_months if m["idx"] > max_m_idx]
 
         detailed_arg = (request.args.get("detailed") or "false").strip().lower()
         detailed = (detailed_arg == "true" or detailed_arg == "1")
@@ -566,8 +595,11 @@ def report_budget_api_export():
         else:
             all_comms_list = sorted(list(all_comms))
 
-        if commodity != "ALL":
-            selected_commodities = [c for c in all_comms_list if c.lower() == commodity.lower()]
+        if commodity and commodity.strip().upper() != "ALL":
+            comm_clean = commodity.strip().lower()
+            selected_commodities = [c for c in all_comms_list if c.strip().lower() == comm_clean]
+            if not selected_commodities:
+                selected_commodities = [c for c in all_comms if c.strip().lower() == comm_clean]
             if not selected_commodities:
                 selected_commodities = [commodity]
         else:
@@ -575,9 +607,6 @@ def report_budget_api_export():
 
         show_jnpt = port in ("ALL", "JNPT")
         show_jsw = port in ("ALL", "JSW")
-        act_cols = (1 if show_jnpt else 0) + (1 if show_jsw else 0)
-        m_cols = 1 + act_cols
-
         wb = Workbook()
         ws = wb.active
         ws.title = "Budget vs Actual"
@@ -589,178 +618,227 @@ def report_budget_api_export():
         border_thin = Side(style="thin", color="000000")
         cell_border = Border(left=border_thin, right=border_thin, top=border_thin, bottom=border_thin)
 
-        # Row 1: Particular + Month Groupings + Total Grouping
-        ws.merge_cells(start_row=1, start_column=1, end_row=3, end_column=1)
-        cell = ws.cell(row=1, column=1, value="Particular")
-        cell.font = hdr_font
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = cell_border
+        total_cols = 1 + len(past_months) + 3 + len(future_months) + 1
 
-        col_pos = 2
-        for m in visible_months:
-            ws.merge_cells(start_row=1, start_column=col_pos, end_row=1, end_column=col_pos + m_cols - 1)
-            m_cell = ws.cell(row=1, column=col_pos, value=m["label"])
-            m_cell.font = hdr_font
-            m_cell.alignment = Alignment(horizontal="center", vertical="center")
+        # Header Row: Row 1
+        col_pos = 1
+        ws.cell(row=1, column=col_pos, value="Particular").font = hdr_font
+        ws.cell(row=1, column=col_pos).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(row=1, column=col_pos).border = cell_border
+        ws.cell(row=1, column=col_pos).fill = hdr_fill
+        col_pos += 1
 
-            ws.cell(row=2, column=col_pos, value="Budget").font = hdr_font
-            ws.cell(row=2, column=col_pos).alignment = Alignment(horizontal="center", vertical="center")
+        for m in past_months:
+            c = ws.cell(row=1, column=col_pos, value=m["label"])
+            c.font = hdr_font
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = cell_border
+            c.fill = hdr_fill
+            col_pos += 1
 
-            curr_act_col = col_pos + 1
-            if act_cols > 1:
-                ws.merge_cells(start_row=2, start_column=curr_act_col, end_row=2, end_column=curr_act_col + act_cols - 1)
-                ws.cell(row=2, column=curr_act_col, value="Actual").font = hdr_font
-                ws.cell(row=2, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
+        c = ws.cell(row=1, column=col_pos, value=f"Total ({fin_year}) Till Date")
+        c.font = hdr_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = cell_border
+        c.fill = PatternFill(start_color="E0F2FE", end_color="E0F2FE", fill_type="solid")
+        col_pos += 1
 
-                if show_jnpt:
-                    ws.cell(row=3, column=curr_act_col, value="JNPT").font = hdr_font
-                    ws.cell(row=3, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
-                    curr_act_col += 1
-                if show_jsw:
-                    ws.cell(row=3, column=curr_act_col, value="JSW").font = hdr_font
-                    ws.cell(row=3, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                ws.cell(row=2, column=curr_act_col, value=f"Actual ({port})").font = hdr_font
-                ws.cell(row=2, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
+        c = ws.cell(row=1, column=col_pos, value="Diff in MT")
+        c.font = hdr_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = cell_border
+        c.fill = hdr_fill
+        col_pos += 1
 
-            for r in range(1, 4):
-                for c in range(col_pos, col_pos + m_cols):
-                    ws.cell(row=r, column=c).border = cell_border
-                    ws.cell(row=r, column=c).fill = hdr_fill
+        c = ws.cell(row=1, column=col_pos, value="Diff in %")
+        c.font = hdr_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = cell_border
+        c.fill = hdr_fill
+        col_pos += 1
 
-            col_pos += m_cols
+        for m in future_months:
+            c = ws.cell(row=1, column=col_pos, value=m["label"])
+            c.font = hdr_font
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = cell_border
+            c.fill = hdr_fill
+            col_pos += 1
 
-        # Grand Total Columns
-        ws.merge_cells(start_row=1, start_column=col_pos, end_row=1, end_column=col_pos + m_cols - 1)
-        gt_cell = ws.cell(row=1, column=col_pos, value=f"Total ({fin_year})")
-        gt_cell.font = hdr_font
-        gt_cell.alignment = Alignment(horizontal="center", vertical="center")
+        c = ws.cell(row=1, column=col_pos, value=f"Total ({fin_year})")
+        c.font = hdr_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = cell_border
+        c.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
 
-        ws.cell(row=2, column=col_pos, value="Budget").font = hdr_font
-        ws.cell(row=2, column=col_pos).alignment = Alignment(horizontal="center", vertical="center")
+        curr_row = 2
 
-        curr_act_col = col_pos + 1
-        if act_cols > 1:
-            ws.merge_cells(start_row=2, start_column=curr_act_col, end_row=2, end_column=curr_act_col + act_cols - 1)
-            ws.cell(row=2, column=curr_act_col, value="Actual").font = hdr_font
-            ws.cell(row=2, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
+        def write_section(title, val_key, is_budget):
+            nonlocal curr_row
+            ws.merge_cells(start_row=curr_row, start_column=1, end_row=curr_row, end_column=total_cols)
+            banner_cell = ws.cell(row=curr_row, column=1, value=title)
+            banner_cell.font = Font(name="Arial", size=11, bold=True, color="000000")
+            banner_cell.alignment = Alignment(horizontal="center", vertical="center")
+            banner_fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+            for c_idx in range(1, total_cols + 1):
+                ws.cell(row=curr_row, column=c_idx).border = cell_border
+                ws.cell(row=curr_row, column=c_idx).fill = banner_fill
+            curr_row += 1
 
-            if show_jnpt:
-                ws.cell(row=3, column=curr_act_col, value="JNPT").font = hdr_font
-                ws.cell(row=3, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
-                curr_act_col += 1
-            if show_jsw:
-                ws.cell(row=3, column=curr_act_col, value="JSW").font = hdr_font
-                ws.cell(row=3, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
-        else:
-            ws.cell(row=2, column=curr_act_col, value=f"Actual ({port})").font = hdr_font
-            ws.cell(row=2, column=curr_act_col).alignment = Alignment(horizontal="center", vertical="center")
+            for comm in selected_commodities:
+                ws.cell(row=curr_row, column=1, value=comm).font = Font(name="Arial", size=10)
+                ws.cell(row=curr_row, column=1).border = cell_border
 
-        for r in range(1, 4):
-            for c in range(col_pos, col_pos + m_cols):
-                ws.cell(row=r, column=c).border = cell_border
-                ws.cell(row=r, column=c).fill = hdr_fill
+                col_idx = 2
+                till_date_val = 0.0
+                till_date_b = 0.0
+                fy_val = 0.0
 
-        # Data Rows
-        curr_row = 4
-        month_totals = {m["idx"]: {"b": 0.0, "jnpt": 0.0, "jsw": 0.0} for m in visible_months}
-        gt_totals = {"b": 0.0, "jnpt": 0.0, "jsw": 0.0}
+                for m in past_months:
+                    idx = m["idx"]
+                    v = budget_data[idx].get(comm, 0.0) if is_budget else (jnpt_data[idx].get(comm, 0.0) if val_key == "jnpt" else jsw_data[idx].get(comm, 0.0))
+                    b = budget_data[idx].get(comm, 0.0)
+                    till_date_val += v
+                    till_date_b += b
+                    fy_val += v
 
-        for comm in selected_commodities:
-            ws.cell(row=curr_row, column=1, value=comm).font = Font(name="Arial", size=10)
+                    c_cell = ws.cell(row=curr_row, column=col_idx, value=v)
+                    c_cell.number_format = "#,##0.000"
+                    c_cell.border = cell_border
+                    c_cell.alignment = Alignment(horizontal="right")
+                    col_idx += 1
+
+                td_cell = ws.cell(row=curr_row, column=col_idx, value=till_date_val)
+                td_cell.number_format = "#,##0.000"
+                td_cell.border = cell_border
+                td_cell.alignment = Alignment(horizontal="right")
+                col_idx += 1
+
+                if is_budget:
+                    ws.cell(row=curr_row, column=col_idx, value="").border = cell_border
+                    col_idx += 1
+                    ws.cell(row=curr_row, column=col_idx, value="").border = cell_border
+                    col_idx += 1
+                else:
+                    diff_mt = till_date_val - till_date_b
+                    diff_pct = (diff_mt / till_date_b) if till_date_b > 0 else None
+
+                    d_cell = ws.cell(row=curr_row, column=col_idx, value=diff_mt)
+                    d_cell.number_format = "#,##0.000"
+                    d_cell.border = cell_border
+                    d_cell.alignment = Alignment(horizontal="right")
+                    col_idx += 1
+
+                    p_cell = ws.cell(row=curr_row, column=col_idx, value=diff_pct if diff_pct is not None else "")
+                    if diff_pct is not None:
+                        p_cell.number_format = "0.00%"
+                    p_cell.border = cell_border
+                    p_cell.alignment = Alignment(horizontal="right")
+                    col_idx += 1
+
+                for m in future_months:
+                    idx = m["idx"]
+                    v = budget_data[idx].get(comm, 0.0) if is_budget else 0.0
+                    fy_val += v
+                    c_cell = ws.cell(row=curr_row, column=col_idx, value=v if is_budget else "")
+                    if is_budget:
+                        c_cell.number_format = "#,##0.000"
+                    c_cell.border = cell_border
+                    c_cell.alignment = Alignment(horizontal="right")
+                    col_idx += 1
+
+                fy_cell = ws.cell(row=curr_row, column=col_idx, value=fy_val)
+                fy_cell.number_format = "#,##0"
+                fy_cell.border = cell_border
+                fy_cell.alignment = Alignment(horizontal="right")
+
+                curr_row += 1
+
+            # Total row
+            ws.cell(row=curr_row, column=1, value="Total").font = tot_font
             ws.cell(row=curr_row, column=1).border = cell_border
 
-            col_pos = 2
-            row_tot_b, row_tot_jnpt, row_tot_jsw = 0.0, 0.0, 0.0
+            col_idx = 2
+            grand_till_date_val = 0.0
+            grand_till_date_b = 0.0
+            grand_fy_val = 0.0
 
-            for m in visible_months:
+            for m in past_months:
                 idx = m["idx"]
-                b_qty = budget_data[idx].get(comm, 0.0)
-                jnpt_q = jnpt_data[idx].get(comm, 0.0) if show_jnpt else 0.0
-                jsw_q = jsw_data[idx].get(comm, 0.0) if show_jsw else 0.0
+                v = sum(budget_data[idx].get(c, 0.0) for c in selected_commodities) if is_budget else (
+                    sum(jnpt_data[idx].get(c, 0.0) for c in selected_commodities) if val_key == "jnpt" else sum(jsw_data[idx].get(c, 0.0) for c in selected_commodities)
+                )
+                b = sum(budget_data[idx].get(c, 0.0) for c in selected_commodities)
+                grand_till_date_val += v
+                grand_till_date_b += b
+                grand_fy_val += v
 
-                ws.cell(row=curr_row, column=col_pos, value=b_qty).number_format = "#,##0"
-                c_idx = col_pos + 1
-                if show_jnpt:
-                    ws.cell(row=curr_row, column=c_idx, value=jnpt_q).number_format = "#,##0"
-                    c_idx += 1
-                if show_jsw:
-                    ws.cell(row=curr_row, column=c_idx, value=jsw_q).number_format = "#,##0"
-                    c_idx += 1
+                c_cell = ws.cell(row=curr_row, column=col_idx, value=v)
+                c_cell.font = tot_font
+                c_cell.number_format = "#,##0.000"
+                c_cell.border = cell_border
+                c_cell.alignment = Alignment(horizontal="right")
+                col_idx += 1
 
-                for c in range(col_pos, col_pos + m_cols):
-                    cell = ws.cell(row=curr_row, column=c)
-                    cell.border = cell_border
-                    cell.alignment = Alignment(horizontal="right")
+            td_cell = ws.cell(row=curr_row, column=col_idx, value=grand_till_date_val)
+            td_cell.font = tot_font
+            td_cell.number_format = "#,##0.000"
+            td_cell.border = cell_border
+            td_cell.alignment = Alignment(horizontal="right")
+            col_idx += 1
 
-                row_tot_b += b_qty
-                row_tot_jnpt += jnpt_q
-                row_tot_jsw += jsw_q
+            if is_budget:
+                c1 = ws.cell(row=curr_row, column=col_idx, value="")
+                c1.border = cell_border
+                c1.font = tot_font
+                col_idx += 1
+                c2 = ws.cell(row=curr_row, column=col_idx, value="")
+                c2.border = cell_border
+                c2.font = tot_font
+                col_idx += 1
+            else:
+                grand_diff_mt = grand_till_date_val - grand_till_date_b
+                grand_diff_pct = (grand_diff_mt / grand_till_date_b) if grand_till_date_b > 0 else None
 
-                month_totals[idx]["b"] += b_qty
-                month_totals[idx]["jnpt"] += jnpt_q
-                month_totals[idx]["jsw"] += jsw_q
+                d_cell = ws.cell(row=curr_row, column=col_idx, value=grand_diff_mt)
+                d_cell.font = tot_font
+                d_cell.number_format = "#,##0.000"
+                d_cell.border = cell_border
+                d_cell.alignment = Alignment(horizontal="right")
+                col_idx += 1
 
-                col_pos += m_cols
+                p_cell = ws.cell(row=curr_row, column=col_idx, value=grand_diff_pct if grand_diff_pct is not None else "")
+                p_cell.font = tot_font
+                if grand_diff_pct is not None:
+                    p_cell.number_format = "0.00%"
+                p_cell.border = cell_border
+                p_cell.alignment = Alignment(horizontal="right")
+                col_idx += 1
 
-            ws.cell(row=curr_row, column=col_pos, value=row_tot_b).number_format = "#,##0"
-            c_idx = col_pos + 1
-            if show_jnpt:
-                ws.cell(row=curr_row, column=c_idx, value=row_tot_jnpt).number_format = "#,##0"
-                c_idx += 1
-            if show_jsw:
-                ws.cell(row=curr_row, column=c_idx, value=row_tot_jsw).number_format = "#,##0"
-                c_idx += 1
+            for m in future_months:
+                idx = m["idx"]
+                v = sum(budget_data[idx].get(c, 0.0) for c in selected_commodities) if is_budget else 0.0
+                grand_fy_val += v
+                c_cell = ws.cell(row=curr_row, column=col_idx, value=v if is_budget else 0.0)
+                c_cell.font = tot_font
+                c_cell.number_format = "#,##0.000"
+                c_cell.border = cell_border
+                c_cell.alignment = Alignment(horizontal="right")
+                col_idx += 1
 
-            for c in range(col_pos, col_pos + m_cols):
-                cell = ws.cell(row=curr_row, column=c)
-                cell.border = cell_border
-                cell.alignment = Alignment(horizontal="right")
-
-            gt_totals["b"] += row_tot_b
-            gt_totals["jnpt"] += row_tot_jnpt
-            gt_totals["jsw"] += row_tot_jsw
+            fy_cell = ws.cell(row=curr_row, column=col_idx, value=grand_fy_val)
+            fy_cell.font = tot_font
+            fy_cell.number_format = "#,##0.000" if is_budget else "#,##0"
+            fy_cell.border = cell_border
+            fy_cell.alignment = Alignment(horizontal="right")
 
             curr_row += 1
 
-        # Total Row
-        ws.cell(row=curr_row, column=1, value="Total").font = tot_font
-        ws.cell(row=curr_row, column=1).border = cell_border
-
-        col_pos = 2
-        for m in visible_months:
-            idx = m["idx"]
-            ws.cell(row=curr_row, column=col_pos, value=month_totals[idx]["b"]).number_format = "#,##0"
-            c_idx = col_pos + 1
-            if show_jnpt:
-                ws.cell(row=curr_row, column=c_idx, value=month_totals[idx]["jnpt"]).number_format = "#,##0"
-                c_idx += 1
-            if show_jsw:
-                ws.cell(row=curr_row, column=c_idx, value=month_totals[idx]["jsw"]).number_format = "#,##0"
-                c_idx += 1
-
-            for c in range(col_pos, col_pos + m_cols):
-                cell = ws.cell(row=curr_row, column=c)
-                cell.font = tot_font
-                cell.border = cell_border
-                cell.alignment = Alignment(horizontal="right")
-
-            col_pos += m_cols
-
-        ws.cell(row=curr_row, column=col_pos, value=gt_totals["b"]).number_format = "#,##0"
-        c_idx = col_pos + 1
+        write_section("Budget", "budget", True)
         if show_jnpt:
-            ws.cell(row=curr_row, column=c_idx, value=gt_totals["jnpt"]).number_format = "#,##0"
-            c_idx += 1
+            write_section("JNPT Actual", "jnpt", False)
         if show_jsw:
-            ws.cell(row=curr_row, column=c_idx, value=gt_totals["jsw"]).number_format = "#,##0"
-            c_idx += 1
-
-        for c in range(col_pos, col_pos + m_cols):
-            cell = ws.cell(row=curr_row, column=c)
-            cell.font = tot_font
-            cell.border = cell_border
-            cell.alignment = Alignment(horizontal="right")
+            write_section("JSW Actual", "jsw", False)
 
         # Auto-adjust column widths
         for col in ws.columns:
