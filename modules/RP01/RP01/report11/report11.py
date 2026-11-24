@@ -51,6 +51,8 @@ from openpyxl.utils import get_column_letter
 from database import get_db, get_cursor
 
 from .. import bp
+from ..report7.report7 import _is_excluded_port_preberthing_delay, _parse_delay_hours
+from ..vessel_delay.vessel_delay import fetch_vessel_delay_data
 
 
 def login_required(f):
@@ -172,6 +174,8 @@ def _fetch_live_rows(cur):
         SELECT
             lh.id AS ldud_id,
             lh.vcn_id AS vcn_id,
+            COALESCE(vh.vcn_doc_num, vh.via_number, lh.vcn_doc_num, '') AS vcn_doc_num,
+            COALESCE(vh.vessel_name, lh.vessel_name, '') AS vessel_name,
             po.id AS parcel_op_id,
             vh.berth_name AS berth_no,
             vh.operation_type AS import_export,
@@ -245,9 +249,7 @@ def _fetch_live_rows(cur):
                     last_end - first_start
                 ).total_seconds() / 86400.0
 
-    # Aggregate Pre-Berthing Delays from the authoritative delay master.
-    # This avoids the old keyword classification and matches the Excel
-    # Port/Non-Port responsibility split.
+    # Pre-Berthing Delays for Non-Port (Agent) and original Port (Port) for Section B & C
     vcn_ids = list({r["vcn_id"] for r in raw if r.get("vcn_id") is not None})
     delay_by_vcn = {}
     if vcn_ids:
@@ -291,6 +293,59 @@ def _fetch_live_rows(cur):
                 "non_port": float(d["non_port_delay_days"] or 0.0),
             }
 
+    # Load displayed Port delays from Vessel Delay Report (identical dynamic logic to Report 7)
+    vd_data = fetch_vessel_delay_data('ALL', 'ALL')
+    vd_rows = vd_data.get('rows', [])
+
+    port_hours_by_vessel_month = {}
+    port_hours_by_vcn = {}
+    port_hours_by_vessel = {}
+
+    for delay_row in vd_rows:
+        if (
+            str(delay_row.get('delay_account') or '')
+            .strip()
+            .lower() != 'port'
+        ):
+            continue
+
+        # Exclude Berth Not Available and Cast Off Time - Pilot Disembarked
+        if _is_excluded_port_preberthing_delay(delay_row):
+            continue
+
+        vcn_no = str(
+            delay_row.get('vcn_no') or ''
+        ).strip().upper()
+
+        vessel_name = str(
+            delay_row.get('vessel_name') or ''
+        ).strip().upper()
+
+        month_label = str(
+            delay_row.get('month') or ''
+        ).strip()
+
+        delay_hours = _parse_delay_hours(
+            delay_row.get('hours')
+        )
+
+        if month_label:
+            if vcn_no:
+                port_hours_by_vessel_month.setdefault(
+                    (vcn_no, month_label), []
+                ).append(delay_hours)
+
+            if vessel_name:
+                port_hours_by_vessel_month.setdefault(
+                    (vessel_name, month_label), []
+                ).append(delay_hours)
+
+        if vcn_no:
+            port_hours_by_vcn.setdefault(vcn_no, []).append(delay_hours)
+
+        if vessel_name:
+            port_hours_by_vessel.setdefault(vessel_name, []).append(delay_hours)
+
     seen_ldud = set()
     rows = []
 
@@ -302,7 +357,7 @@ def _fetch_live_rows(cur):
         pilot_pickup = _parse_ts(r["pilot_pickup_time"])
         pilot_disembarked = _parse_ts(r["pilot_disembarked"])
 
-        dt = cast_off
+        dt = cast_off or alongside
         if not dt:
             continue
 
@@ -319,25 +374,62 @@ def _fetch_live_rows(cur):
 
         delay = delay_by_vcn.get(
             r["vcn_id"],
-            {"port": 0.0, "non_port": 0.0}
+            {"non_port": 0.0}
         )
 
-        # Base Port waiting: Anchorage -> Pilot Pickup.
-        # If Anchorage is unavailable, use NOR Tendered -> Pilot Pickup.
+        # Port waiting: identical dynamic lookup to Report 7
+        v_doc = str(r.get('vcn_doc_num') or '').strip().upper()
+        v_name = str(r.get('vessel_name') or '').strip().upper()
+        v_id = str(r.get('vcn_id') or '').strip()
+
+        hrs_list = None
+        # 1. Match by document number and month, then document number alone
+        if v_doc:
+            hrs_list = port_hours_by_vessel_month.get((v_doc, month_str)) or port_hours_by_vcn.get(v_doc)
+
+        # 2. Match by VCN-id format
+        if not hrs_list and v_id:
+            hrs_list = (
+                port_hours_by_vessel_month.get((f"VCN-{v_id}", month_str))
+                or port_hours_by_vcn.get(f"VCN-{v_id}")
+                or port_hours_by_vcn.get(v_id)
+            )
+
+        # 3. Match by vessel name
+        if not hrs_list and v_name:
+            hrs_list = port_hours_by_vessel_month.get((v_name, month_str)) or port_hours_by_vessel.get(v_name)
+            if not hrs_list:
+                clean_vname = v_name.replace('[PR]', '').replace('MT ', '').strip()
+                hrs_list = port_hours_by_vessel.get(clean_vname)
+
+        waiting_port_hrs = sum(hrs_list or [])
+
+        # Inward movement: Pilot Pickup to Alongside (Pilot pick up - along side)
+        inward_hrs = (
+            (alongside - pilot_pickup).total_seconds() / 3600.0
+            if alongside and pilot_pickup and alongside > pilot_pickup
+            else 0.0
+        )
+
+        # Ensure Pilot pick up - along side delay is included in Port Delay
+        if inward_hrs > 0 and (waiting_port_hrs < inward_hrs or not hrs_list):
+            waiting_port_hrs = max(waiting_port_hrs, inward_hrs)
+
+        # Section A: Report 7 Port & Non-Port values
+        waiting_port = (waiting_port_hrs / 24.0) if is_first_parcel else 0.0
+        waiting_non_port = delay.get("non_port", 0.0) if is_first_parcel else 0.0
+
+        # Section B & C: Original calculations preserved (changes apply only to Section A)
         pbw_start = anchored or nor_tendered
         base_port_waiting = (
             _days_between(pbw_start, pilot_pickup)
             if is_first_parcel else 0.0
         )
-
-        waiting_port = (
-            base_port_waiting + delay["port"]
+        waiting_port_bc = (
+            base_port_waiting + delay.get("port", 0.0)
             if is_first_parcel else 0.0
         )
-        waiting_non_port = (
-            delay["non_port"]
-            if is_first_parcel else 0.0
-        )
+        waiting_non_port_bc = waiting_non_port
 
         stay_at_berth = (
             _days_between(alongside, cast_off)
@@ -386,6 +478,8 @@ def _fetch_live_rows(cur):
             "pre_berthing_waiting": waiting_port + waiting_non_port,
             "waiting_port": waiting_port,
             "waiting_non_port": waiting_non_port,
+            "waiting_port_bc": waiting_port_bc,
+            "waiting_non_port_bc": waiting_non_port_bc,
             "stay_at_berth": stay_at_berth,
             "inward_movement": inward_movement,
             "outward_movement": outward_movement,
@@ -509,6 +603,10 @@ def load_data() -> pd.DataFrame:
         # 1. MIS rows: classify strictly using mis_vessel_master category fields directly
         for r in mis_rows:
             r["broad_category"] = classify_broad_category_mis(r)
+            if "waiting_port_bc" not in r:
+                r["waiting_port_bc"] = r.get("waiting_port", 0.0)
+            if "waiting_non_port_bc" not in r:
+                r["waiting_non_port_bc"] = r.get("waiting_non_port", 0.0)
 
         # 2. LIVE rows: classify dynamically using vessel_cargo master table category fields
         live_rows = _fetch_live_rows(cur)
@@ -552,6 +650,7 @@ def load_data() -> pd.DataFrame:
 
     numeric_cols = [
         "quantity", "pre_berthing_waiting", "waiting_port", "waiting_non_port",
+        "waiting_port_bc", "waiting_non_port_bc",
         "stay_at_berth", "inward_movement", "outward_movement", "working_time",
         "non_working_port", "non_working_non_port",
     ]
@@ -594,6 +693,8 @@ def compute_section_a_month(df, fin_year, month_idx):
         "Vessels Sailed": vessels_sailed,
         "Pre_berthing Waiting Time-on Port a/c (Total)": round(float(m["waiting_port"].sum()) * 24, 3),
         "Pre_berthing Waiting Time-on Non-Port a/c (Total)": round(float(m["waiting_non_port"].sum()) * 24, 3),
+        "_bc_waiting_port_hrs": round(float(m["waiting_port_bc"].sum() if "waiting_port_bc" in m.columns else m["waiting_port"].sum()) * 24, 3),
+        "_bc_waiting_non_port_hrs": round(float(m["waiting_non_port_bc"].sum() if "waiting_non_port_bc" in m.columns else m["waiting_non_port"].sum()) * 24, 3),
         "Total Berth Stay of all vessels (For Berth Productivity)": round(float(m["stay_at_berth"].sum()) * 24, 3),
         "Total Crane deplyoed hours (For Crane Productivity)": 0.0,
         "Vessel Inward movement (Total)": round(float(m["inward_movement"].sum()) * 24, 3),
@@ -643,6 +744,8 @@ def compute_section_a_fy(df, fin_year):
         "Vessels Sailed": vessels_sailed,
         "Pre_berthing Waiting Time-on Port a/c (Total)": round(float(m["waiting_port"].sum()) * 24, 3),
         "Pre_berthing Waiting Time-on Non-Port a/c (Total)": round(float(m["waiting_non_port"].sum()) * 24, 3),
+        "_bc_waiting_port_hrs": round(float(m["waiting_port_bc"].sum() if "waiting_port_bc" in m.columns else m["waiting_port"].sum()) * 24, 3),
+        "_bc_waiting_non_port_hrs": round(float(m["waiting_non_port_bc"].sum() if "waiting_non_port_bc" in m.columns else m["waiting_non_port"].sum()) * 24, 3),
         "Total Berth Stay of all vessels (For Berth Productivity)": round(float(m["stay_at_berth"].sum()) * 24, 3),
         "Total Crane deplyoed hours (For Crane Productivity)": 0.0,
         "Vessel Inward movement (Total)": round(float(m["inward_movement"].sum()) * 24, 3),
@@ -683,24 +786,29 @@ def compute_section_b_month(a):
     vs = a["Vessels Sailed"]
     berth_stay_hrs = a["Total Berth Stay of all vessels (For Berth Productivity)"]
     total_berth_stay_days = berth_stay_hrs / 24
+
+    # Section B keeps original calculations (changes apply only to Section A)
+    port_wait_hrs = a.get("_bc_waiting_port_hrs", a["Pre_berthing Waiting Time-on Port a/c (Total)"])
+    non_port_wait_hrs = a.get("_bc_waiting_non_port_hrs", a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"])
+
     b = {
         "Vessels Sailed": vs,
         "Total Traffic Throughputs (TEUs)": a["Vessel Discharge (Including Restow)"] + a["Vessel Load (Including Restow)"],
         "Total traffic throughputs (Tons)": round(total_traffic_tons, 3),
         "Parcel Size": 0.0,  # TEU-based, no source
         "Avg. Pre-berthing Waiting Time-Total": round(_safe_div(
-            a["Pre_berthing Waiting Time-on Port a/c (Total)"] + a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"],
+            port_wait_hrs + non_port_wait_hrs,
             24 * vs), 6),
-        "Avg. Pre-berthing Waiting Time-Port A/c.": round(_safe_div(a["Pre_berthing Waiting Time-on Port a/c (Total)"], 24 * vs), 6),
-        "Avg. Pre-berthing Waiting Time-Non-Port A/c.": round(_safe_div(a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"], 24 * vs), 6),
+        "Avg. Pre-berthing Waiting Time-Port A/c.": round(_safe_div(port_wait_hrs, 24 * vs), 6),
+        "Avg. Pre-berthing Waiting Time-Non-Port A/c.": round(_safe_div(non_port_wait_hrs, 24 * vs), 6),
         "Avg. Berth stay": round(_safe_div(berth_stay_hrs, 24 * vs), 6),
         "Avg. Turn around time - Total": round(_safe_div(
-            a["Pre_berthing Waiting Time-on Port a/c (Total)"] + a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"]
+            port_wait_hrs + non_port_wait_hrs
             + berth_stay_hrs + a["Vessel Inward movement (Total)"] + a["Vessel Outward movement (Total)"], 24 * vs), 6),
         "Avg. Turn around time - Port A/c.": round(_safe_div(
-            a["Pre_berthing Waiting Time-on Port a/c (Total)"] + berth_stay_hrs
+            port_wait_hrs + berth_stay_hrs
             + a["Vessel Inward movement (Total)"] + a["Vessel Outward movement (Total)"], 24 * vs), 6),
-        "Avg. Turn around time - Non- Port A/c.": round(_safe_div(a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"], 24 * vs), 6),
+        "Avg. Turn around time - Non- Port A/c.": round(_safe_div(non_port_wait_hrs, 24 * vs), 6),
         "Avg. Turn around time - Pilot Boarding to De-boarding-Total": round(_safe_div(
             berth_stay_hrs + a["Vessel Inward movement (Total)"] + a["Vessel Outward movement (Total)"], 24 * vs), 6),
         "Berth Occupancy": round(_safe_div(berth_stay_hrs, a["Days in a month"] * 24 * a["No. of berths for % berth occupancy"]), 6),
@@ -729,19 +837,23 @@ def compute_section_c_month(a, b):
     berth_stay_hrs = a["Total Berth Stay of all vessels (For Berth Productivity)"]
     total_berth_stay_days = berth_stay_hrs / 24
 
+    # Section C keeps original calculations (changes apply only to Section A)
+    port_wait_hrs = a.get("_bc_waiting_port_hrs", a["Pre_berthing Waiting Time-on Port a/c (Total)"])
+    non_port_wait_hrs = a.get("_bc_waiting_non_port_hrs", a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"])
+
     c = {
         "Avg. Pre-berthing Waiting Time-Total": round(_safe_div(
-            a["Pre_berthing Waiting Time-on Port a/c (Total)"] + a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"], vs), 6),
-        "Avg. Pre-berthing Waiting Time-Port A/c.": round(_safe_div(a["Pre_berthing Waiting Time-on Port a/c (Total)"], vs), 6),
-        "Avg. Pre-berthing Waiting Time-Non-Port A/c.": round(_safe_div(a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"], vs), 6),
+            port_wait_hrs + non_port_wait_hrs, vs), 6),
+        "Avg. Pre-berthing Waiting Time-Port A/c.": round(_safe_div(port_wait_hrs, vs), 6),
+        "Avg. Pre-berthing Waiting Time-Non-Port A/c.": round(_safe_div(non_port_wait_hrs, vs), 6),
         "Avg. Berth stay": round(_safe_div(berth_stay_hrs, vs), 6),
         "Avg. Turn around time - Total": round(_safe_div(
-            a["Pre_berthing Waiting Time-on Port a/c (Total)"] + a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"]
+            port_wait_hrs + non_port_wait_hrs
             + berth_stay_hrs + a["Vessel Inward movement (Total)"] + a["Vessel Outward movement (Total)"], vs), 6),
         "Avg. Turn around time - Port A/c.": round(_safe_div(
-            a["Pre_berthing Waiting Time-on Port a/c (Total)"] + berth_stay_hrs
+            port_wait_hrs + berth_stay_hrs
             + a["Vessel Inward movement (Total)"] + a["Vessel Outward movement (Total)"], vs), 6),
-        "Avg. Turn around time - Non- Port A/c.": round(_safe_div(a["Pre_berthing Waiting Time-on Non-Port a/c (Total)"], vs), 6),
+        "Avg. Turn around time - Non- Port A/c.": round(_safe_div(non_port_wait_hrs, vs), 6),
         "Avg. Turn around time - Pilot Boarding to De-boarding-Total": round(_safe_div(
             berth_stay_hrs + a["Vessel Inward movement (Total)"] + a["Vessel Outward movement (Total)"], vs), 6),
         "Avg. TRT for 1000 tonnes (Days)": 0.0,

@@ -41,5 +41,7 @@ from .vessel_timing import vessel_timing as vessel_timing_views
 from .vessel_delay import vessel_delay as vessel_delay_views
 from .statistics_report import views as statistics_report_views
 from .port_overview import views as port_overview_views
+from .master_report import views as master_report_views
+
 
 

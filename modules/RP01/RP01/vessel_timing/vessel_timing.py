@@ -197,6 +197,11 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None, vessel_filter=
                     COALESCE(pl.log_short_qty, 0) AS short_qty,
                     COALESCE(NULLIF(REPLACE(po.start_dt, 'T', ' '), ''), pl.log_start) AS parcel_start,
                     COALESCE(NULLIF(REPLACE(po.end_dt, 'T', ' '), ''), pl.log_end) AS parcel_end,
+                    CASE 
+                        WHEN pl.log_actual_qty IS NOT NULL AND pl.log_actual_qty > 0 
+                            THEN pl.log_actual_qty
+                        ELSE GREATEST(0, COALESCE(po.quantity, 0) - COALESCE(pl.log_short_qty, 0))
+                    END AS effective_qty,
                     pl.log_actual_qty
                 FROM ldud_parcel_ops po
                 LEFT JOIN parcel_logs_per_op pl ON pl.parcel_op_id = po.id
@@ -208,7 +213,8 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None, vessel_filter=
                     MAX(rp.parcel_end) AS last_parcel_end,
                     SUM(rp.po_qty) AS total_po_qty,
                     SUM(rp.short_qty) AS total_short_qty,
-                    SUM(rp.log_actual_qty) AS total_log_actual_qty
+                    SUM(rp.log_actual_qty) AS total_log_actual_qty,
+                    SUM(rp.effective_qty) AS total_effective_qty
                 FROM resolved_parcels rp
                 GROUP BY rp.ldud_id
             )
@@ -216,10 +222,12 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None, vessel_filter=
                 ld.id,
                 ld.vessel_name,
                 CASE 
+                    WHEN vpa.total_effective_qty IS NOT NULL 
+                        THEN vpa.total_effective_qty
+                    WHEN vpa.total_log_actual_qty IS NOT NULL AND vpa.total_log_actual_qty > 0 
+                        THEN vpa.total_log_actual_qty
                     WHEN vpa.total_po_qty IS NOT NULL 
                         THEN GREATEST(0, vpa.total_po_qty - COALESCE(vpa.total_short_qty, 0))
-                    WHEN vpa.total_log_actual_qty IS NOT NULL 
-                        THEN vpa.total_log_actual_qty
                     ELSE GREATEST(0, COALESCE(ld.initial_draft_survey_quantity, 0) - COALESCE(vpa.total_short_qty, 0))
                 END AS quantity,
                 COALESCE(ld.arrival_inner_anchorage, ld.anchored_datetime, ld.arrival_outer_anchorage) AS arrival,
@@ -375,6 +383,8 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None, vessel_filter=
     # Available months list for dropdown (including ALL)
     month_options = [{"idx": "ALL", "label": "ALL"}] + [{"idx": i, "label": MONTH_LABELS[i]} for i in range(12)]
 
+    total_qty = sum(float(r["quantity"] or 0.0) for r in clean_rows)
+
     return {
         "available_years": avail_years,
         "available_vessels": ["ALL"] + avail_vessels,
@@ -386,7 +396,8 @@ def fetch_vessel_timing_data(year_filter=None, month_filter=None, vessel_filter=
         "selected_month": month_filter,
         "selected_vessel": vessel_filter,
         "rows": clean_rows,
-        "total_count": len(clean_rows)
+        "total_count": len(clean_rows),
+        "total_quantity": total_qty
     }
 
 
@@ -500,6 +511,31 @@ def vessel_timing_export():
                     cell.number_format = "#,##0.00"
                 else:
                     cell.value = val or ""
+            curr_row += 1
+
+        # Total Row at the bottom
+        if rows:
+            ws.row_dimensions[curr_row].height = 22
+            ws.merge_cells(start_row=curr_row, start_column=1, end_row=curr_row, end_column=2)
+
+            tot_label_cell = ws.cell(row=curr_row, column=1, value="Total")
+            tot_label_cell.font = header_font
+            tot_label_cell.alignment = center_align
+
+            tot_qty_cell = ws.cell(row=curr_row, column=3)
+            tot_qty_cell.value = sum(float(r.get("quantity") or 0.0) for r in rows)
+            tot_qty_cell.number_format = "#,##0.00"
+            tot_qty_cell.font = header_font
+            tot_qty_cell.alignment = right_align
+
+            for col_idx in range(1, 17):
+                c = ws.cell(row=curr_row, column=col_idx)
+                c.border = cell_border
+                c.fill = header_fill
+                if col_idx > 3:
+                    c.value = "-"
+                    c.alignment = center_align
+                    c.font = header_font
             curr_row += 1
 
         # Auto-adjust column widths

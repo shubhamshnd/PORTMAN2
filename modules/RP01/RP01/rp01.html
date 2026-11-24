@@ -129,7 +129,7 @@
             <div class="card-action">Open &rarr;</div>
         </a>
 
-        <!-- Master -->
+        <!-- Master Upload -->
         <a href="/module/RP01/vessel-master/" class="report-card">
             <div>
                 <div class="card-top">
@@ -137,13 +137,29 @@
                         <img src="{{ url_for('static', filename='img/Master1.png') }}" alt="Master Logo"
                             class="card-logo-img">
                     </div>
-                    <span class="card-badge">MASTER</span>
+                    <span class="card-badge">DATA</span>
                 </div>
-                <div class="card-title">Master</div>
+                <div class="card-title">Vessel Master Data</div>
                 <div class="card-desc">Upload the legacy master sheet — one row per vessel call with berthing timings
                     and turnaround KPIs. Template download + full replace (delete &amp; insert).</div>
             </div>
             <div class="card-action">Open &rarr;</div>
+        </a>
+
+        <!-- Master Report -->
+        <a href="/module/RP01/master-report/" class="report-card" >
+            <div>
+                <div class="card-top">
+                    <div class="card-icon" style="background: rgba(31, 78, 120, 0.1);">
+                        <img src="{{ url_for('static', filename='img/reports.png') }}" alt="Master Report Logo"
+                            class="card-logo-img">
+                    </div>
+                    <span class="card-badge" >MASTER REPORT</span>
+                </div>
+                <div class="card-title">Master Report</div>
+                <div class="card-desc">Comprehensive operational port master report matching the reference Master sheet with live pipeline fallback, verified flow rates, turnaround durations, and full Excel export.</div>
+            </div>
+            <div class="card-action" >Open Master Report &rarr;</div>
         </a>
 
         <!-- Vessel Call Report -->
