@@ -1,0 +1,609 @@
+{% extends "base.html" %}
+
+{% block title %}DPR Report — Monthly Cargo Break-up & Performance — RP01{% endblock %}
+
+{% block head %}
+<style>
+    .dpr-wrap {
+        --dpr-blue: #2563EB;
+        --dpr-blue-dark: #1D4ED8;
+        --dpr-green: #16A34A;
+        --dpr-green-dark: #15803D;
+        --dpr-header-bg: #48549C;
+        --dpr-border: #DDE3EA;
+        --dpr-bg: #F8FAFC;
+        --dpr-card: #FFFFFF;
+        --dpr-ink: #0F172A;
+        --dpr-muted: #64748B;
+        --dpr-highlight: #FEF9C3;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .dpr-wrap * {
+        box-sizing: border-box;
+    }
+
+    /* Module Header */
+    .module-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--dpr-border);
+    }
+
+    .module-header h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--dpr-ink);
+    }
+
+    .module-header .rp-badge {
+        background: var(--dpr-header-bg);
+        color: #fff;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+
+    .module-header .nav-link {
+        margin-left: auto;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--dpr-blue);
+        text-decoration: none;
+    }
+
+    .module-header .nav-link:hover {
+        text-decoration: underline;
+    }
+
+    /* KPI Summary Cards */
+    .dpr-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 14px;
+        margin-bottom: 16px;
+    }
+
+    .kpi-card {
+        background: var(--dpr-card);
+        border: 1px solid var(--dpr-border);
+        border-radius: 8px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+    }
+
+    .kpi-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--dpr-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+
+    .kpi-val {
+        font-size: 20px;
+        font-weight: 800;
+        color: var(--dpr-ink);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .kpi-val.highlight {
+        color: var(--dpr-blue);
+    }
+
+    /* Filters Toolbar */
+    .dpr-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        background: var(--dpr-card);
+        border: 1px solid var(--dpr-border);
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin-bottom: 14px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+    }
+
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .filter-item label {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--dpr-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        margin: 0;
+    }
+
+    .dpr-toolbar select,
+    .dpr-toolbar input {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--dpr-ink);
+        background: var(--dpr-bg);
+        border: 1px solid var(--dpr-border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        outline: none;
+    }
+
+    .dpr-toolbar select:focus,
+    .dpr-toolbar input:focus {
+        border-color: var(--dpr-blue);
+    }
+
+    .btn-load {
+        background: var(--dpr-blue);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 18px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .btn-load:hover {
+        background: var(--dpr-blue-dark);
+    }
+
+    .btn-export {
+        background: var(--dpr-green);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 18px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .btn-export:hover {
+        background: var(--dpr-green-dark);
+    }
+
+    #reportStatus {
+        font-size: 13px;
+        color: var(--dpr-muted);
+        min-height: 20px;
+        margin-bottom: 10px;
+    }
+
+    /* Table Container */
+    .dpr-table-card {
+        background: var(--dpr-card);
+        border: 1px solid var(--dpr-border);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+
+    .dpr-card-header {
+        padding: 12px 18px;
+        background: #F1F5F9;
+        border-bottom: 1px solid var(--dpr-border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .dpr-card-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #1E293B;
+    }
+
+    .dpr-grid-scroll {
+        overflow-x: auto;
+        overflow-y: auto;
+        max-height: 72vh;
+        position: relative;
+    }
+
+    .dpr-table {
+        width: 100%;
+        border-collapse: collapse;
+        white-space: nowrap;
+        font-size: 12.5px;
+    }
+
+    .dpr-table th,
+    .dpr-table td {
+        border: 1px solid #CBD5E1;
+        padding: 6px 10px;
+        box-sizing: border-box;
+    }
+
+    .dpr-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+    }
+
+    .dpr-table thead th {
+        background: var(--dpr-header-bg) !important;
+        color: #FFFFFF !important;
+        font-weight: 700;
+        text-align: center;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        padding: 8px 10px;
+        letter-spacing: 0.3px;
+    }
+
+    .dpr-table tbody tr:hover td {
+        background-color: #F8FAFC;
+    }
+
+    .dpr-table td.val-num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+    }
+
+    .dpr-table td.center {
+        text-align: center;
+    }
+
+    .dpr-table td.left {
+        text-align: left;
+    }
+
+    .dpr-table tr.total-row td {
+        background: var(--dpr-highlight) !important;
+        font-weight: 800;
+        color: #713F12;
+        border-top: 2px solid #CA8A04;
+        border-bottom: 2px solid #CA8A04;
+    }
+
+    /* Fixed Left Columns */
+    .dpr-table th.col-sticky-1,
+    .dpr-table td.col-sticky-1 {
+        position: sticky;
+        left: 0;
+        z-index: 10;
+        background: inherit;
+    }
+
+    .dpr-table thead th.col-sticky-1 {
+        z-index: 30;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dpr-wrap">
+
+    <div class="module-header">
+        <h2>DPR Report — Monthly Cargo Break-up & Performance</h2>
+        <span class="rp-badge">RP01 REPORT</span>
+        <a href="/module/RP01/" class="nav-link">&larr; Back to Reports</a>
+    </div>
+
+    <!-- KPI Summary Row -->
+    <div class="dpr-kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-label">Total Quantity Handled</div>
+            <div class="kpi-val highlight" id="kpiTotalQty">0.000 MT</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Total Vessels Handled</div>
+            <div class="kpi-val" id="kpiTotalVessels">0</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Total Cargo Consignments</div>
+            <div class="kpi-val" id="kpiTotalParcels">0</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Active Period & Mode</div>
+            <div class="kpi-val" id="kpiActiveFilter" style="font-size:16px;">—</div>
+        </div>
+    </div>
+
+    <!-- Filters Toolbar -->
+    <div class="dpr-toolbar">
+        <div class="filter-item">
+            <label for="yearSelect">Financial Year</label>
+            <select id="yearSelect" onchange="onYearChange()"></select>
+        </div>
+
+        <div class="filter-item">
+            <label for="monthSelect">Month</label>
+            <select id="monthSelect" onchange="loadReport()"></select>
+        </div>
+
+        <div class="filter-item">
+            <label for="modeSelect">Billing Month Mode</label>
+            <select id="modeSelect" onchange="loadReport()">
+                <option value="ALL">All (JSW or JNPT)</option>
+                <option value="JSW">JSW Month Only</option>
+                <option value="JNPT">JNPT Month Only</option>
+            </select>
+        </div>
+
+        <div class="filter-item">
+            <label for="terminalSelect">Terminal</label>
+            <select id="terminalSelect" onchange="loadReport()">
+                <option value="ALL">All Terminals</option>
+            </select>
+        </div>
+
+        <div class="filter-item" style="flex:1;min-width:180px;">
+            <label for="searchInput">Live Search / Filter</label>
+            <input type="text" id="searchInput" placeholder="Search vessel, VCN, company, cargo..." oninput="applyClientFilter()">
+        </div>
+
+        <div style="display:flex;align-items:flex-end;gap:10px;margin-top:auto;">
+            <button type="button" class="btn-load" onclick="loadReport()">Load Report</button>
+            <button type="button" class="btn-export" onclick="exportReport()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Excel
+            </button>
+        </div>
+    </div>
+
+    <div id="reportStatus"></div>
+
+    <!-- Data Table Card -->
+    <div class="dpr-table-card">
+        <div class="dpr-card-header">
+            <div class="dpr-card-title">MONTHLY MIS - JJLTPL (DPR Report Preview)</div>
+            <div id="recordCountLabel" style="font-size:12px;font-weight:600;color:var(--dpr-muted);"></div>
+        </div>
+
+        <div class="dpr-grid-scroll">
+            <table class="dpr-table">
+                <thead>
+                    <tr>
+                        <th class="col-sticky-1" style="min-width:60px;">Sl. No</th>
+                        <th style="min-width:60px;">Int SL</th>
+                        <th style="min-width:85px;">Month JSW</th>
+                        <th style="min-width:85px;">Month JNPT</th>
+                        <th style="min-width:90px;">VCN No</th>
+                        <th style="min-width:200px;">Vessel Name</th>
+                        <th style="min-width:220px;">Company</th>
+                        <th style="min-width:220px;">Payment will be made by</th>
+                        <th style="min-width:130px;">Category0</th>
+                        <th style="min-width:130px;">Category 1</th>
+                        <th style="min-width:130px;">Cargo</th>
+                        <th style="min-width:180px;">Cargo1</th>
+                        <th style="min-width:130px;">Operation Start</th>
+                        <th style="min-width:130px;">Operation Completed</th>
+                        <th style="min-width:130px;">Unloading Terminal</th>
+                        <th style="min-width:120px;">Quantity (MT)</th>
+                        <th style="min-width:110px;">Overseas/Costal</th>
+                        <th style="min-width:85px;">Type</th>
+                        <th style="min-width:150px;">Vessel Agent</th>
+                        <th style="min-width:150px;">Remarks</th>
+                        <th style="min-width:200px;">Importer</th>
+                        <th style="min-width:85px;">Year</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <tr>
+                        <td colspan="22" style="text-align:center;padding:30px;color:var(--dpr-muted);">
+                            Loading DPR report data...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let META = { years: [], current_fy: "", months: [], terminals: [] };
+    let ALL_RECORDS = [];
+
+    function fmtNum(v, decimals = 3) {
+        if (v === null || v === undefined || isNaN(v) || v === '') return "";
+        const num = Number(v);
+        return num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+
+    function populateMetaSelects() {
+        // Years
+        const ySel = document.getElementById("yearSelect");
+        ySel.innerHTML = META.years.map(y => `<option value="${y}">${y}</option>`).join("");
+        if (META.current_fy && META.years.includes(META.current_fy)) {
+            ySel.value = META.current_fy;
+        }
+
+        // Months
+        populateMonthSelect();
+
+        // Terminals
+        const tSel = document.getElementById("terminalSelect");
+        let tHtml = '<option value="ALL">All Terminals</option>';
+        (META.terminals || []).forEach(t => {
+            tHtml += `<option value="${t}">${t}</option>`;
+        });
+        tSel.innerHTML = tHtml;
+    }
+
+    function populateMonthSelect() {
+        const mSel = document.getElementById("monthSelect");
+        const fy = document.getElementById("yearSelect").value;
+        const startY = parseInt(fy.split("-")[0]);
+        const monthNames = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
+
+        let mHtml = '<option value="ALL">All Months (Full FY)</option>';
+        monthNames.forEach((mn, idx) => {
+            const yy = idx < 9 ? startY : startY + 1;
+            const mLabel = `${mn}-${String(yy % 100).padStart(2, '0')}`;
+            mHtml += `<option value="${mLabel}">${mLabel}</option>`;
+        });
+        mSel.innerHTML = mHtml;
+
+        // Default to latest or July as sample if available
+        mSel.value = "ALL";
+    }
+
+    function onYearChange() {
+        populateMonthSelect();
+        loadReport();
+    }
+
+    function loadReport() {
+        const fy = document.getElementById("yearSelect").value;
+        const month = document.getElementById("monthSelect").value;
+        const mode = document.getElementById("modeSelect").value;
+        const terminal = document.getElementById("terminalSelect").value;
+        const status = document.getElementById("reportStatus");
+
+        if (status) status.textContent = "Loading report data...";
+
+        const url = `/api/module/RP01/dpr-report/data?fin_year=${encodeURIComponent(fy)}&month=${encodeURIComponent(month)}&mode=${mode}&terminal=${encodeURIComponent(terminal)}`;
+
+        fetch(url)
+            .then(r => r.json().then(j => ({ ok: r.ok, j })))
+            .then(({ ok, j }) => {
+                if (!ok) {
+                    if (status) status.textContent = j.error || "Failed to load report data.";
+                    return;
+                }
+                ALL_RECORDS = j.records || [];
+                renderTable(ALL_RECORDS);
+                if (status) status.textContent = "";
+
+                // Update KPI Cards
+                document.getElementById("kpiTotalQty").textContent = fmtNum(j.total_quantity, 3) + " MT";
+                document.getElementById("kpiTotalVessels").textContent = j.vessel_count || 0;
+                document.getElementById("kpiTotalParcels").textContent = (ALL_RECORDS.length) || 0;
+                document.getElementById("kpiActiveFilter").textContent = `${j.fin_year} (${j.month}) [${j.mode}]`;
+                document.getElementById("recordCountLabel").textContent = `Showing ${ALL_RECORDS.length} consignments`;
+            })
+            .catch(err => {
+                if (status) status.textContent = "Error connecting to server.";
+                console.error(err);
+            });
+    }
+
+    function applyClientFilter() {
+        const query = (document.getElementById("searchInput").value || '').trim().toLowerCase();
+        if (!query) {
+            renderTable(ALL_RECORDS);
+            return;
+        }
+
+        const filtered = ALL_RECORDS.filter(r => {
+            return (
+                (r.vessel_name || '').toLowerCase().includes(query) ||
+                (r.vcn_no || '').toLowerCase().includes(query) ||
+                (r.company || '').toLowerCase().includes(query) ||
+                (r.payment_by || '').toLowerCase().includes(query) ||
+                (r.cargo1 || '').toLowerCase().includes(query) ||
+                (r.unloading_terminal || '').toLowerCase().includes(query) ||
+                (r.importer || '').toLowerCase().includes(query)
+            );
+        });
+
+        renderTable(filtered);
+    }
+
+    function renderTable(records) {
+        const tbody = document.getElementById("tableBody");
+        if (!records || records.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--dpr-muted);font-style:italic;">No records found for the selected filters.</td></tr>`;
+            return;
+        }
+
+        let html = "";
+        let totalQty = 0;
+
+        records.forEach(r => {
+            totalQty += Number(r.quantity || 0);
+
+            html += `<tr>`;
+            html += `<td class="center col-sticky-1" style="font-weight:700;color:var(--dpr-muted);">${r.sl_no || ''}</td>`;
+            html += `<td class="center" style="font-weight:700;color:var(--dpr-blue);">${r.int_sl || ''}</td>`;
+            html += `<td class="center">${r.month_jsw || ''}</td>`;
+            html += `<td class="center">${r.month_jnpt || ''}</td>`;
+            html += `<td class="center" style="font-weight:600;">${r.vcn_no || ''}</td>`;
+            html += `<td class="left" style="font-weight:600;">${r.vessel_name || ''}</td>`;
+            html += `<td class="left">${r.company || ''}</td>`;
+            html += `<td class="left">${r.payment_by || ''}</td>`;
+            html += `<td class="left">${r.category0 || ''}</td>`;
+            html += `<td class="left">${r.category1 || ''}</td>`;
+            html += `<td class="left">${r.cargo || ''}</td>`;
+            html += `<td class="left" style="font-weight:600;">${r.cargo1 || ''}</td>`;
+            html += `<td class="center">${r.op_start || ''}</td>`;
+            html += `<td class="center">${r.op_comp || ''}</td>`;
+            html += `<td class="center">${r.unloading_terminal || ''}</td>`;
+            html += `<td class="val-num">${fmtNum(r.quantity, 3)}</td>`;
+            html += `<td class="center">${r.overseas_coastal || ''}</td>`;
+            html += `<td class="center">${r.type || ''}</td>`;
+            html += `<td class="left">${r.vessel_agent || ''}</td>`;
+            html += `<td class="left">${r.remarks || ''}</td>`;
+            html += `<td class="left">${r.importer || ''}</td>`;
+            html += `<td class="center">${r.fin_year || ''}</td>`;
+            html += `</tr>`;
+        });
+
+        // Total Row
+        html += `<tr class="total-row">`;
+        html += `<td class="center col-sticky-1"></td>`;
+        html += `<td class="center"></td>`;
+        html += `<td colspan="3" class="center"></td>`;
+        html += `<td class="left" style="font-size:13px;">Total</td>`;
+        html += `<td colspan="9"></td>`;
+        html += `<td class="val-num" style="font-size:13.5px;">${fmtNum(totalQty, 3)}</td>`;
+        html += `<td colspan="6"></td>`;
+        html += `</tr>`;
+
+        tbody.innerHTML = html;
+        document.getElementById("recordCountLabel").textContent = `Showing ${records.length} consignments`;
+    }
+
+    function exportReport() {
+        const fy = document.getElementById("yearSelect").value;
+        const month = document.getElementById("monthSelect").value;
+        const mode = document.getElementById("modeSelect").value;
+        const terminal = document.getElementById("terminalSelect").value;
+
+        const url = `/api/module/RP01/dpr-report/export?fin_year=${encodeURIComponent(fy)}&month=${encodeURIComponent(month)}&mode=${mode}&terminal=${encodeURIComponent(terminal)}`;
+        window.location.href = url;
+    }
+
+    // Initialize Page
+    fetch(`/api/module/RP01/dpr-report/meta`)
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+            if (ok) {
+                META = j;
+                populateMetaSelects();
+                loadReport();
+            }
+        })
+        .catch(err => {
+            console.error("Failed to load meta:", err);
+            document.getElementById("reportStatus").textContent = "Failed to load report metadata.";
+        });
+</script>
+{% endblock %}
