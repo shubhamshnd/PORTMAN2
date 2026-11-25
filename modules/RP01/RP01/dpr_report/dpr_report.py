@@ -37,7 +37,6 @@ from database import get_db, get_cursor, get_user_permissions
 from .. import bp
 
 MODULE_CODE = 'RP01'
-MONTH_NAMES = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
 
 
 def login_required(f):
@@ -192,12 +191,11 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
         hist_rows = cur.fetchall()
         for r in hist_rows:
             row = dict(r)
-            # Ensure categories have sensible fallbacks
             c_name = row['cargo1'].strip()
             cg_info = cargo_map.get(c_name.lower(), {})
-            cat0 = row['category0'] or cg_info.get('cargo_sub_category_2') or cg_info.get('cargo_category_2') or cg_info.get('cargo_category') or 'Other Liquid'
-            cat1 = row['category1'] or cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or 'Other'
-            cargo_type = row['cargo'] or cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or 'Other Liquid'
+            cat0 = row['category0'] or cg_info.get('cargo_sub_category_2') or cg_info.get('cargo_category_2') or cg_info.get('cargo_category') or ''
+            cat1 = row['category1'] or cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or ''
+            cargo_type = row['cargo'] or cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or ''
 
             key = ('hist', row['id'])
             seen_keys.add(key)
@@ -224,7 +222,7 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                 'remarks': row['remarks'],
                 'importer': row['importer'],
                 'fin_year': row['fin_year'],
-                'sort_dt': _parse_dt(row['op_start']) or datetime(2020, 1, 1),
+                'sort_dt': _parse_dt(row['op_start']) or datetime.min,
             })
 
         # -------------------------------------------------------------
@@ -367,9 +365,9 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
             # Cargo hierarchy
             c_key = cargo_name.strip().lower()
             cg_info = cargo_map.get(c_key, {})
-            cat0 = cg_info.get('cargo_sub_category_2') or cg_info.get('cargo_category_2') or cg_info.get('cargo_category') or 'Other Liquid'
-            cat1 = cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or 'Other'
-            cargo_type = cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or 'Other Liquid'
+            cat0 = cg_info.get('cargo_sub_category_2') or cg_info.get('cargo_category_2') or cg_info.get('cargo_category') or ''
+            cat1 = cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or ''
+            cargo_type = cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or ''
 
             key = ('live_po', d['parcel_op_id'])
             seen_keys.add(key)
@@ -396,7 +394,7 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                 'remarks': d['vcn_remarks'],
                 'importer': importer,
                 'fin_year': fy,
-                'sort_dt': _parse_dt(op_start_raw or cast_off_raw or d['doc_date']) or datetime(2026, 1, 1),
+                'sort_dt': _parse_dt(op_start_raw or cast_off_raw or d['doc_date']) or datetime.min,
             })
 
         # B. For vessel calls without LDUD operations yet, load declared parcels directly
@@ -461,15 +459,15 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                     'remarks': av['vcn_remarks'],
                     'importer': '',
                     'fin_year': fy,
-                    'sort_dt': dt_base or datetime(2026, 1, 1),
+                    'sort_dt': dt_base or datetime.min,
                 })
             else:
                 for cr in vcn_consigners:
                     c_name = cr.get('cargo_name') or ''
                     cg_info = cargo_map.get(c_name.strip().lower(), {})
-                    cat0 = cg_info.get('cargo_sub_category_2') or cg_info.get('cargo_category_2') or cg_info.get('cargo_category') or 'Other Liquid'
-                    cat1 = cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or 'Other'
-                    cargo_type = cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or 'Other Liquid'
+                    cat0 = cg_info.get('cargo_sub_category_2') or cg_info.get('cargo_category_2') or cg_info.get('cargo_category') or ''
+                    cat1 = cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or ''
+                    cargo_type = cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or ''
                     q_val = _safe_float(cr.get('quantity'))
 
                     records.append({
@@ -494,7 +492,7 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                         'remarks': av['vcn_remarks'],
                         'importer': cr.get('importer_name') or '',
                         'fin_year': fy,
-                        'sort_dt': dt_base or datetime(2026, 1, 1),
+                        'sort_dt': dt_base or datetime.min,
                     })
 
     finally:
@@ -510,7 +508,7 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
 
     # Sort records so all parcels of each vessel stay grouped together chronologically
     records.sort(key=lambda x: (
-        vessel_min_dt.get((x['vcn_no'].strip().upper(), x['vessel_name'].strip().upper()), datetime(2026, 1, 1)),
+        vessel_min_dt.get((x['vcn_no'].strip().upper(), x['vessel_name'].strip().upper()), datetime.min),
         x['vcn_no'].strip().upper(),
         x['vessel_name'].strip().upper(),
         x['sort_dt']
@@ -613,13 +611,78 @@ def dpr_report_meta():
         conn = get_db()
         cur = get_cursor(conn)
         
+        # 1. Dynamically gather all financial years from historical MIS and live VCNs
         cur.execute("""
             SELECT DISTINCT fin_year FROM mis_history WHERE fin_year IS NOT NULL AND TRIM(fin_year) != ''
             UNION
             SELECT DISTINCT fin_year FROM mis_vessel_master WHERE fin_year IS NOT NULL AND TRIM(fin_year) != '';
         """)
-        years = sorted([r['fin_year'].strip() for r in cur.fetchall() if r['fin_year']])
+        years_set = {r['fin_year'].strip() for r in cur.fetchall() if r['fin_year']}
         
+        cur.execute("SELECT DISTINCT doc_date FROM vcn_header WHERE doc_date IS NOT NULL;")
+        for r in cur.fetchall():
+            fy = _calc_fin_year(r['doc_date'])
+            if fy:
+                years_set.add(fy)
+
+        cur_fy = _get_active_financial_year()
+        if cur_fy:
+            years_set.add(cur_fy)
+
+        years = sorted(list(years_set), reverse=True)
+        default_fy = cur_fy if cur_fy in years else (years[0] if years else "")
+
+        # 2. Dynamically extract months that ACTUALLY EXIST in the database per financial year
+        cur.execute("""
+            SELECT fin_year, month_jsw AS m FROM mis_history WHERE month_jsw IS NOT NULL AND TRIM(month_jsw) != ''
+            UNION
+            SELECT fin_year, month_jnpt AS m FROM mis_history WHERE month_jnpt IS NOT NULL AND TRIM(month_jnpt) != '';
+        """)
+        raw_months_by_fy = {}
+        for r in cur.fetchall():
+            fy = (r['fin_year'] or '').strip()
+            m = (r['m'] or '').strip()
+            if fy and m:
+                raw_months_by_fy.setdefault(fy, set()).add(m)
+
+        # Include live pipeline actual months from Port Bird
+        cur.execute("""
+            SELECT 
+                v.doc_date, l.cast_off_datetime, l.discharge_commenced, l.discharge_completed,
+                po.start_dt, po.end_dt
+            FROM vcn_header v
+            JOIN ldud_header l ON l.vcn_id = v.id AND COALESCE(l.is_deleted, FALSE) = FALSE
+            JOIN ldud_parcel_ops po ON po.ldud_id = l.id
+            WHERE COALESCE(v.doc_status, '') != 'Cancelled';
+        """)
+        for r in cur.fetchall():
+            op_start = r['start_dt'] or r['discharge_commenced']
+            cast_off = r['cast_off_datetime']
+            dt_jsw = _parse_dt(op_start or cast_off or r['doc_date'])
+            dt_jnpt = _parse_dt(cast_off or op_start or r['doc_date'])
+            m_jsw = _calc_month_label(dt_jsw)
+            m_jnpt = _calc_month_label(dt_jnpt)
+            fy = _calc_fin_year(dt_jnpt or dt_jsw)
+            if fy:
+                if m_jsw:
+                    raw_months_by_fy.setdefault(fy, set()).add(m_jsw)
+                if m_jnpt:
+                    raw_months_by_fy.setdefault(fy, set()).add(m_jnpt)
+
+        # Helper to sort months chronologically based on their parsed datetime
+        def _month_sort_key(m_str):
+            for fmt in ('%b-%y', '%b-%Y', '%B-%y', '%B-%Y'):
+                try:
+                    return datetime.strptime(m_str, fmt)
+                except Exception:
+                    pass
+            return datetime.min
+
+        months_by_fy = {}
+        for fy, m_set in raw_months_by_fy.items():
+            months_by_fy[fy] = sorted(list(m_set), key=_month_sort_key)
+
+        # 3. Dynamically gather all distinct terminals from MIS and Port Bird
         cur.execute("""
             SELECT DISTINCT terminal FROM mis_history WHERE terminal IS NOT NULL AND TRIM(terminal) != ''
             UNION
@@ -631,7 +694,7 @@ def dpr_report_meta():
         for r in cur.fetchall():
             val = list(r.values())[0]
             if val:
-                for part in val.split(','):
+                for part in str(val).split(','):
                     p = part.strip()
                     if p:
                         raw_terms.add(p)
@@ -639,22 +702,11 @@ def dpr_report_meta():
         
         conn.close()
 
-        cur_fy = _get_active_financial_year()
-        if cur_fy not in years:
-            years.append(cur_fy)
-        years = sorted(list(set(years)))
-
-        # Build month list for current financial year
-        start_y = int(cur_fy.split('-')[0])
-        months = []
-        for idx, mn in enumerate(MONTH_NAMES):
-            yy = start_y if idx < 9 else start_y + 1
-            months.append(f"{mn}-{str(yy % 100).zfill(2)}")
-
         return jsonify({
             'years': years,
-            'current_fy': cur_fy,
-            'months': months,
+            'current_fy': default_fy,
+            'months': months_by_fy.get(default_fy, []),
+            'months_by_fy': months_by_fy,
             'terminals': terminals
         })
     except Exception as e:
@@ -756,7 +808,6 @@ def dpr_report_export():
             ("Quantity", 16, align_right),
             ("Overseas/Costal", 16, align_center),
             ("Type", 12, align_center),
-            ("Vessel Agent", 18, align_left),
             ("Remarks", 20, align_left),
             ("Importer", 28, align_left),
             ("Year", 12, align_center)
@@ -795,7 +846,6 @@ def dpr_report_export():
                 (r['quantity'], align_right, "#,##0.000"),
                 (r['overseas_coastal'], align_center, None),
                 (r['type'], align_center, None),
-                (r['vessel_agent'], align_left, None),
                 (r['remarks'], align_left, None),
                 (r['importer'], align_left, None),
                 (r['fin_year'], align_center, None),

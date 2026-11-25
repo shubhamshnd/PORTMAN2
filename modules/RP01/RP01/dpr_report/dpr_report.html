@@ -396,7 +396,6 @@
                         <th style="min-width:120px;">Quantity (MT)</th>
                         <th style="min-width:110px;">Overseas/Costal</th>
                         <th style="min-width:85px;">Type</th>
-                        <th style="min-width:150px;">Vessel Agent</th>
                         <th style="min-width:150px;">Remarks</th>
                         <th style="min-width:200px;">Importer</th>
                         <th style="min-width:85px;">Year</th>
@@ -404,7 +403,7 @@
                 </thead>
                 <tbody id="tableBody">
                     <tr>
-                        <td colspan="22" style="text-align:center;padding:30px;color:var(--dpr-muted);">
+                        <td colspan="21" style="text-align:center;padding:30px;color:var(--dpr-muted);">
                             Loading DPR report data...
                         </td>
                     </tr>
@@ -450,18 +449,13 @@
     function populateMonthSelect() {
         const mSel = document.getElementById("monthSelect");
         const fy = document.getElementById("yearSelect").value;
-        const startY = parseInt(fy.split("-")[0]);
-        const monthNames = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
+        const months = (META.months_by_fy && META.months_by_fy[fy]) ? META.months_by_fy[fy] : (META.months || []);
 
         let mHtml = '<option value="ALL">All Months (Full FY)</option>';
-        monthNames.forEach((mn, idx) => {
-            const yy = idx < 9 ? startY : startY + 1;
-            const mLabel = `${mn}-${String(yy % 100).padStart(2, '0')}`;
+        months.forEach(mLabel => {
             mHtml += `<option value="${mLabel}">${mLabel}</option>`;
         });
         mSel.innerHTML = mHtml;
-
-        // Default to latest or July as sample if available
         mSel.value = "ALL";
     }
 
@@ -530,7 +524,7 @@
     function renderTable(records) {
         const tbody = document.getElementById("tableBody");
         if (!records || records.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--dpr-muted);font-style:italic;">No records found for the selected filters.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--dpr-muted);font-style:italic;">No records found for the selected filters.</td></tr>`;
             return;
         }
 
@@ -559,7 +553,6 @@
             html += `<td class="val-num">${fmtNum(r.quantity, 3)}</td>`;
             html += `<td class="center">${r.overseas_coastal || ''}</td>`;
             html += `<td class="center">${r.type || ''}</td>`;
-            html += `<td class="left">${r.vessel_agent || ''}</td>`;
             html += `<td class="left">${r.remarks || ''}</td>`;
             html += `<td class="left">${r.importer || ''}</td>`;
             html += `<td class="center">${r.fin_year || ''}</td>`;
@@ -574,7 +567,7 @@
         html += `<td class="left" style="font-size:13px;">Total</td>`;
         html += `<td colspan="9"></td>`;
         html += `<td class="val-num" style="font-size:13.5px;">${fmtNum(totalQty, 3)}</td>`;
-        html += `<td colspan="6"></td>`;
+        html += `<td colspan="5"></td>`;
         html += `</tr>`;
 
         tbody.innerHTML = html;
