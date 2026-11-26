@@ -142,6 +142,26 @@ def _get_active_financial_year():
     return f"{start_year}-{(start_year + 1) % 100:02d}"
 
 
+def _extract_doc_sl(vmd_str, vcn_doc_str, vm_doc_str=None):
+    """
+    Extracts numeric sequence from vessel master doc (e.g. 'VM12' -> 12, 'VM2/MT CLEAN THRASHER' -> 2),
+    or falls back to trailing digits in vcn_doc_num.
+    """
+    for s in (vmd_str, vm_doc_str):
+        if s:
+            m = re.search(r'VM\s*(\d+)', str(s), re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+            m = re.search(r'(\d+)', str(s))
+            if m:
+                return int(m.group(1))
+    if vcn_doc_str:
+        m = re.search(r'(\d+)$', str(vcn_doc_str))
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL'):
     """
     Fetches unified DPR records across historical MIS and live Port Bird pipeline.
@@ -228,12 +248,13 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
         # -------------------------------------------------------------
         # 2. Live Dataset: Port Bird Operational Pipeline
         # -------------------------------------------------------------
-        # A. Query parcels with LUEU logs and LDUD parcel operations
+        # A. Query parcels with LDUD parcel operations
         cur.execute("""
             SELECT 
                 v.id AS vcn_id,
                 COALESCE(v.via_number, v.vcn_doc_num) AS vcn_no,
                 v.vcn_doc_num,
+                v.vessel_master_doc,
                 v.vessel_name,
                 COALESCE(v.vessel_agent_name, '') AS vessel_agent,
                 COALESCE(v.vessel_run_type, '') AS overseas_coastal,
@@ -253,34 +274,73 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                 po.start_dt AS po_start,
                 po.end_dt AS po_end,
                 po.quantity AS po_qty,
-                po.parcel_ids,
-                log_agg.min_log_start,
-                log_agg.max_log_end,
-                log_agg.actual_qty,
-                log_agg.shortclose_qty
+                po.parcel_ids
             FROM vcn_header v
             JOIN ldud_header l ON l.vcn_id = v.id AND COALESCE(l.is_deleted, FALSE) = FALSE
             JOIN ldud_parcel_ops po ON po.ldud_id = l.id
-            LEFT JOIN LATERAL (
-                SELECT 
-                    MIN(entry_date || ' ' || from_time) AS min_log_start,
-                    MAX(entry_date || ' ' || to_time) AS max_log_end,
-                    SUM(CASE 
-                        WHEN COALESCE(is_shortclose, FALSE) = FALSE 
-                         AND COALESCE(is_deleted, FALSE) = FALSE 
-                         AND LOWER(COALESCE(remarks, '')) NOT LIKE '%short%' 
-                        THEN quantity ELSE 0 END) AS actual_qty,
-                    SUM(CASE 
-                        WHEN (COALESCE(is_shortclose, FALSE) = TRUE OR LOWER(COALESCE(remarks, '')) LIKE '%short%')
-                         AND COALESCE(is_deleted, FALSE) = FALSE 
-                        THEN quantity ELSE 0 END) AS shortclose_qty
-                FROM lueu_parcel_log
-                WHERE parcel_op_id = po.id
-            ) log_agg ON TRUE
             WHERE COALESCE(v.doc_status, '') != 'Cancelled'
             ORDER BY v.id DESC, po.id ASC;
         """)
         live_parcel_rows = cur.fetchall()
+
+        # Pre-cache vessel master document numbers from vessels table
+        cur.execute("SELECT doc_num, vessel_name FROM vessels WHERE doc_num IS NOT NULL;")
+        vessels_doc_by_name = {
+            (r['vessel_name'] or '').strip().lower(): r['doc_num'].strip()
+            for r in cur.fetchall()
+            if r['vessel_name']
+        }
+
+        # Query all logs from lueu_parcel_log for month-wise discharge splitting
+        cur.execute("""
+            SELECT 
+                l.parcel_op_id,
+                l.entry_date,
+                l.from_time,
+                l.to_time,
+                COALESCE(l.quantity, 0)::float8 AS quantity,
+                COALESCE(l.is_shortclose, FALSE) AS is_shortclose,
+                COALESCE(l.remarks, '') AS remarks
+            FROM lueu_parcel_log l
+            WHERE COALESCE(l.is_deleted, FALSE) = FALSE
+            ORDER BY l.parcel_op_id, l.entry_date, l.from_time;
+        """)
+        all_logs = cur.fetchall()
+
+        # Group logs by (parcel_op_id, jsw_month)
+        po_logs_by_month = {}
+        for log in all_logs:
+            p_id = log['parcel_op_id']
+            ed = log['entry_date']
+            ft = log['from_time'] or '00:00'
+            tt = log['to_time'] or ft
+            s_dt = _parse_dt(f"{ed} {ft}")
+            e_dt = _parse_dt(f"{ed} {tt}")
+            m_jsw = _calc_month_label(s_dt)
+            if not m_jsw:
+                continue
+
+            key = (p_id, m_jsw)
+            if key not in po_logs_by_month:
+                po_logs_by_month[key] = {
+                    'min_start': s_dt,
+                    'max_end': e_dt,
+                    'actual_qty': 0.0,
+                    'shortclose_qty': 0.0,
+                    'month_jsw': m_jsw
+                }
+            g = po_logs_by_month[key]
+            if s_dt and (not g['min_start'] or s_dt < g['min_start']):
+                g['min_start'] = s_dt
+            if e_dt and (not g['max_end'] or e_dt > g['max_end']):
+                g['max_end'] = e_dt
+
+            is_sc = log['is_shortclose'] or 'short' in (log['remarks'] or '').lower()
+            q = float(log['quantity'])
+            if is_sc:
+                g['shortclose_qty'] += q
+            else:
+                g['actual_qty'] += q
 
         # Pre-cache consigners by id and by vcn_id
         cur.execute("""
@@ -307,30 +367,12 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
             if not vcn_no and not vessel_name:
                 continue
 
-            op_start_raw = d['min_log_start'] or d['po_start'] or d['discharge_commenced']
-            op_comp_raw = d['max_log_end'] or d['po_end'] or d['discharge_completed']
-            cast_off_raw = d['cast_off_datetime']
-
-            # Month cut-off calculation (07:00 AM rule)
-            dt_jsw = _parse_dt(op_start_raw or op_comp_raw or cast_off_raw or d['doc_date'])
-            dt_jnpt = _parse_dt(cast_off_raw or op_comp_raw or op_start_raw or d['doc_date'])
-
-            m_jsw = _calc_month_label(dt_jsw)
-            m_jnpt = _calc_month_label(dt_jnpt)
-            fy = _calc_fin_year(dt_jnpt or dt_jsw)
-
-            if fin_year and fy != fin_year:
-                continue
-
-            # Quantities with Short Shipment calculation
-            po_qty = _safe_float(d['po_qty'])
-            actual_qty = _safe_float(d['actual_qty'])
-            short_qty = _safe_float(d['shortclose_qty'])
-
-            if actual_qty > 0:
-                final_qty = actual_qty
-            else:
-                final_qty = max(0.0, po_qty - short_qty)
+            # Extract Vessel Serial Number from vessel_master_doc (e.g. 'VM12' -> 12, 'VM2/MT CLEAN THRASHER' -> 2)
+            doc_sl = _extract_doc_sl(
+                d.get('vessel_master_doc'),
+                d.get('vcn_doc_num'),
+                vessels_doc_by_name.get(vessel_name.lower())
+            )
 
             # Consigner / Importer resolution
             cargo_name = d['po_cargo_name'] or ''
@@ -359,8 +401,14 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                             term_val = vc.get('unload_terminal') or ''
                         break
 
-            # Payment party: Vessel Call Screen party
-            payment_by = d['customer_name'] or d['importer_exporter_name'] or d['vessel_agent'] or company
+            # Payment party: Vessel Call Screen party (NEVER fallback to vessel agent!)
+            payment_by = (
+                (d.get('customer_name') or '').strip()
+                or (d.get('importer_exporter_name') or '').strip()
+                or company
+                or importer
+                or ''
+            )
 
             # Cargo hierarchy
             c_key = cargo_name.strip().lower()
@@ -369,33 +417,93 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
             cat1 = cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or ''
             cargo_type = cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or ''
 
-            key = ('live_po', d['parcel_op_id'])
-            seen_keys.add(key)
+            # JNPT Month: Based on vessel sailing out (cast_off_datetime - 7 hours)
+            cast_off_raw = d['cast_off_datetime']
+            dt_jnpt = _parse_dt(cast_off_raw or d['discharge_completed'] or d['po_end'] or d['discharge_commenced'] or d['po_start'] or d['doc_date'])
+            m_jnpt = _calc_month_label(dt_jnpt)
 
-            records.append({
-                'source': 'live',
-                'month_jsw': m_jsw,
-                'month_jnpt': m_jnpt,
-                'vcn_no': vcn_no,
-                'vessel_name': vessel_name,
-                'company': company,
-                'payment_by': payment_by,
-                'category0': cat0,
-                'category1': cat1,
-                'cargo': cargo_type,
-                'cargo1': cargo_name,
-                'op_start': _format_display_dt(op_start_raw),
-                'op_comp': _format_display_dt(op_comp_raw),
-                'unloading_terminal': term_val,
-                'quantity': round(final_qty, 3),
-                'overseas_coastal': d['overseas_coastal'],
-                'type': d['type'],
-                'vessel_agent': d['vessel_agent'],
-                'remarks': d['vcn_remarks'],
-                'importer': importer,
-                'fin_year': fy,
-                'sort_dt': _parse_dt(op_start_raw or cast_off_raw or d['doc_date']) or datetime.min,
-            })
+            # Check if this PO has logs in po_logs_by_month
+            p_id = d['parcel_op_id']
+            matching_months = [k[1] for k in po_logs_by_month if k[0] == p_id]
+
+            if matching_months:
+                for m_jsw in matching_months:
+                    grp = po_logs_by_month[(p_id, m_jsw)]
+                    fy = _calc_fin_year(dt_jnpt or grp['min_start'])
+                    if fin_year and fy != fin_year:
+                        continue
+
+                    po_qty = _safe_float(d['po_qty'])
+                    actual_qty = grp['actual_qty']
+                    short_qty = grp['shortclose_qty']
+
+                    if actual_qty > 0:
+                        final_qty = actual_qty
+                    elif len(matching_months) == 1:
+                        final_qty = max(0.0, po_qty - short_qty)
+                    else:
+                        final_qty = 0.0
+
+                    records.append({
+                        'source': 'live_po_split',
+                        'doc_sl': doc_sl,
+                        'month_jsw': m_jsw,
+                        'month_jnpt': m_jnpt,
+                        'vcn_no': vcn_no,
+                        'vessel_name': vessel_name,
+                        'company': company,
+                        'payment_by': payment_by,
+                        'category0': cat0,
+                        'category1': cat1,
+                        'cargo': cargo_type,
+                        'cargo1': cargo_name,
+                        'op_start': _format_display_dt(grp['min_start']),
+                        'op_comp': _format_display_dt(grp['max_end']),
+                        'unloading_terminal': term_val,
+                        'quantity': round(final_qty, 3),
+                        'overseas_coastal': d['overseas_coastal'],
+                        'type': d['type'],
+                        'vessel_agent': d['vessel_agent'],
+                        'remarks': d['vcn_remarks'],
+                        'importer': importer,
+                        'fin_year': fy,
+                        'sort_dt': grp['min_start'] or dt_jnpt or datetime.min,
+                    })
+            else:
+                # No equipment logs yet: single row based on parcel op dates
+                dt_jsw = _parse_dt(d['po_start'] or d['discharge_commenced'] or cast_off_raw or d['doc_date'])
+                m_jsw = _calc_month_label(dt_jsw)
+                fy = _calc_fin_year(dt_jnpt or dt_jsw)
+                if fin_year and fy != fin_year:
+                    continue
+
+                po_qty = _safe_float(d['po_qty'])
+
+                records.append({
+                    'source': 'live_po_nolog',
+                    'doc_sl': doc_sl,
+                    'month_jsw': m_jsw,
+                    'month_jnpt': m_jnpt,
+                    'vcn_no': vcn_no,
+                    'vessel_name': vessel_name,
+                    'company': company,
+                    'payment_by': payment_by,
+                    'category0': cat0,
+                    'category1': cat1,
+                    'cargo': cargo_type,
+                    'cargo1': cargo_name,
+                    'op_start': _format_display_dt(d['po_start'] or d['discharge_commenced']),
+                    'op_comp': _format_display_dt(d['po_end'] or d['discharge_completed']),
+                    'unloading_terminal': term_val,
+                    'quantity': round(po_qty, 3),
+                    'overseas_coastal': d['overseas_coastal'],
+                    'type': d['type'],
+                    'vessel_agent': d['vessel_agent'],
+                    'remarks': d['vcn_remarks'],
+                    'importer': importer,
+                    'fin_year': fy,
+                    'sort_dt': dt_jsw or dt_jnpt or datetime.min,
+                })
 
         # B. For vessel calls without LDUD operations yet, load declared parcels directly
         cur.execute("""
@@ -403,6 +511,7 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                 v.id AS vcn_id,
                 COALESCE(v.via_number, v.vcn_doc_num) AS vcn_no,
                 v.vcn_doc_num,
+                v.vessel_master_doc,
                 v.vessel_name,
                 COALESCE(v.vessel_agent_name, '') AS vessel_agent,
                 COALESCE(v.vessel_run_type, '') AS overseas_coastal,
@@ -433,12 +542,22 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
 
             vcn_no = (av['vcn_no'] or '').strip()
             vessel_name = (av['vessel_name'] or '').strip()
-            payment_by = av['customer_name'] or av['importer_exporter_name'] or av['vessel_agent']
+
+            # Extract Vessel Serial Number from vessel_master_doc (e.g. 'VM12' -> 12)
+            doc_sl = _extract_doc_sl(
+                av.get('vessel_master_doc'),
+                av.get('vcn_doc_num'),
+                vessels_doc_by_name.get(vessel_name.lower())
+            )
+
+            # Payment party: NEVER vessel agent!
+            payment_by = (av.get('customer_name') or '').strip() or (av.get('importer_exporter_name') or '').strip()
 
             if not vcn_consigners:
                 # Vessel with no parcel records declared yet
                 records.append({
                     'source': 'live_declared',
+                    'doc_sl': doc_sl,
                     'month_jsw': m_jsw,
                     'month_jnpt': m_jnpt,
                     'vcn_no': vcn_no,
@@ -469,15 +588,17 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                     cat1 = cg_info.get('cargo_sub_category') or cg_info.get('cargo_category') or ''
                     cargo_type = cg_info.get('cargo_category') or cg_info.get('cargo_sub_category') or ''
                     q_val = _safe_float(cr.get('quantity'))
+                    cr_party = cr.get('consigner_name') or cr.get('importer_name') or ''
 
                     records.append({
                         'source': 'live_declared',
+                        'doc_sl': doc_sl,
                         'month_jsw': m_jsw,
                         'month_jnpt': m_jnpt,
                         'vcn_no': vcn_no,
                         'vessel_name': vessel_name,
                         'company': cr.get('consigner_name') or '',
-                        'payment_by': payment_by or cr.get('consigner_name'),
+                        'payment_by': payment_by or cr_party,
                         'category0': cat0,
                         'category1': cat1,
                         'cargo': cargo_type,
@@ -498,17 +619,28 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
     finally:
         conn.close()
 
-    # Group parcels by vessel: calculate earliest datetime per vessel call
-    vessel_min_dt = {}
+    # Group parcels by vessel: calculate earliest datetime per vessel call and sort order
+    def _month_sort_key(m_str):
+        for fmt in ('%b-%y', '%b-%Y', '%B-%y', '%B-%Y'):
+            try:
+                return datetime.strptime(m_str, fmt)
+            except Exception:
+                pass
+        return datetime.min
+
+    vessel_sort_meta = {}
     for r in records:
         v_key = (r['vcn_no'].strip().upper(), r['vessel_name'].strip().upper())
+        m_dt = _month_sort_key(r['month_jsw'] or r['month_jnpt'] or '')
+        doc_sl = r.get('doc_sl') if r.get('doc_sl') is not None else 999999
         dt = r['sort_dt']
-        if v_key not in vessel_min_dt or dt < vessel_min_dt[v_key]:
-            vessel_min_dt[v_key] = dt
+        meta = (m_dt, doc_sl, dt)
+        if v_key not in vessel_sort_meta or meta < vessel_sort_meta[v_key]:
+            vessel_sort_meta[v_key] = meta
 
     # Sort records so all parcels of each vessel stay grouped together chronologically
     records.sort(key=lambda x: (
-        vessel_min_dt.get((x['vcn_no'].strip().upper(), x['vessel_name'].strip().upper()), datetime.min),
+        vessel_sort_meta.get((x['vcn_no'].strip().upper(), x['vessel_name'].strip().upper()), (datetime.min, 999999, datetime.min)),
         x['vcn_no'].strip().upper(),
         x['vessel_name'].strip().upper(),
         x['sort_dt']
@@ -579,7 +711,8 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
                 else:
                     vessel_month_counter += 1
 
-            r['sl_no'] = r['vessel_global_sl']
+            # Sl. No: Exact number from doc no (e.g. VCN-2627-001 -> 1), or global sequence for historical
+            r['sl_no'] = r.get('doc_sl') if r.get('doc_sl') is not None else r['vessel_global_sl']
             r['int_sl'] = vessel_month_counter
             r['is_first_parcel'] = True
         else:
@@ -668,6 +801,21 @@ def dpr_report_meta():
                     raw_months_by_fy.setdefault(fy, set()).add(m_jsw)
                 if m_jnpt:
                     raw_months_by_fy.setdefault(fy, set()).add(m_jnpt)
+
+        # Include live pipeline equipment logs actual months
+        cur.execute("""
+            SELECT entry_date, from_time FROM lueu_parcel_log WHERE COALESCE(is_deleted, FALSE) = FALSE;
+        """)
+        for r in cur.fetchall():
+            ed = r['entry_date']
+            ft = r['from_time'] or '00:00'
+            dt = _parse_dt(f"{ed} {ft}")
+            if dt:
+                m = _calc_month_label(dt)
+                fy = _calc_fin_year(dt)
+                if fy and m:
+                    raw_months_by_fy.setdefault(fy, set()).add(m)
+                    years_set.add(fy)
 
         # Helper to sort months chronologically based on their parsed datetime
         def _month_sort_key(m_str):
@@ -810,7 +958,8 @@ def dpr_report_export():
             ("Type", 12, align_center),
             ("Remarks", 20, align_left),
             ("Importer", 28, align_left),
-            ("Year", 12, align_center)
+            ("Year", 12, align_center),
+            ("Agent", 24, align_left)
         ]
 
         ws.row_dimensions[2].height = 32
@@ -849,6 +998,7 @@ def dpr_report_export():
                 (r['remarks'], align_left, None),
                 (r['importer'], align_left, None),
                 (r['fin_year'], align_center, None),
+                (r['vessel_agent'], align_left, None),
             ]
 
             for col_idx, (val, c_align, num_fmt) in enumerate(row_data, 1):

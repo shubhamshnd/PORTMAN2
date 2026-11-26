@@ -399,11 +399,12 @@
                         <th style="min-width:150px;">Remarks</th>
                         <th style="min-width:200px;">Importer</th>
                         <th style="min-width:85px;">Year</th>
+                        <th style="min-width:160px;">Agent</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
                     <tr>
-                        <td colspan="21" style="text-align:center;padding:30px;color:var(--dpr-muted);">
+                        <td colspan="22" style="text-align:center;padding:30px;color:var(--dpr-muted);">
                             Loading DPR report data...
                         </td>
                     </tr>
@@ -514,7 +515,8 @@
                 (r.payment_by || '').toLowerCase().includes(query) ||
                 (r.cargo1 || '').toLowerCase().includes(query) ||
                 (r.unloading_terminal || '').toLowerCase().includes(query) ||
-                (r.importer || '').toLowerCase().includes(query)
+                (r.importer || '').toLowerCase().includes(query) ||
+                (r.vessel_agent || '').toLowerCase().includes(query)
             );
         });
 
@@ -524,7 +526,7 @@
     function renderTable(records) {
         const tbody = document.getElementById("tableBody");
         if (!records || records.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--dpr-muted);font-style:italic;">No records found for the selected filters.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--dpr-muted);font-style:italic;">No records found for the selected filters.</td></tr>`;
             return;
         }
 
@@ -556,6 +558,7 @@
             html += `<td class="left">${r.remarks || ''}</td>`;
             html += `<td class="left">${r.importer || ''}</td>`;
             html += `<td class="center">${r.fin_year || ''}</td>`;
+            html += `<td class="left">${r.vessel_agent || ''}</td>`;
             html += `</tr>`;
         });
 
@@ -567,7 +570,7 @@
         html += `<td class="left" style="font-size:13px;">Total</td>`;
         html += `<td colspan="9"></td>`;
         html += `<td class="val-num" style="font-size:13.5px;">${fmtNum(totalQty, 3)}</td>`;
-        html += `<td colspan="5"></td>`;
+        html += `<td colspan="6"></td>`;
         html += `</tr>`;
 
         tbody.innerHTML = html;
