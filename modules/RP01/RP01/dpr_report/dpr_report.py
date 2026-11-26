@@ -142,23 +142,20 @@ def _get_active_financial_year():
     return f"{start_year}-{(start_year + 1) % 100:02d}"
 
 
-def _extract_doc_sl(vmd_str, vcn_doc_str, vm_doc_str=None):
+def _extract_doc_sl(vcn_doc_str):
     """
-    Extracts numeric sequence from vessel master doc (e.g. 'VM12' -> 12, 'VM2/MT CLEAN THRASHER' -> 2),
-    or falls back to trailing digits in vcn_doc_num.
+    Extracts only the numeric sequence from the VCN Doc Number created in Vessel Call Number screen
+    (e.g. 'VCN-2627-269' -> 269, 'VCN-2627-001' -> 1).
     """
-    for s in (vmd_str, vm_doc_str):
-        if s:
-            m = re.search(r'VM\s*(\d+)', str(s), re.IGNORECASE)
-            if m:
-                return int(m.group(1))
-            m = re.search(r'(\d+)', str(s))
-            if m:
-                return int(m.group(1))
-    if vcn_doc_str:
-        m = re.search(r'(\d+)$', str(vcn_doc_str))
-        if m:
-            return int(m.group(1))
+    if not vcn_doc_str:
+        return None
+    s = str(vcn_doc_str).strip()
+    m = re.search(r'(\d+)$', s)
+    if m:
+        return int(m.group(1))
+    digits = re.findall(r'\d+', s)
+    if digits:
+        return int(digits[-1])
     return None
 
 
@@ -367,12 +364,8 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
             if not vcn_no and not vessel_name:
                 continue
 
-            # Extract Vessel Serial Number from vessel_master_doc (e.g. 'VM12' -> 12, 'VM2/MT CLEAN THRASHER' -> 2)
-            doc_sl = _extract_doc_sl(
-                d.get('vessel_master_doc'),
-                d.get('vcn_doc_num'),
-                vessels_doc_by_name.get(vessel_name.lower())
-            )
+            # Extract only the number from VCN Doc from vessel creation (e.g. 'VCN-2627-269' -> 269, 'VCN-2627-001' -> 1)
+            doc_sl = _extract_doc_sl(d.get('vcn_doc_num'))
 
             # Consigner / Importer resolution
             cargo_name = d['po_cargo_name'] or ''
@@ -543,12 +536,8 @@ def fetch_all_dpr_records(fin_year=None, month=None, mode='ALL', terminal='ALL')
             vcn_no = (av['vcn_no'] or '').strip()
             vessel_name = (av['vessel_name'] or '').strip()
 
-            # Extract Vessel Serial Number from vessel_master_doc (e.g. 'VM12' -> 12)
-            doc_sl = _extract_doc_sl(
-                av.get('vessel_master_doc'),
-                av.get('vcn_doc_num'),
-                vessels_doc_by_name.get(vessel_name.lower())
-            )
+            # Extract only the number from VCN Doc from vessel creation (e.g. 'VCN-2627-269' -> 269, 'VCN-2627-001' -> 1)
+            doc_sl = _extract_doc_sl(av.get('vcn_doc_num'))
 
             # Payment party: NEVER vessel agent!
             payment_by = (av.get('customer_name') or '').strip() or (av.get('importer_exporter_name') or '').strip()
